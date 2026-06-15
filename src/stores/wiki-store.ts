@@ -303,6 +303,7 @@ interface WikiState {
   fileTree: FileNode[]
   selectedFile: string | null
   fileContent: string
+  previewContentPath: string | null
   externalPreview: ExternalPreview | null
   /**
    * One-shot scroll target for the markdown preview. When the user
@@ -319,8 +320,7 @@ interface WikiState {
    * one wiki-relative) still works.
    */
   pendingScrollImageSrc: string | null
-  chatExpanded: boolean
-  activeView: "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
+  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
   llmConfig: LlmConfig
   /** Per-provider-preset stored overrides (API key, model, endpoint, …). */
   providerConfigs: ProviderConfigs
@@ -342,9 +342,10 @@ interface WikiState {
   setFileTree: (tree: FileNode[]) => void
   setSelectedFile: (path: string | null) => void
   setFileContent: (content: string) => void
+  openPathInPreview: (path: string) => void
+  openFileInPreview: (path: string, content: string) => void
   setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
-  setChatExpanded: (expanded: boolean) => void
   setActiveView: (view: WikiState["activeView"]) => void
   setLlmConfig: (config: LlmConfig) => void
   setProviderConfigs: (configs: ProviderConfigs) => void
@@ -367,9 +368,9 @@ export const useWikiStore = create<WikiState>((set) => ({
   fileTree: [],
   selectedFile: null,
   fileContent: "",
+  previewContentPath: null,
   externalPreview: null,
   pendingScrollImageSrc: null,
-  chatExpanded: false,
   activeView: "wiki",
   llmConfig: {
     provider: "openai",
@@ -389,11 +390,21 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   setProject: (project) => set({ project }),
   setFileTree: (fileTree) => set({ fileTree }),
-  setSelectedFile: (selectedFile) => set({ selectedFile, externalPreview: null }),
+  setSelectedFile: (selectedFile) =>
+    set({ selectedFile, previewContentPath: null, externalPreview: null }),
   setFileContent: (fileContent) => set({ fileContent }),
+  openPathInPreview: (selectedFile) =>
+    set({ selectedFile, previewContentPath: null, externalPreview: null, activeView: "wiki" }),
+  openFileInPreview: (selectedFile, fileContent) =>
+    set({
+      selectedFile,
+      fileContent,
+      previewContentPath: selectedFile,
+      externalPreview: null,
+      activeView: "wiki",
+    }),
   setExternalPreview: (externalPreview) => set({ externalPreview }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
-  setChatExpanded: (chatExpanded) => set({ chatExpanded }),
   setActiveView: (activeView) => set({ activeView }),
   searchApiConfig: {
     provider: "none",

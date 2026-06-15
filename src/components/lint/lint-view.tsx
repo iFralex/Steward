@@ -53,9 +53,7 @@ export function LintView() {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const llmConfig = useWikiStore((s) => s.llmConfig)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
-  const setFileContent = useWikiStore((s) => s.setFileContent)
-  const setActiveView = useWikiStore((s) => s.setActiveView)
+  const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
 
@@ -108,19 +106,16 @@ export function LintView() {
       `${pp}/wiki/${page}`,
       `${pp}/wiki/${page}.md`,
     ]
-    setActiveView("wiki")
     for (const path of candidates) {
       try {
         const content = await readFile(path)
-        setSelectedFile(path)
-        setFileContent(content)
+        openFileInPreview(path, content)
         return
       } catch {
         // try next
       }
     }
-    setSelectedFile(candidates[0])
-    setFileContent(`Unable to load: ${page}`)
+    openFileInPreview(candidates[0], `Unable to load: ${page}`)
   }
 
   async function handleFix(item: LintItem) {

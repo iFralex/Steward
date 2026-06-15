@@ -102,8 +102,7 @@ export function ReviewView() {
         // Refresh tree
         const tree = await listDirectory(pp)
         setFileTree(tree)
-        useWikiStore.getState().setSelectedFile(filePath)
-        useWikiStore.getState().setFileContent(pageContent)
+        useWikiStore.getState().openFileInPreview(filePath, pageContent)
         useWikiStore.getState().bumpDataVersion()
 
         resolveItem(id, "Saved to Wiki")
@@ -127,8 +126,7 @@ export function ReviewView() {
       for (const path of candidates) {
         try {
           const content = await readFile(path)
-          useWikiStore.getState().setSelectedFile(path)
-          useWikiStore.getState().setFileContent(content)
+          useWikiStore.getState().openFileInPreview(path, content)
           return
         } catch {
           // try next
@@ -213,8 +211,7 @@ export function ReviewView() {
           // Refresh
           const tree = await listDirectory(pp)
           setFileTree(tree)
-          useWikiStore.getState().setSelectedFile(filePath)
-          useWikiStore.getState().setFileContent(pageContent)
+          useWikiStore.getState().openFileInPreview(filePath, pageContent)
           useWikiStore.getState().bumpDataVersion()
 
           resolveItem(id, `Created: wiki/${dir}/${fileName}`)
