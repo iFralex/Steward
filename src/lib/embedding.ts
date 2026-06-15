@@ -59,9 +59,15 @@ function isSafeExtraHeader(name: string, value: string): boolean {
  * embed.
  */
 let lastEmbeddingError: string | null = null
+const INCREMENTAL_OPTIMIZE_PAGE_THRESHOLD = 20
+const incrementalOptimizeCounts = new Map<string, number>()
 
 export function getLastEmbeddingError(): string | null {
   return lastEmbeddingError
+}
+
+export function resetEmbeddingOptimizeAccountingForTests(): void {
+  incrementalOptimizeCounts.clear()
 }
 
 // ── fetchEmbedding with auto-halve retry ────────────────────────────────
@@ -423,6 +429,12 @@ async function vectorClearChunks(projectPath: string): Promise<void> {
   })
 }
 
+async function vectorOptimizeChunks(projectPath: string): Promise<void> {
+  await invoke("vector_optimize_chunks", {
+    projectPath: normalizePath(projectPath),
+  })
+}
+
 export async function legacyVectorRowCount(projectPath: string): Promise<number> {
   try {
     return await invoke("vector_legacy_row_count", {
@@ -441,6 +453,27 @@ export async function dropLegacyVectorTable(projectPath: string): Promise<void> 
 
 export async function clearChunkVectorTable(projectPath: string): Promise<void> {
   await vectorClearChunks(projectPath)
+}
+
+async function optimizeChunkVectorTableBestEffort(projectPath: string): Promise<void> {
+  try {
+    await vectorOptimizeChunks(projectPath)
+  } catch (err) {
+    console.warn(
+      `[Embedding] LanceDB chunk optimization failed: ${err instanceof Error ? err.message : err}`,
+    )
+  }
+}
+
+async function noteIncrementalVectorWrite(projectPath: string): Promise<void> {
+  const pp = normalizePath(projectPath)
+  const count = (incrementalOptimizeCounts.get(pp) ?? 0) + 1
+  if (count < INCREMENTAL_OPTIMIZE_PAGE_THRESHOLD) {
+    incrementalOptimizeCounts.set(pp, count)
+    return
+  }
+  incrementalOptimizeCounts.set(pp, 0)
+  await optimizeChunkVectorTableBestEffort(pp)
 }
 
 // ── Chunk enrichment ─────────────────────────────────────────────────────
@@ -543,6 +576,7 @@ export async function embedPage(
   title: string,
   content: string,
   cfg: EmbeddingConfig,
+  options?: { deferOptimization?: boolean },
 ): Promise<boolean> {
   const t0 = performance.now()
   const prepared = await preparePageEmbeddingRows(pageId, title, content, cfg)
@@ -557,6 +591,9 @@ export async function embedPage(
   }
 
   await vectorUpsertChunks(projectPath, pageId, prepared.page.rows)
+  if (!options?.deferOptimization) {
+    await noteIncrementalVectorWrite(projectPath)
+  }
   const elapsed = Math.round(performance.now() - t0)
   console.log(
     `[Embedding] Indexed "${pageId}": ${prepared.page.rows.length}/${prepared.page.chunkCount} chunks (${prepared.page.failedChunks} skipped) in ${elapsed}ms`,
@@ -678,6 +715,10 @@ export async function embedAllPages(
       )
     }
 
+    if (written > 0) {
+      await optimizeChunkVectorTableBestEffort(pp)
+    }
+
     return written
   }
 
@@ -687,7 +728,7 @@ export async function embedAllPages(
     try {
       const content = await readFile(file.path)
       const title = extractEmbeddingTitle(content, file.id)
-      if (await embedPage(pp, file.id, title, content, cfg)) {
+      if (await embedPage(pp, file.id, title, content, cfg, { deferOptimization: true })) {
         indexed++
       }
     } catch {
@@ -695,6 +736,10 @@ export async function embedAllPages(
     }
     done++
     if (onProgress) onProgress(done, mdFiles.length)
+  }
+
+  if (indexed > 0) {
+    await optimizeChunkVectorTableBestEffort(pp)
   }
 
   return indexed

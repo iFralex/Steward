@@ -44,6 +44,7 @@ import {
   dropLegacyVectorTable,
   getEmbeddingCount,
   removePageEmbedding,
+  resetEmbeddingOptimizeAccountingForTests,
   type PageSearchResult,
 } from "./embedding"
 
@@ -77,6 +78,7 @@ function genericErrorResponse(status: number, body: string): Response {
 beforeEach(() => {
   mockInvoke.mockReset()
   mockHttpFetch.mockReset()
+  resetEmbeddingOptimizeAccountingForTests()
 })
 
 // ── searchByEmbedding — chunk→page aggregation ─────────────────────
@@ -1072,6 +1074,44 @@ describe("embedPage", () => {
     expect(emb[0]).not.toBe(0.1)
   })
 
+  it("optimizes periodically for incremental page embeddings", async () => {
+    mockHttpFetch.mockImplementation(async () => okResponse([0.1, 0.2, 0.3]))
+
+    for (let i = 0; i < 20; i++) {
+      await embedPage("/tmp/incremental", `page-${i}`, `Page ${i}`, "body text", cfg)
+    }
+
+    const commands = mockInvoke.mock.calls.map((call) => call[0])
+    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(20)
+    expect(commands.filter((command) => command === "vector_optimize_chunks")).toHaveLength(1)
+    expect(commands[commands.length - 1]).toBe("vector_optimize_chunks")
+  })
+
+  it("does not optimize before the incremental threshold is reached", async () => {
+    mockHttpFetch.mockImplementation(async () => okResponse([0.1, 0.2, 0.3]))
+
+    for (let i = 0; i < 19; i++) {
+      await embedPage("/tmp/incremental-under-threshold", `page-${i}`, `Page ${i}`, "body text", cfg)
+    }
+
+    const commands = mockInvoke.mock.calls.map((call) => call[0])
+    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(19)
+    expect(commands).not.toContain("vector_optimize_chunks")
+  })
+
+  it("tracks incremental optimization thresholds per project", async () => {
+    mockHttpFetch.mockImplementation(async () => okResponse([0.1, 0.2, 0.3]))
+
+    for (let i = 0; i < 19; i++) {
+      await embedPage("/tmp/project-a", `page-${i}`, `Page ${i}`, "body text", cfg)
+    }
+    await embedPage("/tmp/project-b", "page-b", "Page B", "body text", cfg)
+
+    const commands = mockInvoke.mock.calls.map((call) => call[0])
+    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(20)
+    expect(commands).not.toContain("vector_optimize_chunks")
+  })
+
   it("keeps successful chunks even when some fail, preserving original chunk_index gaps", async () => {
     // Two 1100-char paragraphs under default opts produce exactly 3
     // chunks after packing + merging + overlap. Fail the middle embed
@@ -1320,6 +1360,73 @@ describe("embedAllPages", () => {
     await embedAllPages("/proj", cfg)
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
+  })
+
+  it("optimizes the chunk table after ordinary batch indexing succeeds", async () => {
+    listDirectoryMock.mockResolvedValueOnce(makeTree())
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+
+    await embedAllPages("/proj", cfg)
+
+    const commands = mockInvoke.mock.calls.map((call) => call[0])
+    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
+    expect(commands[commands.length - 1]).toBe("vector_optimize_chunks")
+  })
+
+  it("optimizes the chunk table after a forced rebuild succeeds", async () => {
+    listDirectoryMock.mockResolvedValueOnce(makeTree())
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+
+    await embedAllPages("/proj", cfg, undefined, { clearExisting: true })
+
+    const commands = mockInvoke.mock.calls.map((call) => call[0])
+    expect(commands[0]).toBe("vector_clear_chunks")
+    expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
+    expect(commands[commands.length - 1]).toBe("vector_optimize_chunks")
+  })
+
+  it("does not fail indexing when chunk table optimization fails", async () => {
+    listDirectoryMock.mockResolvedValueOnce(makeTree())
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "vector_optimize_chunks") {
+        throw new Error("lancedb optimize failed")
+      }
+      return undefined
+    })
+
+    await expect(embedAllPages("/proj", cfg)).resolves.toBe(2)
+    expect(mockInvoke.mock.calls.map((call) => call[0])).toContain("vector_optimize_chunks")
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("LanceDB chunk optimization failed"),
+    )
+    warn.mockRestore()
+  })
+
+  it("does not fail forced rebuild when chunk table optimization fails", async () => {
+    listDirectoryMock.mockResolvedValueOnce(makeTree())
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "vector_optimize_chunks") {
+        throw new Error("lancedb optimize failed")
+      }
+      return undefined
+    })
+
+    await expect(embedAllPages("/proj", cfg, undefined, { clearExisting: true })).resolves.toBe(2)
+    const commands = mockInvoke.mock.calls.map((call) => call[0])
+    expect(commands[0]).toBe("vector_clear_chunks")
+    expect(commands).toContain("vector_optimize_chunks")
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("LanceDB chunk optimization failed"),
+    )
+    warn.mockRestore()
   })
 
   it("does not clear existing chunks when forced rebuild cannot embed every page", async () => {

@@ -2,10 +2,13 @@ use arrow_array::{
     ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray, UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema};
+use chrono::Duration;
 use lancedb::connect;
 use lancedb::query::{ExecutableQuery, QueryBase};
+use lancedb::table::{CompactionOptions, OptimizeAction};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::panic_guard::run_guarded_async;
 
@@ -45,12 +48,24 @@ fn db_path(project_path: &str) -> String {
     format!("{}/.llm-wiki/lancedb", project_path.replace('\\', "/"))
 }
 
+fn vectorstore_v2_lock(project_path: &str) -> Arc<tokio::sync::RwLock<()>> {
+    let key = db_path(project_path);
+    let locks = VECTORSTORE_V2_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks.lock().expect("vectorstore lock map poisoned");
+    locks
+        .entry(key)
+        .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(())))
+        .clone()
+}
+
 /// v1 (legacy) table name. One row per page.
 const TABLE_V1: &str = "wiki_vectors";
 /// v2 (current) table name. One row per CHUNK — a page is typically
 /// represented by multiple rows sharing the same `page_id`.
 const TABLE_V2: &str = "wiki_chunks_v2";
 const MAX_PAGE_ID_CHARS: usize = 256;
+static VECTORSTORE_V2_LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>> =
+    OnceLock::new();
 
 /// Validate page_id to prevent filter/path injection without rejecting
 /// legitimate Unicode wiki filenames. Page ids are wiki file stems; CJK
@@ -450,6 +465,8 @@ pub async fn vector_upsert_chunks(
 ) -> Result<(), String> {
     run_guarded_async("vector_upsert_chunks", async move {
         validate_page_id_for_v2(&page_id)?;
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
 
         if chunks.is_empty() {
             return Ok(());
@@ -519,6 +536,9 @@ pub async fn vector_search_chunks(
     top_k: usize,
 ) -> Result<Vec<ChunkSearchResult>, String> {
     run_guarded_async("vector_search_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.read().await;
+
         let db = connect(&db_path(&project_path))
             .execute()
             .await
@@ -605,6 +625,8 @@ pub async fn vector_search_chunks(
 pub async fn vector_delete_page(project_path: String, page_id: String) -> Result<(), String> {
     run_guarded_async("vector_delete_page", async move {
         validate_page_id_for_v2(&page_id)?;
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
 
         let db = connect(&db_path(&project_path))
             .execute()
@@ -642,6 +664,9 @@ pub async fn vector_delete_page(project_path: String, page_id: String) -> Result
 #[tauri::command]
 pub async fn vector_count_chunks(project_path: String) -> Result<usize, String> {
     run_guarded_async("vector_count_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.read().await;
+
         let db = connect(&db_path(&project_path))
             .execute()
             .await
@@ -679,6 +704,9 @@ pub async fn vector_count_chunks(project_path: String) -> Result<usize, String> 
 #[tauri::command]
 pub async fn vector_clear_chunks(project_path: String) -> Result<(), String> {
     run_guarded_async("vector_clear_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
+
         let db = connect(&db_path(&project_path))
             .execute()
             .await
@@ -697,6 +725,64 @@ pub async fn vector_clear_chunks(project_path: String) -> Result<(), String> {
         db.drop_table(TABLE_V2, &[])
             .await
             .map_err(|e| format!("Drop chunk table error: {e}"))?;
+
+        Ok(())
+    })
+    .await
+}
+
+/// Compact the v2 chunk table and prune old LanceDB versions after bulk
+/// embedding writes. This is intentionally a separate best-effort command so
+/// an already-successful rebuild is not reported as failed if maintenance hits
+/// a platform-specific LanceDB error.
+#[tauri::command]
+pub async fn vector_optimize_chunks(project_path: String) -> Result<(), String> {
+    run_guarded_async("vector_optimize_chunks", async move {
+        let lock = vectorstore_v2_lock(&project_path);
+        let _guard = lock.write().await;
+
+        let db = connect(&db_path(&project_path))
+            .execute()
+            .await
+            .map_err(|e| format!("DB connect error: {e}"))?;
+
+        let tables = db
+            .table_names()
+            .execute()
+            .await
+            .map_err(|e| format!("List tables error: {e}"))?;
+
+        if !tables.contains(&TABLE_V2.to_string()) {
+            return Ok(());
+        }
+
+        let table = db
+            .open_table(TABLE_V2)
+            .execute()
+            .await
+            .map_err(|e| format!("Open table error: {e}"))?;
+
+        table
+            .optimize(OptimizeAction::Compact {
+                options: CompactionOptions::default(),
+                remap_options: None,
+            })
+            .await
+            .map_err(|e| format!("Compact chunks error: {e}"))?;
+
+        table
+            .optimize(OptimizeAction::Prune {
+                // Keep only versions older than the current table snapshot.
+                // We deliberately leave `delete_unverified` disabled because
+                // users may run multiple app instances against the same
+                // project, and LanceDB documents forced unverified deletion as
+                // unsafe under concurrent cross-process access.
+                older_than: Some(Duration::try_seconds(0).expect("valid duration")),
+                delete_unverified: Some(false),
+                error_if_tagged_old_versions: Some(false),
+            })
+            .await
+            .map_err(|e| format!("Prune old chunk versions error: {e}"))?;
 
         Ok(())
     })
@@ -828,6 +914,17 @@ mod tests_v2 {
                 embedding: fake_embedding(i, dim),
             })
             .collect()
+    }
+
+    fn chunk_table_version_count(project_path: &PathBuf) -> usize {
+        let versions_dir = project_path
+            .join(".llm-wiki")
+            .join("lancedb")
+            .join(format!("{TABLE_V2}.lance"))
+            .join("_versions");
+        std::fs::read_dir(versions_dir)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0)
     }
 
     #[test]
@@ -1057,6 +1154,35 @@ mod tests_v2 {
 
         vector_clear_chunks(pp.clone()).await.unwrap();
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn v2_optimize_chunks_prunes_versions_and_preserves_rows() {
+        let p = tmp_project();
+        let pp = p.to_string_lossy().to_string();
+
+        vector_optimize_chunks(pp.clone()).await.unwrap();
+
+        for i in 0..6 {
+            let page_id = format!("page-{i}");
+            vector_upsert_chunks(pp.clone(), page_id.clone(), make_chunks(&page_id, 2, 16))
+                .await
+                .unwrap();
+        }
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 12);
+        let versions_before = chunk_table_version_count(&p);
+        assert!(
+            versions_before > 1,
+            "expected multiple LanceDB versions before optimize"
+        );
+
+        vector_optimize_chunks(pp.clone()).await.unwrap();
+        let versions_after = chunk_table_version_count(&p);
+        assert!(
+            versions_after < versions_before,
+            "expected optimize to prune old versions ({versions_before} -> {versions_after})"
+        );
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 12);
     }
 
     #[tokio::test]
