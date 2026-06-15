@@ -50,23 +50,57 @@ const TABLE_V1: &str = "wiki_vectors";
 /// v2 (current) table name. One row per CHUNK — a page is typically
 /// represented by multiple rows sharing the same `page_id`.
 const TABLE_V2: &str = "wiki_chunks_v2";
+const MAX_PAGE_ID_CHARS: usize = 256;
 
-/// Validate page_id to prevent filter injection
-fn validate_page_id(page_id: &str) -> Result<(), String> {
-    if page_id.is_empty() || page_id.len() > 256 {
+/// Validate page_id to prevent filter/path injection without rejecting
+/// legitimate Unicode wiki filenames. Page ids are wiki file stems; CJK
+/// letters, spaces, and punctuation such as `·` / `：` / `（` are valid page
+/// names, but quotes and separators are unsafe because we interpolate page_id
+/// into LanceDB filters (`page_id = '...'`) and derive debug chunk ids from it.
+/// Format/invisible characters are rejected so visually identical ids cannot
+/// differ only by soft hyphen, zero-width, bidi, tag, or separator characters.
+fn validate_page_id_common(page_id: &str) -> Result<(), String> {
+    if page_id.is_empty() {
         return Err("Invalid page_id: empty or too long".to_string());
     }
-    // Only allow alphanumeric, hyphens, underscores, dots
-    if !page_id
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
-        return Err(format!(
-            "Invalid page_id: contains disallowed characters: {}",
-            page_id
-        ));
+
+    let mut char_count = 0usize;
+    for c in page_id.chars() {
+        char_count += 1;
+        if char_count > MAX_PAGE_ID_CHARS {
+            return Err("Invalid page_id: empty or too long".to_string());
+        }
+        if is_disallowed_page_id_char(c) {
+            return Err(format!(
+                "Invalid page_id: contains disallowed character {:?}: {}",
+                c, page_id
+            ));
+        }
     }
     Ok(())
+}
+
+fn is_disallowed_page_id_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '/' | '\\'
+                | '\''
+                | '"'
+                | '\u{00AD}'
+                | '\u{061C}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
+        )
+}
+
+/// Keep the v1 call site explicit while sharing the same page id contract.
+fn validate_page_id(page_id: &str) -> Result<(), String> {
+    validate_page_id_common(page_id)
 }
 
 fn make_schema(dim: i32) -> Arc<Schema> {
@@ -327,19 +361,7 @@ pub async fn vector_count(project_path: String) -> Result<usize, String> {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn validate_page_id_for_v2(page_id: &str) -> Result<(), String> {
-    if page_id.is_empty() || page_id.len() > 256 {
-        return Err("Invalid page_id: empty or too long".to_string());
-    }
-    if !page_id
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
-        return Err(format!(
-            "Invalid page_id: contains disallowed characters: {}",
-            page_id
-        ));
-    }
-    Ok(())
+    validate_page_id_common(page_id)
 }
 
 fn make_schema_v2(dim: i32) -> Arc<Schema> {
@@ -806,6 +828,69 @@ mod tests_v2 {
                 embedding: fake_embedding(i, dim),
             })
             .collect()
+    }
+
+    #[test]
+    fn page_id_validation_allows_unicode_wiki_stems() {
+        let page_id = "反硝化除磷·A2O：DPAO + 50% & x（测试），v1.2";
+        assert!(validate_page_id(page_id).is_ok());
+        assert!(validate_page_id_for_v2(page_id).is_ok());
+    }
+
+    #[test]
+    fn page_id_validation_rejects_filter_and_path_footguns() {
+        for page_id in [
+            "bad'quote",
+            "bad\"quote",
+            "bad/slash",
+            "bad\\slash",
+            "bad\nnewline",
+            "bad\ttab",
+            "bad\0nul",
+            "soft\u{00AD}hyphen",
+            "arabic\u{061C}mark",
+            "zero\u{200B}width",
+            "line\u{2028}sep",
+            "para\u{2029}sep",
+            "bidi\u{202E}override",
+            "\u{FEFF}bom",
+            "annotation\u{FFF9}mark",
+            "tag\u{E0041}char",
+        ] {
+            assert!(
+                validate_page_id(page_id).is_err(),
+                "{page_id:?} should be rejected"
+            );
+            assert!(
+                validate_page_id_for_v2(page_id).is_err(),
+                "{page_id:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn page_id_validation_rejects_empty_and_overlong_ids() {
+        assert!(validate_page_id("").is_err());
+        assert!(validate_page_id_for_v2("").is_err());
+
+        let ascii_boundary = "a".repeat(MAX_PAGE_ID_CHARS);
+        assert!(validate_page_id(&ascii_boundary).is_ok());
+        assert!(validate_page_id_for_v2(&ascii_boundary).is_ok());
+
+        let cjk_boundary = "测".repeat(MAX_PAGE_ID_CHARS);
+        assert!(validate_page_id(&cjk_boundary).is_ok());
+        assert!(validate_page_id_for_v2(&cjk_boundary).is_ok());
+
+        let too_long = "测".repeat(MAX_PAGE_ID_CHARS + 1);
+        assert!(validate_page_id(&too_long).is_err());
+        assert!(validate_page_id_for_v2(&too_long).is_err());
+    }
+
+    #[test]
+    fn page_id_validation_allows_hash_in_debug_chunk_ids() {
+        let page_id = "source#section";
+        assert!(validate_page_id(page_id).is_ok());
+        assert!(validate_page_id_for_v2(page_id).is_ok());
     }
 
     #[tokio::test]
