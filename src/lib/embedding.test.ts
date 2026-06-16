@@ -1360,6 +1360,7 @@ describe("embedAllPages", () => {
     await embedAllPages("/proj", cfg)
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_drop_legacy")
   })
 
   it("optimizes the chunk table after ordinary batch indexing succeeds", async () => {
@@ -1372,6 +1373,7 @@ describe("embedAllPages", () => {
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
     expect(commands[commands.length - 1]).toBe("vector_optimize_chunks")
+    expect(commands).not.toContain("vector_drop_legacy")
   })
 
   it("optimizes the chunk table after a forced rebuild succeeds", async () => {
@@ -1384,7 +1386,9 @@ describe("embedAllPages", () => {
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
     expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
-    expect(commands[commands.length - 1]).toBe("vector_optimize_chunks")
+    expect(commands).toContain("vector_optimize_chunks")
+    expect(commands.indexOf("vector_optimize_chunks")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_chunks"))
+    expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.indexOf("vector_optimize_chunks"))
   })
 
   it("does not fail indexing when chunk table optimization fails", async () => {
@@ -1423,8 +1427,41 @@ describe("embedAllPages", () => {
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
     expect(commands).toContain("vector_optimize_chunks")
+    expect(commands).toContain("vector_drop_legacy")
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("LanceDB chunk optimization failed"),
+    )
+    warn.mockRestore()
+  })
+
+  it("drops the legacy per-page table after a successful forced rebuild", async () => {
+    listDirectoryMock.mockResolvedValueOnce(makeTree())
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+
+    await expect(embedAllPages("/proj", cfg, undefined, { clearExisting: true })).resolves.toBe(2)
+
+    const commands = mockInvoke.mock.calls.map((call) => call[0])
+    expect(commands).toContain("vector_clear_chunks")
+    expect(commands).toContain("vector_drop_legacy")
+    expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_chunks"))
+  })
+
+  it("does not fail a successful forced rebuild when legacy table cleanup fails", async () => {
+    listDirectoryMock.mockResolvedValueOnce(makeTree())
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    mockInvoke.mockImplementation(async (command) => {
+      if (command === "vector_drop_legacy") {
+        throw new Error("legacy table locked")
+      }
+      return undefined
+    })
+
+    await expect(embedAllPages("/proj", cfg, undefined, { clearExisting: true })).resolves.toBe(2)
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Legacy vector table cleanup failed"),
     )
     warn.mockRestore()
   })
@@ -1455,6 +1492,7 @@ describe("embedAllPages", () => {
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_upsert_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_drop_legacy")
   })
 
   it("does not clear existing chunks when forced rebuild cannot embed any page", async () => {
@@ -1471,6 +1509,7 @@ describe("embedAllPages", () => {
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_upsert_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_drop_legacy")
   })
 
   it("skips empty content pages during forced rebuild without treating them as failures", async () => {
@@ -1493,9 +1532,11 @@ describe("embedAllPages", () => {
     expect(count).toBe(1)
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
+    expect(commands).toContain("vector_drop_legacy")
     const upserts = mockInvoke.mock.calls.filter((call) => call[0] === "vector_upsert_chunks")
     expect(upserts).toHaveLength(1)
     expect((upserts[0][1] as { pageId: string }).pageId).toBe("body")
+    expect(commands.indexOf("vector_drop_legacy")).toBeGreaterThan(commands.lastIndexOf("vector_upsert_chunks"))
   })
 
   it("does not clear existing chunks when a forced rebuild page only embeds partially", async () => {
@@ -1525,6 +1566,7 @@ describe("embedAllPages", () => {
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands).not.toContain("vector_clear_chunks")
     expect(commands).not.toContain("vector_upsert_chunks")
+    expect(commands).not.toContain("vector_drop_legacy")
   })
 
   it("surfaces an incomplete-index warning when forced rebuild write fails after clearing", async () => {
@@ -1553,6 +1595,7 @@ describe("embedAllPages", () => {
     const commands = mockInvoke.mock.calls.map((call) => call[0])
     expect(commands[0]).toBe("vector_clear_chunks")
     expect(commands.filter((command) => command === "vector_upsert_chunks")).toHaveLength(2)
+    expect(commands).not.toContain("vector_drop_legacy")
   })
 
   it("clears stale chunks when forced rebuild has no content pages in a readable wiki tree", async () => {
@@ -1574,6 +1617,7 @@ describe("embedAllPages", () => {
 
     expect(out).toBe(0)
     expect(mockInvoke.mock.calls.map((call) => call[0])).toContain("vector_clear_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).toContain("vector_drop_legacy")
     expect(mockHttpFetch).not.toHaveBeenCalled()
   })
 

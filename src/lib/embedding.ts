@@ -465,6 +465,16 @@ async function optimizeChunkVectorTableBestEffort(projectPath: string): Promise<
   }
 }
 
+async function dropLegacyVectorTableBestEffort(projectPath: string): Promise<void> {
+  try {
+    await dropLegacyVectorTable(projectPath)
+  } catch (err) {
+    console.warn(
+      `[Embedding] Legacy vector table cleanup failed: ${err instanceof Error ? err.message : err}`,
+    )
+  }
+}
+
 async function noteIncrementalVectorWrite(projectPath: string): Promise<void> {
   const pp = normalizePath(projectPath)
   const count = (incrementalOptimizeCounts.get(pp) ?? 0) + 1
@@ -652,6 +662,7 @@ export async function embedAllPages(
         )
       }
       await clearChunkVectorTable(pp)
+      await dropLegacyVectorTableBestEffort(pp)
       return 0
     }
 
@@ -718,6 +729,10 @@ export async function embedAllPages(
     if (written > 0) {
       await optimizeChunkVectorTableBestEffort(pp)
     }
+    // Forced rebuild succeeded, so the legacy v1 per-page table is obsolete
+    // even when every readable content page was empty and no v2 rows were
+    // written. Keep this outside the `written > 0` optimization guard.
+    await dropLegacyVectorTableBestEffort(pp)
 
     return written
   }
