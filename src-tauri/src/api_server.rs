@@ -1454,6 +1454,7 @@ fn handle_add_source(app: &AppHandle, project_id: &str, body: &str) -> ApiRespon
                 let rel = format!("raw/sources/{}", item.filename.trim());
                 match safe_join(&project.path, &rel) {
                     Ok(abs) => {
+                        let existed = abs.exists();
                         let parent_ok = abs
                             .parent()
                             .map(|p| fs::create_dir_all(p).is_ok())
@@ -1464,7 +1465,8 @@ fn handle_add_source(app: &AppHandle, project_id: &str, body: &str) -> ApiRespon
                             json!({ "filename": item.filename, "status": "error", "error": format!("write failed: {e}") })
                         } else {
                             any_ok = true;
-                            json!({ "filename": item.filename, "status": "written", "path": rel })
+                            let status = if existed { "overwritten" } else { "written" };
+                            json!({ "filename": item.filename, "status": status, "path": rel })
                         }
                     }
                     Err(e) => json!({ "filename": item.filename, "status": "error", "error": e }),
