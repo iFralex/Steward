@@ -167,6 +167,11 @@ interface ProxyConfig {
   bypassLocal: boolean
 }
 
+export interface BackupConfig {
+  enabled: boolean
+  remoteUrl: string
+}
+
 interface ScheduledImportConfig {
   enabled: boolean
   path: string // 监控目录的相对路径（相对于项目根目录），空字符串表示使用默认的 "raw"
@@ -332,6 +337,7 @@ interface WikiState {
   outputLanguage: OutputLanguage
   proxyConfig: ProxyConfig
   backgroundMode: boolean
+  backupConfig: BackupConfig
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
   mineruConfig: MineruConfig
@@ -357,6 +363,7 @@ interface WikiState {
   setOutputLanguage: (lang: OutputLanguage) => void
   setProxyConfig: (config: ProxyConfig) => void
   setBackgroundMode: (value: boolean) => void
+  setBackupConfig: (backupConfig: BackupConfig) => void
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setMineruConfig: (config: MineruConfig) => void
@@ -460,6 +467,11 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   backgroundMode: false,
 
+  backupConfig: {
+    enabled: false,
+    remoteUrl: "",
+  },
+
   scheduledImportConfig: {
     enabled: false,
     path: "",
@@ -496,6 +508,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
   setBackgroundMode: (backgroundMode) => set({ backgroundMode }),
+  setBackupConfig: (backupConfig) => set({ backupConfig }),
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setMineruConfig: (mineruConfig) => set({ mineruConfig }),

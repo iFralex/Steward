@@ -15,6 +15,7 @@ import {
   Server,
   Settings,
   FileText,
+  HardDriveDownload,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -44,6 +45,7 @@ import { GeneralSection } from "./sections/general-section"
 import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
+import { BackupSection } from "./sections/backup-section"
 
 type CategoryId =
   | "general"
@@ -56,6 +58,7 @@ type CategoryId =
   | "scheduled-import"
   | "mineru"
   | "api-server"
+  | "backup"
   | "output"
   | "interface"
   | "maintenance"
@@ -82,6 +85,7 @@ const CATEGORIES: Category[] = [
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
   { id: "mineru", labelKey: "settings.categories.mineru", icon: FileText },
   { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
+  { id: "backup", labelKey: "settings.categories.backup", icon: HardDriveDownload },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
@@ -634,6 +638,8 @@ export function SettingsView() {
         return <MineruSection draft={draft} setDraft={setDraft} />
       case "api-server":
         return <ApiServerSection draft={draft} setDraft={setDraft} />
+      case "backup":
+        return <BackupSection />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":

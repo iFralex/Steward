@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { useWikiStore } from "./wiki-store"
 
+describe("backupConfig store action", () => {
+  it("setBackupConfig updates enabled and remoteUrl", () => {
+    useWikiStore.getState().setBackupConfig({ enabled: true, remoteUrl: "https://github.com/iFralex/llm-wiki-vault-backup.git" })
+    expect(useWikiStore.getState().backupConfig.enabled).toBe(true)
+    expect(useWikiStore.getState().backupConfig.remoteUrl).toContain("vault-backup")
+  })
+})
+
 describe("backgroundMode store action", () => {
   it("setBackgroundMode updates the flag", () => {
     useWikiStore.getState().setBackgroundMode(true)

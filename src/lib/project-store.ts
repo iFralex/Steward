@@ -161,6 +161,22 @@ export async function loadBackgroundMode(): Promise<boolean> {
   return (await store.get<boolean>(BACKGROUND_MODE_KEY)) ?? false
 }
 
+// IMPORTANT: Keep this key in sync with the Rust backup handler (Task D2),
+// which reads `backupConfig.{enabled,remoteUrl}` from `app-state.json`
+// to decide whether to run the 6-hour periodic backup and where to push.
+const BACKUP_CONFIG_KEY = "backupConfig"
+
+export async function saveBackupConfig(config: { enabled: boolean; remoteUrl: string }): Promise<void> {
+  const store = await getStore()
+  await store.set(BACKUP_CONFIG_KEY, config)
+  await store.save()
+}
+
+export async function loadBackupConfig(): Promise<{ enabled: boolean; remoteUrl: string } | null> {
+  const store = await getStore()
+  return (await store.get<{ enabled: boolean; remoteUrl: string }>(BACKUP_CONFIG_KEY)) ?? null
+}
+
 // IMPORTANT: Keep this key in sync with the Rust setup hook
 // (src-tauri/src/proxy.rs), which reads this exact field name from
 // the same `app-state.json` store at app launch to translate the

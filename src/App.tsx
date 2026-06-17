@@ -9,7 +9,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadBackgroundMode, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadBackgroundMode, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel, loadBackupConfig } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -249,6 +249,8 @@ function App() {
         }
         const savedBackgroundMode = await loadBackgroundMode()
         useWikiStore.getState().setBackgroundMode(savedBackgroundMode)
+        const savedBackup = await loadBackupConfig()
+        if (savedBackup) useWikiStore.getState().setBackupConfig(savedBackup)
         // Local HTTP API server config — global (single token + enable
         // flag for the whole install, not per-project). The Rust side
         // reads `apiConfig.{enabled,token,mcpEnabled}` from `app-state.json`
