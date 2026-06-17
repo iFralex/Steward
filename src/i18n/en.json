@@ -229,6 +229,7 @@
       "scheduledImport": "Scheduled Import",
       "mineru": "MinerU PDF",
       "apiServer": "API + MCP",
+      "backup": "Backup",
       "output": "Output",
       "interface": "Interface",
       "maintenance": "Maintenance",
@@ -524,6 +525,17 @@
         "endpointGraphNote": "?q=…&nodeType=…&limit=N — wikilinks graph derived from wiki/*.md.",
         "endpointRescanNote": "Triggers a backend rescan using your Source Watch config.",
         "endpointChatNote": "Not implemented yet (returns 501)."
+      },
+      "backup": {
+        "title": "Backup",
+        "description": "Sync the wiki to a private GitHub repository every 6 hours.",
+        "enable": "Enable periodic backup (every 6h)",
+        "enableHint": "Automatically commits and pushes to the remote repository every 6 hours.",
+        "remoteUrl": "Private GitHub repo URL",
+        "remoteUrlHint": "HTTPS URL of the backup repository. Make sure the gh credential helper is configured (gh auth setup-git).",
+        "runNow": "Run backup now",
+        "running": "Backup in progress…",
+        "runOk": "Backup started successfully."
       },
       "output": {
         "title": "Output Preferences",

@@ -229,6 +229,7 @@
       "scheduledImport": "定时导入",
       "mineru": "MinerU PDF",
       "apiServer": "API + MCP",
+      "backup": "备份",
       "output": "输出偏好",
       "interface": "界面",
       "maintenance": "维护",
@@ -524,6 +525,17 @@
         "endpointGraphNote": "?q=…&nodeType=…&limit=N —— 基于 wiki/*.md 的双链图谱。",
         "endpointRescanNote": "使用你的资料文件夹监控配置触发后端重新扫描。",
         "endpointChatNote": "尚未实现（返回 501）。"
+      },
+      "backup": {
+        "title": "备份",
+        "description": "每 6 小时将 Wiki 同步到私有 GitHub 仓库。",
+        "enable": "启用定时备份（每 6 小时）",
+        "enableHint": "每 6 小时自动向远程仓库提交并推送。",
+        "remoteUrl": "私有 GitHub 仓库 URL",
+        "remoteUrlHint": "备份仓库的 HTTPS 地址。请确保已配置 gh 凭证助手（gh auth setup-git）。",
+        "runNow": "立即执行备份",
+        "running": "备份中…",
+        "runOk": "备份已成功启动。"
       },
       "output": {
         "title": "输出偏好",
