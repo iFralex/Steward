@@ -60,9 +60,25 @@ dell'id per-account; `search` lo restituisce, gli altri tool lo accettano.
 
 **Lettura (auto-allow):**
 - `list_mailboxes()` → `[{ account: string, name: string }]`.
-- `search_messages({ query?, sender?, account?, mailbox?, limit })` →
-  `[{ messageId, subject, from, date, mailbox, account, snippet }]`.
-  `limit` default 20 (cap a 100). Senza `mailbox`/`account` cerca su tutte.
+- `search_messages(filters)` → `[{ messageId, subject, from, date, mailbox,
+  account, snippet }]`. Filtri combinati in **AND**; tutti opzionali. Senza
+  filtri di posizione cerca su tutte le mailbox/account.
+  Filtri:
+  - *posizione:* `account?` (indirizzo), `mailbox?` (es. "Sent", "Drafts").
+  - *mittente/destinatari:* `sender?` (from contiene), `recipient?` (un
+    to/cc contiene — utile in Sent).
+  - *testo:* `subject?` (oggetto contiene), `query?` (testo libero in
+    oggetto **o corpo**).
+  - *data:* `dateFrom?` / `dateTo?` (ISO; su data ricezione/invio).
+  - *stato:* `unreadOnly?`, `flaggedOnly?`, `hasAttachments?` (boolean).
+  - `limit` default 20 (cap a 100), `offset?` per paginare.
+
+  **Costo:** `account`/`mailbox`/`sender`/`subject`/`dateFrom`/`dateTo`/
+  `unreadOnly`/`flaggedOnly` mappano su `whose` AppleScript rapidi;
+  `query` (scan del **corpo**), `recipient` e `hasAttachments` sono più
+  lenti su mailbox grandi → restringere prima con posizione/data e usare
+  `limit`. Il builder applica i filtri rapidi nel `whose` e quelli costosi
+  come post-filtro sui risultati.
 - `read_message({ messageId })` → `{ messageId, subject, from, to, cc, date,
   body, attachments: [{ name, index }] }` (body testo).
 - `save_attachment({ messageId, attachment, destDir? })` → `{ path }`.
