@@ -762,6 +762,27 @@ fn handle_file_content(app: &AppHandle, project_id: &str, query: &str) -> ApiRes
     }
 }
 
+/// Validate a single source filename that will be written under
+/// `raw/sources/`. Flat names only: no path separators, no `..`, no
+/// leading dot, no control chars. Path safety is double-checked by
+/// `safe_join` at write time; this gives a clear early error.
+fn validate_source_filename(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("filename is required".to_string());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return Err(format!("filename must not contain path separators: {name}"));
+    }
+    if trimmed == ".." || trimmed.starts_with('.') {
+        return Err(format!("invalid filename: {name}"));
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(format!("filename contains control characters: {name}"));
+    }
+    Ok(())
+}
+
 fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(project_path);
     let rel = rel.trim_start_matches('/');
@@ -1652,5 +1673,21 @@ mod tests {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         assert!(!mcp_enabled_missing);
+    }
+
+    #[test]
+    fn validate_source_filename_accepts_plain_names() {
+        assert!(validate_source_filename("note.md").is_ok());
+        assert!(validate_source_filename("Report 2026.pdf").is_ok());
+    }
+
+    #[test]
+    fn validate_source_filename_rejects_separators_and_traversal() {
+        assert!(validate_source_filename("").is_err());
+        assert!(validate_source_filename("../escape.md").is_err());
+        assert!(validate_source_filename("sub/dir.md").is_err());
+        assert!(validate_source_filename("a\\b.md").is_err());
+        assert!(validate_source_filename(".hidden").is_err());
+        assert!(validate_source_filename("bad\u{0000}.md").is_err());
     }
 }
