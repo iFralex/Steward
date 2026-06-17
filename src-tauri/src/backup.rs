@@ -4,6 +4,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -76,7 +77,6 @@ pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<String, Stri
     // 1. git init (idempotent).
     if !root.join(".git").exists() {
         git(root, &["init"])?;
-        git(root, &["branch", "-M", "main"])?;
     }
     // 2. remote origin (set or update).
     let has_origin = git(root, &["remote", "get-url", "origin"])
@@ -91,13 +91,21 @@ pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<String, Stri
     std::fs::write(root.join(".gitignore"), backup_gitignore())
         .map_err(|e| format!("failed to write .gitignore: {e}"))?;
     // 4. stage everything.
-    git(root, &["add", "-A"])?;
+    let add_out = git(root, &["add", "-A"])?;
+    if !add_out.status.success() {
+        return Err(format!("git add failed: {}", String::from_utf8_lossy(&add_out.stderr)));
+    }
     // 5. commit only if there are staged changes.
     let dirty = !git(root, &["diff", "--cached", "--quiet"])?.status.success();
     if !dirty {
         return Ok("no changes to back up".to_string());
     }
-    let stamp = git(root, &["commit", "-m", "backup: vault snapshot"])?;
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let commit_msg = format!("backup: vault snapshot ({}s)", secs);
+    let stamp = git(root, &["commit", "-m", &commit_msg])?;
     if !stamp.status.success() {
         return Err(format!(
             "git commit failed: {}",
@@ -105,7 +113,7 @@ pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<String, Stri
         ));
     }
     // 6. push.
-    let push = git(root, &["push", "-u", "origin", "main"])?;
+    let push = git(root, &["push", "-u", "origin", "HEAD:main"])?;
     if !push.status.success() {
         return Err(format!(
             "git push failed: {}",
