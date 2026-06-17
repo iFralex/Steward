@@ -212,6 +212,17 @@ export class LlmWikiApiClient {
     })
   }
 
+  async addSources(
+    projectId = "current",
+    sources: Array<{ filename: string; content: string }>,
+    rescan = true,
+  ): Promise<Record<string, unknown>> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/sources`, {
+      method: "POST",
+      body: { sources, rescan },
+    })
+  }
+
   private async request(path: string, options: { method?: "GET" | "POST"; body?: unknown; auth?: boolean } = {}): Promise<Record<string, unknown>> {
     const url = `${this.baseUrl}${apiPath(path)}`
     const headers: Record<string, string> = { Accept: "application/json" }

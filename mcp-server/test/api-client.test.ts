@@ -161,3 +161,20 @@ test("API errors include status and server message", async () => {
   const client = new LlmWikiApiClient({ fetchImpl })
   await assert.rejects(() => client.projects(), /LLM Wiki API 401: Unauthorized/)
 })
+
+test("addSources posts sources array and rescan flag", async () => {
+  let body = ""
+  let url = ""
+  const fetchImpl = async (u: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    url = String(u)
+    body = String(init?.body ?? "")
+    return new Response(JSON.stringify({ ok: true, projectId: "p1", written: [], rescan: null }), { status: 200 })
+  }
+  const client = new LlmWikiApiClient({ baseUrl: "http://localhost:19828", fetchImpl })
+  await client.addSources("current", [{ filename: "a.md", content: "x" }], false)
+
+  assert.equal(url, "http://localhost:19828/api/v1/projects/current/sources")
+  const parsed = JSON.parse(body)
+  assert.equal(parsed.sources[0].filename, "a.md")
+  assert.equal(parsed.rescan, false)
+})
