@@ -178,3 +178,17 @@ test("addSources posts sources array and rescan flag", async () => {
   assert.equal(parsed.sources[0].filename, "a.md")
   assert.equal(parsed.rescan, false)
 })
+
+test("showWindow posts to /window/show", async () => {
+  let url = ""
+  let method = ""
+  const fetchImpl = async (u: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    url = String(u)
+    method = String(init?.method ?? "")
+    return new Response(JSON.stringify({ ok: true, shown: true }), { status: 200 })
+  }
+  const client = new LlmWikiApiClient({ baseUrl: "http://localhost:19828", fetchImpl })
+  await client.showWindow()
+  assert.equal(url, "http://localhost:19828/api/v1/window/show")
+  assert.equal(method, "POST")
+})

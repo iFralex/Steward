@@ -223,6 +223,14 @@ export class LlmWikiApiClient {
     })
   }
 
+  async showWindow(): Promise<Record<string, unknown>> {
+    return this.request(`/window/show`, { method: "POST" })
+  }
+
+  async hideWindow(): Promise<Record<string, unknown>> {
+    return this.request(`/window/hide`, { method: "POST" })
+  }
+
   private async request(path: string, options: { method?: "GET" | "POST"; body?: unknown; auth?: boolean } = {}): Promise<Record<string, unknown>> {
     const url = `${this.baseUrl}${apiPath(path)}`
     const headers: Record<string, string> = { Accept: "application/json" }

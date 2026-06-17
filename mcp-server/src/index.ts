@@ -155,6 +155,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
+    {
+      name: "llm_wiki_show_window",
+      description: "Bring the LLM Wiki desktop window to the foreground (useful when the app runs hidden in background mode).",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      name: "llm_wiki_hide_window",
+      description: "Hide the LLM Wiki desktop window again, returning the app to background mode.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
   ],
 }))
 
@@ -235,6 +245,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const result = await client.addSources(projectId(args), sources, boolArg(args.rescan, true))
         return textResult(JSON.stringify(result, null, 2))
+      }
+      case "llm_wiki_show_window": {
+        await assertMcpEnabled()
+        return textResult(JSON.stringify(await client.showWindow(), null, 2))
+      }
+      case "llm_wiki_hide_window": {
+        await assertMcpEnabled()
+        return textResult(JSON.stringify(await client.hideWindow(), null, 2))
       }
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`)
