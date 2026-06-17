@@ -132,6 +132,23 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
         .unwrap_or(false)
 }
 
+/// Read the persisted `backgroundMode` flag straight off app-state.json,
+/// the same file the frontend's tauri-plugin-store writes. Read on disk
+/// (not via the plugin) so it works during setup before the webview
+/// boots — mirrors how proxy::read_proxy_config_from_store works.
+fn read_background_mode(store_path: &std::path::Path) -> bool {
+    let Ok(raw) = std::fs::read_to_string(store_path) else {
+        return false;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    parsed
+        .get("backgroundMode")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     clip_server::start_clip_server();
@@ -198,6 +215,20 @@ pub fn run() {
                 }
                 Err(err) => {
                     eprintln!("[tray] failed to update tray availability state: {err}");
+                }
+            }
+            // Headless background mode: if enabled in app-state.json, keep
+            // the main window hidden and (on macOS) drop the Dock icon so
+            // the app runs purely as an MCP/API backend.
+            if let Ok(dir) = app.path().app_data_dir() {
+                let store_path = dir.join("app-state.json");
+                if read_background_mode(&store_path) {
+                    eprintln!("[background] backgroundMode on: hiding window");
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                    #[cfg(target_os = "macos")]
+                    let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
                 }
             }
             Ok(())
