@@ -262,6 +262,9 @@ fn handle_request(
         }
         (&Method::Post, ["projects", project_id, "search"]) => handle_search(app, project_id, body),
         (&Method::Get, ["projects", project_id, "graph"]) => handle_graph(app, project_id, query),
+        (&Method::Post, ["projects", project_id, "sources"]) => {
+            handle_add_source(app, project_id, body)
+        }
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
         }
@@ -1164,6 +1167,45 @@ fn handle_reviews(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse
 }
 
 #[derive(Deserialize)]
+struct SourceFileInput {
+    filename: String,
+    #[serde(default)]
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct AddSourceRequest {
+    // Batch form.
+    #[serde(default)]
+    sources: Vec<SourceFileInput>,
+    // Single-file convenience form (top-level filename/content).
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    // Defaults to true at the handler.
+    #[serde(default)]
+    rescan: Option<bool>,
+}
+
+impl AddSourceRequest {
+    fn normalized(&self) -> Vec<SourceFileInput> {
+        let mut out: Vec<SourceFileInput> = self
+            .sources
+            .iter()
+            .map(|s| SourceFileInput { filename: s.filename.clone(), content: s.content.clone() })
+            .collect();
+        if let Some(name) = &self.filename {
+            out.push(SourceFileInput {
+                filename: name.clone(),
+                content: self.content.clone().unwrap_or_default(),
+            });
+        }
+        out
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchRequest {
     query: String,
@@ -1385,6 +1427,71 @@ fn resolve_link(raw: &str, ids: &BTreeSet<String>) -> Option<String> {
     ids.iter()
         .find(|id| id.to_lowercase() == normalized || id.to_lowercase() == raw.to_lowercase())
         .cloned()
+}
+
+fn handle_add_source(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    let req: AddSourceRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return err(400, format!("Invalid JSON: {e}")),
+    };
+    let items = req.normalized();
+    if items.is_empty() {
+        return err(400, "Provide `sources` (array) or top-level `filename`/`content`");
+    }
+
+    let mut written = Vec::new();
+    let mut any_ok = false;
+    for item in &items {
+        let entry = match validate_source_filename(&item.filename) {
+            Ok(()) => {
+                let rel = format!("raw/sources/{}", item.filename.trim());
+                match safe_join(&project.path, &rel) {
+                    Ok(abs) => {
+                        let parent_ok = abs
+                            .parent()
+                            .map(|p| fs::create_dir_all(p).is_ok())
+                            .unwrap_or(false);
+                        if !parent_ok {
+                            json!({ "filename": item.filename, "status": "error", "error": "could not create raw/sources" })
+                        } else if let Err(e) = fs::write(&abs, item.content.as_bytes()) {
+                            json!({ "filename": item.filename, "status": "error", "error": format!("write failed: {e}") })
+                        } else {
+                            any_ok = true;
+                            json!({ "filename": item.filename, "status": "written", "path": rel })
+                        }
+                    }
+                    Err(e) => json!({ "filename": item.filename, "status": "error", "error": e }),
+                }
+            }
+            Err(e) => json!({ "filename": item.filename, "status": "error", "error": e }),
+        };
+        written.push(entry);
+    }
+
+    let mut rescan_result = Value::Null;
+    if req.rescan.unwrap_or(true) && any_ok {
+        let cfg = load_source_watch_config(app, &project.id);
+        rescan_result = match commands::file_sync::rescan_project_files(
+            app.clone(),
+            project.id.clone(),
+            project.path.clone(),
+            cfg,
+        ) {
+            Ok(result) => json!({ "ok": true, "result": result }),
+            Err(e) => json!({ "ok": false, "error": e }),
+        };
+    }
+
+    ok(json!({
+        "ok": true,
+        "projectId": project.id,
+        "written": written,
+        "rescan": rescan_result,
+    }))
 }
 
 fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
@@ -1689,5 +1796,20 @@ mod tests {
         assert!(validate_source_filename("a\\b.md").is_err());
         assert!(validate_source_filename(".hidden").is_err());
         assert!(validate_source_filename("bad\u{0000}.md").is_err());
+    }
+
+    #[test]
+    fn add_source_request_normalizes_single_file() {
+        let single = r#"{ "filename": "a.md", "content": "hello" }"#;
+        let req: AddSourceRequest = serde_json::from_str(single).unwrap();
+        let items = req.normalized();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].filename, "a.md");
+        assert_eq!(items[0].content, "hello");
+
+        let batch = r#"{ "sources": [ {"filename":"a.md","content":"x"}, {"filename":"b.md","content":"y"} ], "rescan": false }"#;
+        let req2: AddSourceRequest = serde_json::from_str(batch).unwrap();
+        assert_eq!(req2.normalized().len(), 2);
+        assert_eq!(req2.rescan, Some(false));
     }
 }
