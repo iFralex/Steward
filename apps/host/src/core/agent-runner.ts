@@ -6,7 +6,7 @@
  * We reuse the SDK's agent loop; we do not hand-roll it.
  */
 import { query, type Options, type SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
-import { createPermissionGate } from "./permission-gate.ts";
+import { createPreToolUseGate } from "./permission-gate.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 
@@ -17,7 +17,7 @@ export async function runTurn(
   emit: Emit,
   prompt: string,
 ): Promise<void> {
-  const canUseTool = createPermissionGate(config.policy, session.requestApproval);
+  const gate = createPreToolUseGate(config.policy, session.requestApproval);
 
   emit({ type: "status", sessionId: session.id, state: "running" });
   try {
@@ -25,9 +25,11 @@ export async function runTurn(
       model: config.model,
       systemPrompt: config.systemPrompt,
       mcpServers: config.mcpServers,
-      canUseTool,
-      // Isolation: do NOT inherit the user's Claude Code settings/permissions
-      // (otherwise tools they've allowed — e.g. Bash — bypass our gate).
+      // The gate fires before EVERY tool (a PreToolUse hook), so our policy
+      // is authoritative regardless of the SDK's own "is this dangerous?"
+      // judgement.
+      hooks: { PreToolUse: [{ hooks: [gate] }] },
+      // Isolation: do NOT inherit the user's Claude Code settings/permissions.
       settingSources: [],
       permissionMode: "default",
       // Keep conversation memory across turns by resuming the prior session.

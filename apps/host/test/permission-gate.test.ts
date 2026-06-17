@@ -1,39 +1,61 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createPermissionGate, type ApprovalRequest } from "../src/core/permission-gate.ts";
+import type { HookInput, PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
+import { createPreToolUseGate, type ApprovalRequest } from "../src/core/permission-gate.ts";
 import type { ToolPolicy } from "../src/core/tool-policy.ts";
 
 const policy: ToolPolicy = { default: "gate", rules: { WebSearch: "allow" } };
-const noopOptions = { signal: new AbortController().signal, toolUseID: "test" };
+const hookOpts = { signal: new AbortController().signal };
 
-test("allow-listed tool runs without asking for approval", async () => {
+function input(toolName: string, toolInput: unknown): HookInput {
+  return {
+    hook_event_name: "PreToolUse",
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_use_id: "t1",
+  } as unknown as PreToolUseHookInput;
+}
+
+interface HookOut {
+  hookSpecificOutput?: {
+    permissionDecision?: string;
+    permissionDecisionReason?: string;
+    additionalContext?: string;
+  };
+}
+
+test("allow-listed tool is allowed without asking", async () => {
   let asked = false;
-  const gate = createPermissionGate(policy, async () => {
+  const gate = createPreToolUseGate(policy, async () => {
     asked = true;
     return { decision: "allow" };
   });
-  const result = await gate("WebSearch", { q: "hi" }, noopOptions);
-  assert.equal(result.behavior, "allow");
-  assert.equal(asked, false, "must not request approval for an allowed tool");
+  const out = (await gate(input("WebSearch", { q: "hi" }), "t1", hookOpts)) as HookOut;
+  assert.equal(out.hookSpecificOutput?.permissionDecision, "allow");
+  assert.equal(asked, false);
 });
 
-test("gated tool runs only after an explicit user allow", async () => {
+test("gated tool asks, and is allowed on user allow", async () => {
   const seen: ApprovalRequest[] = [];
-  const gate = createPermissionGate(policy, async (req) => {
+  const gate = createPreToolUseGate(policy, async (req) => {
     seen.push(req);
     return { decision: "allow" };
   });
-  const result = await gate("send_email", { to: "x@y.z" }, noopOptions);
-  assert.equal(result.behavior, "allow");
-  assert.deepEqual(seen, [{ tool: "send_email", input: { to: "x@y.z" } }]);
+  const out = (await gate(input("Bash", { command: "ls" }), "t1", hookOpts)) as HookOut;
+  assert.equal(out.hookSpecificOutput?.permissionDecision, "allow");
+  assert.deepEqual(seen, [{ tool: "Bash", input: { command: "ls" } }]);
 });
 
-test("gated tool is denied (with the user's note) on deny", async () => {
-  const gate = createPermissionGate(policy, async () => ({
-    decision: "deny",
-    note: "wrong recipient",
-  }));
-  const result = await gate("send_email", { to: "x@y.z" }, noopOptions);
-  assert.equal(result.behavior, "deny");
-  assert.match(result.behavior === "deny" ? result.message : "", /wrong recipient/);
+test("user note on allow reaches the model as additional context", async () => {
+  const gate = createPreToolUseGate(policy, async () => ({ decision: "allow", note: "use prod" }));
+  const out = (await gate(input("Bash", {}), "t1", hookOpts)) as HookOut;
+  assert.equal(out.hookSpecificOutput?.permissionDecision, "allow");
+  assert.match(out.hookSpecificOutput?.additionalContext ?? "", /use prod/);
+});
+
+test("gated tool is denied (with note) on user deny", async () => {
+  const gate = createPreToolUseGate(policy, async () => ({ decision: "deny", note: "wrong recipient" }));
+  const out = (await gate(input("send_email", {}), "t1", hookOpts)) as HookOut;
+  assert.equal(out.hookSpecificOutput?.permissionDecision, "deny");
+  assert.match(out.hookSpecificOutput?.permissionDecisionReason ?? "", /wrong recipient/);
 });
