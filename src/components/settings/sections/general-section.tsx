@@ -6,6 +6,8 @@ import type { SettingsDraft, DraftSetter } from "../settings-types"
 interface Props {
   draft: SettingsDraft
   setDraft: DraftSetter
+  backgroundMode: boolean
+  onToggleBackgroundMode: (value: boolean) => void
 }
 
 const CLOSE_BEHAVIORS: Array<{ value: CloseBehavior; labelKey: string; hintKey: string }> = [
@@ -26,7 +28,7 @@ const CLOSE_BEHAVIORS: Array<{ value: CloseBehavior; labelKey: string; hintKey: 
   },
 ]
 
-export function GeneralSection({ draft, setDraft }: Props) {
+export function GeneralSection({ draft, setDraft, backgroundMode, onToggleBackgroundMode }: Props) {
   const { t } = useTranslation()
 
   return (
@@ -56,6 +58,25 @@ export function GeneralSection({ draft, setDraft }: Props) {
           <p className="text-xs text-muted-foreground">
             {t("settings.sections.general.autostartHint", {
               defaultValue: "Starts LLM Wiki automatically after you sign in to this computer.",
+            })}
+          </p>
+        </div>
+      </label>
+
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={backgroundMode}
+          onChange={(e) => onToggleBackgroundMode(e.target.checked)}
+          className="mt-0.5 h-4 w-4"
+        />
+        <div className="space-y-1">
+          <span className="text-sm">
+            {t("settings.sections.general.backgroundMode", { defaultValue: "Avvia in background (headless)" })}
+          </span>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.sections.general.backgroundModeHint", {
+              defaultValue: "Tieni l'app nel tray senza mostrare la finestra; abilita l'avvio automatico al login.",
             })}
           </p>
         </div>

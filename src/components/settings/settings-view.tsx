@@ -25,7 +25,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useZoomStore } from "@/stores/zoom-store"
-import { loadSourceWatchConfig, saveLanguage, saveTheme, loadTheme } from "@/lib/project-store"
+import { loadSourceWatchConfig, saveLanguage, saveTheme, loadTheme, saveBackgroundMode } from "@/lib/project-store"
 import { applyTheme, type AppTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
@@ -195,6 +195,8 @@ export function SettingsView() {
   const setApiConfig = useWikiStore((s) => s.setApiConfig)
   const generalConfig = useWikiStore((s) => s.generalConfig)
   const setGeneralConfig = useWikiStore((s) => s.setGeneralConfig)
+  const backgroundMode = useWikiStore((s) => s.backgroundMode)
+  const setBackgroundMode = useWikiStore((s) => s.setBackgroundMode)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
   // Drives the red dot next to the "About" row in the settings
@@ -588,10 +590,29 @@ export function SettingsView() {
     currentTheme,
   ])
 
+  const onToggleBackgroundMode = useCallback(async (value: boolean) => {
+    setBackgroundMode(value)
+    await saveBackgroundMode(value)
+    try {
+      const autostart = await import("@tauri-apps/plugin-autostart")
+      if (value) await autostart.enable()
+      else await autostart.disable()
+    } catch (err) {
+      console.error("Failed to toggle autostart:", err)
+    }
+  }, [setBackgroundMode])
+
   const body = useMemo(() => {
     switch (active) {
       case "general":
-        return <GeneralSection draft={draft} setDraft={setDraft} />
+        return (
+          <GeneralSection
+            draft={draft}
+            setDraft={setDraft}
+            backgroundMode={backgroundMode}
+            onToggleBackgroundMode={onToggleBackgroundMode}
+          />
+        )
       case "llm":
         // The LLM section manages its own store state (per-provider
         // configs + active preset) and persists directly — it bypasses

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest"
 import { useWikiStore } from "./wiki-store"
 
+describe("backgroundMode store action", () => {
+  it("setBackgroundMode updates the flag", () => {
+    useWikiStore.getState().setBackgroundMode(true)
+    expect(useWikiStore.getState().backgroundMode).toBe(true)
+    useWikiStore.getState().setBackgroundMode(false)
+    expect(useWikiStore.getState().backgroundMode).toBe(false)
+  })
+})
+
 describe("wiki preview store actions", () => {
   it("opens a path in the wiki preview and clears external previews", () => {
     useWikiStore.setState({

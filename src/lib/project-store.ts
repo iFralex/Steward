@@ -143,6 +143,24 @@ export async function loadMineruConfig(): Promise<MineruConfig | null> {
   return config ? normalizeMineruConfig(config) : null
 }
 
+// IMPORTANT: Keep this key in sync with the Rust background-mode
+// handler (Task B1), which reads this exact field name from
+// `app-state.json` at app launch to decide whether to start headless.
+const BACKGROUND_MODE_KEY = "backgroundMode"
+
+export async function saveBackgroundMode(value: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(BACKGROUND_MODE_KEY, value)
+  // Force-flush to disk so the Rust side sees the correct value on
+  // the next launch (same rationale as proxy config above).
+  await store.save()
+}
+
+export async function loadBackgroundMode(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(BACKGROUND_MODE_KEY)) ?? false
+}
+
 // IMPORTANT: Keep this key in sync with the Rust setup hook
 // (src-tauri/src/proxy.rs), which reads this exact field name from
 // the same `app-state.json` store at app launch to translate the
