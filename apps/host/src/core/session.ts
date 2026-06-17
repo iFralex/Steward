@@ -11,6 +11,12 @@ export type Emit = (event: ServerEvent) => void;
 
 export class Session {
   readonly id = randomUUID();
+  /**
+   * The Agent SDK session id of the last turn, used to `resume` the
+   * conversation on the next turn so the agent keeps its memory across
+   * messages (each turn is otherwise a fresh `query()`).
+   */
+  lastSessionId?: string;
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
 
   constructor(

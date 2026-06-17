@@ -26,9 +26,18 @@ export async function runTurn(
       systemPrompt: config.systemPrompt,
       mcpServers: config.mcpServers,
       canUseTool,
+      // Isolation: do NOT inherit the user's Claude Code settings/permissions
+      // (otherwise tools they've allowed — e.g. Bash — bypass our gate).
+      settingSources: [],
+      permissionMode: "default",
+      // Keep conversation memory across turns by resuming the prior session.
+      ...(session.lastSessionId ? { resume: session.lastSessionId } : {}),
     };
 
     for await (const message of query({ prompt, options })) {
+      if ("session_id" in message && typeof message.session_id === "string") {
+        session.lastSessionId = message.session_id;
+      }
       if (message.type === "assistant") {
         const text = extractAssistantText(message);
         if (text) emit({ type: "assistant_token", sessionId: session.id, text });

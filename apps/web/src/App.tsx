@@ -10,7 +10,19 @@ const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
 function App() {
   const host = useHostSocket(HOST_URL);
   const [draft, setDraft] = useState("");
+  const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const copyJson = async () => {
+    const json = JSON.stringify(
+      { messages: host.messages.map(({ role, text }) => ({ role, text })) },
+      null,
+      2,
+    );
+    await navigator.clipboard.writeText(json);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -27,9 +39,19 @@ function App() {
     <div className="bg-background text-foreground mx-auto flex h-screen max-w-2xl flex-col">
       <header className="flex items-center justify-between border-b px-4 py-3">
         <h1 className="text-sm font-semibold">Personal Agent</h1>
-        <span className="text-muted-foreground text-xs">
-          {host.connected ? (host.state === "running" ? "thinking…" : "connected") : "disconnected"}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-muted-foreground text-xs">
+            {host.connected ? (host.state === "running" ? "thinking…" : "connected") : "disconnected"}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={copyJson}
+            disabled={host.messages.length === 0}
+          >
+            {copied ? "Copied" : "Copy JSON"}
+          </Button>
+        </div>
       </header>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
