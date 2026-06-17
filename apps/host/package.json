@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.179",
     "@llm-wiki/protocol": "*",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
