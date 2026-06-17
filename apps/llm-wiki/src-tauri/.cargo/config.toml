@@ -1,0 +1,8 @@
+# Local build config to keep target/ small on a disk-constrained machine.
+# Disabling debug info dramatically shrinks artifacts for heavy deps
+# (lance/datafusion/arrow/tantivy). Not committed; machine-specific.
+[profile.dev]
+debug = false
+
+[profile.test]
+debug = false
