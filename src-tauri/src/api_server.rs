@@ -268,6 +268,8 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
         }
+        (&Method::Post, ["window", "show"]) => handle_window_show(app),
+        (&Method::Post, ["window", "hide"]) => handle_window_hide(app),
         (&Method::Post, ["projects", project_id, "chat"]) => {
             let _ = project_id;
             err(501, "Chat API is not implemented in the local Rust API server yet. The existing chat/RAG pipeline currently lives in the WebView; expose it after moving the shared chat pipeline behind a backend command.")
@@ -1509,6 +1511,23 @@ fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
         Ok(result) => ok(json!({ "ok": true, "projectId": project.id, "result": result })),
         Err(e) => err(500, e),
     }
+}
+
+fn handle_window_show(app: &AppHandle) -> ApiResponse {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    crate::tray::show_main_window(app);
+    ok(json!({ "ok": true, "shown": true }))
+}
+
+fn handle_window_hide(app: &AppHandle) -> ApiResponse {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    ok(json!({ "ok": true, "hidden": true }))
 }
 
 fn load_source_watch_config(
