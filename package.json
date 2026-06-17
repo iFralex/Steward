@@ -2,6 +2,7 @@
   "name": "llm-wiki-monorepo",
   "private": true,
   "workspaces": [
-    "apps/*"
+    "apps/host",
+    "packages/*"
   ]
 }
