@@ -61,9 +61,14 @@ Gli agenti esterni devono poter sia **interrogare** la wiki sia
 
 Il provider `claude-code` copre testo **e immagini** end-to-end. Quindi:
 
-1. **Testo (ingest/query)**: provider LLM = preset "Claude Code CLI
-   (local)" (`provider: "claude-code"`). Prerequisito:
+1. **Testo (tutte le feature)**: provider LLM principale = preset
+   "Claude Code CLI (local)" (`provider: "claude-code"`). Prerequisito:
    `npm i -g @anthropic-ai/claude-code` e login con l'abbonamento.
+   Esiste un **unico** `llmConfig` (in `src/stores/wiki-store.ts`) letto
+   da **tutte** le feature testuali — chat/query, ingest, deep research,
+   lint, review sweep, dedup, graph insights, enrich-wikilink — senza
+   override per-funzione. Quindi questo switch copre l'intera app
+   (tutto-o-niente sul provider testuale).
 2. **Vision (caption immagini): ATTIVA**, `multimodalProvider`
    impostato su `claude-code` con un modello vision-capable (i default
    Claude lo sono).
