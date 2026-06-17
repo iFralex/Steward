@@ -232,6 +232,26 @@ pub fn run() {
                     let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
                 }
             }
+            // Periodic vault backup (every 6h) — runs in the always-on
+            // background process. No-op unless enabled in settings.
+            if let Ok(dir) = app.path().app_data_dir() {
+                let store_path = dir.join("app-state.json");
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(6 * 60 * 60));
+                    let cfg = backup::read_backup_config(&store_path);
+                    if !cfg.enabled {
+                        continue;
+                    }
+                    let project = clip_server::current_project_path();
+                    if project.is_empty() {
+                        continue;
+                    }
+                    match backup::run_backup(&project, &cfg) {
+                        Ok(msg) => eprintln!("[backup] {msg}"),
+                        Err(e) => eprintln!("[backup] error: {e}"),
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

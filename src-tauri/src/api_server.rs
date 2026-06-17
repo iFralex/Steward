@@ -268,6 +268,7 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
         }
+        (&Method::Post, ["backup", "run"]) => handle_backup_run(app),
         (&Method::Post, ["window", "show"]) => handle_window_show(app),
         (&Method::Post, ["window", "hide"]) => handle_window_hide(app),
         (&Method::Post, ["projects", project_id, "chat"]) => {
@@ -1509,6 +1510,21 @@ fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
         source_watch_config,
     ) {
         Ok(result) => ok(json!({ "ok": true, "projectId": project.id, "result": result })),
+        Err(e) => err(500, e),
+    }
+}
+
+fn handle_backup_run(app: &AppHandle) -> ApiResponse {
+    let Some(dir) = app.path().app_data_dir().ok() else {
+        return err(500, "could not resolve app data dir");
+    };
+    let cfg = crate::backup::read_backup_config(&dir.join("app-state.json"));
+    let project = clip_server::current_project_path();
+    if project.is_empty() {
+        return err(400, "no current project");
+    }
+    match crate::backup::run_backup(&project, &cfg) {
+        Ok(status) => ok(json!({ "ok": true, "status": status })),
         Err(e) => err(500, e),
     }
 }

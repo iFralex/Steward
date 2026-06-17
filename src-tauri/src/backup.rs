@@ -4,6 +4,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct BackupConfig {
@@ -28,6 +29,26 @@ pub fn backup_gitignore() -> &'static str {
 .llm-wiki/lint.json\n\
 .llm-wiki/db.json\n\
 app-state.json\n"
+}
+
+/// Read backup config from app-state.json. Shape (top-level):
+/// `"backupConfig": { "enabled": bool, "remoteUrl": "https://github.com/.../x.git" }`.
+pub fn read_backup_config(store_path: &Path) -> BackupConfig {
+    let parsed = std::fs::read_to_string(store_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+    let cfg = parsed.as_ref().and_then(|p| p.get("backupConfig"));
+    BackupConfig {
+        enabled: cfg
+            .and_then(|c| c.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        remote_url: cfg
+            .and_then(|c| c.get("remoteUrl"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    }
 }
 
 fn git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
