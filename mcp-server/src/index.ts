@@ -128,6 +128,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
+    {
+      name: "llm_wiki_add_source",
+      description: "Add one or more source documents to a project's raw/sources/ folder and (by default) trigger ingest via rescan. Accepts a single file or a batch.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          sources: {
+            type: "array",
+            description: "Files to add. Each item is {filename, content}.",
+            items: {
+              type: "object",
+              properties: {
+                filename: { type: "string", description: "Flat filename (no path separators), e.g. notes.md" },
+                content: { type: "string", description: "UTF-8 file content." },
+              },
+              required: ["filename", "content"],
+              additionalProperties: false,
+            },
+          },
+          filename: { type: "string", description: "Single-file convenience: filename (use with `content`)." },
+          content: { type: "string", description: "Single-file convenience: content (use with `filename`)." },
+          rescan: { type: "boolean", description: "Trigger ingest rescan after writing. Defaults to true." },
+        },
+        additionalProperties: false,
+      },
+    },
   ],
 }))
 
@@ -191,6 +218,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "llm_wiki_rescan_sources": {
         await assertMcpEnabled()
         return textResult(JSON.stringify(await client.rescan(projectId(args)), null, 2))
+      }
+      case "llm_wiki_add_source": {
+        await assertMcpEnabled()
+        const rawSources = Array.isArray(args.sources) ? args.sources : []
+        const sources = rawSources.map((s) => {
+          const o = asObject(s)
+          return { filename: stringArg(o.filename, "filename"), content: stringArg(o.content, "content") }
+        })
+        const single = typeof args.filename === "string"
+        if (single) {
+          sources.push({ filename: stringArg(args.filename, "filename"), content: stringArg(args.content, "content") })
+        }
+        if (sources.length === 0) {
+          throw new McpError(ErrorCode.InvalidParams, "Provide `sources` (array) or `filename`+`content`.")
+        }
+        const result = await client.addSources(projectId(args), sources, boolArg(args.rescan, true))
+        return textResult(JSON.stringify(result, null, 2))
       }
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`)
