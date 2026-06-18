@@ -204,6 +204,49 @@ export class Store {
     this.raw.prepare("INSERT INTO sync_state(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
   }
 
+  upsertEmbedding(messageId: string, vector: number[], model: string, sourceHash: string): void {
+    const r = this.raw.prepare("SELECT rowid FROM messages WHERE message_id=?").get(messageId) as { rowid: number } | undefined;
+    if (!r) return;
+    const json = JSON.stringify(vector);
+    const rid = BigInt(r.rowid);
+    this.raw.prepare("DELETE FROM vec_messages WHERE rowid=?").run(rid);
+    this.raw.prepare("INSERT INTO vec_messages(rowid, embedding) VALUES (?, ?)").run(rid, json);
+    this.raw
+      .prepare(`INSERT INTO embed_state(message_id, model, dim, source_hash, embedded_at) VALUES (?,?,?,?,?)
+                ON CONFLICT(message_id) DO UPDATE SET model=excluded.model, dim=excluded.dim,
+                  source_hash=excluded.source_hash, embedded_at=excluded.embedded_at`)
+      .run(messageId, model, vector.length, sourceHash, Math.floor(Date.now() / 1000));
+  }
+
+  knn(queryVector: number[], k: number): { messageId: string; distance: number }[] {
+    const rows = this.raw
+      .prepare(`SELECT m.message_id as messageId, v.distance as distance
+                FROM (SELECT rowid, distance FROM vec_messages WHERE embedding MATCH ? ORDER BY distance LIMIT ?) v
+                JOIN messages m ON m.rowid = v.rowid
+                WHERE m.deleted=0`)
+      .all(JSON.stringify(queryVector), k) as { messageId: string; distance: number }[];
+    return rows;
+  }
+
+  embedStateFor(messageId: string): { sourceHash: string; model: string; dim: number } | undefined {
+    const r = this.raw.prepare("SELECT source_hash, model, dim FROM embed_state WHERE message_id=?").get(messageId) as
+      | { source_hash: string; model: string; dim: number } | undefined;
+    return r ? { sourceHash: r.source_hash, model: r.model, dim: r.dim } : undefined;
+  }
+
+  messagesNeedingEmbedding(limit: number): MessageRow[] {
+    const rows = this.raw
+      .prepare(`SELECT m.* FROM messages m LEFT JOIN embed_state e ON e.message_id = m.message_id
+                WHERE m.deleted=0 AND (e.message_id IS NULL OR m.updated_at > e.embedded_at)
+                ORDER BY m.date DESC LIMIT ?`)
+      .all(limit) as Record<string, unknown>[];
+    return rows.map(rowToMessage);
+  }
+
+  embeddedCount(): number {
+    return (this.raw.prepare("SELECT COUNT(*) c FROM embed_state").get() as { c: number }).c;
+  }
+
   enableVectors(): boolean {
     if (this.vecLoaded) return true;
     try {
