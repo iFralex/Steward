@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { parseEmlxFile } from "./emlx.ts";
+import { enumerateEmlx } from "./locator.ts";
 import { normalizeSubject } from "./threads.ts";
 import type { BlobStore } from "./blobstore.ts";
 import type { BodyState, MessageRow, Store } from "./store.ts";
@@ -88,4 +90,39 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
   });
   if (atts.length) deps.store.insertAttachments(messageId, atts);
   return messageId;
+}
+
+export async function backfill(deps: SyncDeps, mailRoot: string, opts: { recentMonths?: number } = {}): Promise<{ ingested: number }> {
+  const entries = enumerateEmlx(mailRoot).sort((a, b) => b.mtimeMs - a.mtimeMs); // recent-first
+  let ingested = 0;
+  for (const e of entries) {
+    const id = await ingestEmlxFile(deps, e);
+    if (id) {
+      ingested++;
+      deps.store.setState("backfill.last_path", e.path);
+      deps.store.setState("backfill.ingested", String(ingested));
+    }
+  }
+  return { ingested };
+}
+
+export async function reconcile(deps: SyncDeps, mailRoot: string): Promise<{ ingested: number; deleted: number }> {
+  const entries = enumerateEmlx(mailRoot);
+  const onDisk = new Set(entries.map((e) => e.path));
+  const known = deps.store.allMessageIdsByPath(); // path -> messageId
+  let ingested = 0;
+  for (const e of entries) {
+    if (!known.has(e.path)) {
+      const id = await ingestEmlxFile(deps, e);
+      if (id) ingested++;
+    }
+  }
+  let deleted = 0;
+  for (const [path, messageId] of known) {
+    if (!onDisk.has(path) && !existsSync(path)) {
+      deps.store.softDelete(messageId);
+      deleted++;
+    }
+  }
+  return { ingested, deleted };
 }
