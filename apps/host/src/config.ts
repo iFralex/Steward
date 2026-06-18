@@ -8,7 +8,6 @@
 import { fileURLToPath } from "node:url";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { defaultPolicy, type ToolPolicy } from "./core/tool-policy.ts";
-import { createDemoMcpServer } from "./tools/demo.ts";
 
 export interface HostConfig {
   port: number;
@@ -36,6 +35,11 @@ export function loadConfig(): HostConfig {
     process.env.LLM_WIKI_MCP_ENTRY ??
     fileURLToPath(new URL("../../llm-wiki/mcp-server/dist/index.js", import.meta.url));
 
+  // Mail MCP runs its TS entry directly via tsx (no build step).
+  const mailMcpEntry =
+    process.env.MAIL_MCP_ENTRY ??
+    fileURLToPath(new URL("../../mail-mcp/src/index.ts", import.meta.url));
+
   return {
     port: Number(process.env.HOST_PORT ?? 4317),
     model: process.env.HOST_MODEL,
@@ -44,7 +48,7 @@ export function loadConfig(): HostConfig {
     approvalTimeoutMs: Number(process.env.APPROVAL_TIMEOUT_MS ?? 5 * 60_000),
     mcpServers: {
       "llm-wiki": { type: "stdio", command: process.execPath, args: [llmWikiMcpEntry] },
-      demo: createDemoMcpServer(),
+      mail: { type: "stdio", command: process.execPath, args: ["--import", "tsx", mailMcpEntry] },
     },
   };
 }

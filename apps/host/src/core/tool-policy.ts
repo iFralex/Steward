@@ -52,5 +52,10 @@ export const defaultPolicy: ToolPolicy = {
     "mcp__llm-wiki__llm_wiki_search": "allow",
     "mcp__llm-wiki__llm_wiki_graph": "allow",
     "mcp__llm-wiki__llm_wiki_reviews": "allow",
+    // Mail MCP — read-only (send_email / reply stay gated by default-deny).
+    "mcp__mail__list_mailboxes": "allow",
+    "mcp__mail__search_messages": "allow",
+    "mcp__mail__read_message": "allow",
+    "mcp__mail__save_attachment": "allow",
   },
 };

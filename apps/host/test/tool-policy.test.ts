@@ -24,3 +24,12 @@ test("default policy is default-deny (gate) and allows read-only tools", () => {
   assert.equal(decideTool(defaultPolicy, "mcp__llm-wiki__llm_wiki_add_source"), "gate");
   assert.equal(decideTool(defaultPolicy, "send_email"), "gate");
 });
+
+test("mail read tools are allowed; mail send tools are gated", () => {
+  assert.equal(decideTool(defaultPolicy, "mcp__mail__search_messages"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__mail__read_message"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__mail__list_mailboxes"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__mail__save_attachment"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__mail__send_email"), "gate");
+  assert.equal(decideTool(defaultPolicy, "mcp__mail__reply"), "gate");
+});
