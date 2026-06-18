@@ -5,6 +5,7 @@
     "apps/host",
     "apps/web",
     "apps/mail-mcp",
+    "apps/mail-mirror",
     "packages/*"
   ]
 }
