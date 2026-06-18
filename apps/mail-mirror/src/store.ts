@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import * as sqliteVec from "sqlite-vec";
 import type { ParsedMessage } from "./types.ts";
 
 export type BodyState = "full" | "partial" | "none";
@@ -57,10 +58,14 @@ CREATE TABLE IF NOT EXISTS message_paths (
   is_partial INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_mpaths_message ON message_paths(message_id);
+CREATE TABLE IF NOT EXISTS embed_state (
+  message_id TEXT PRIMARY KEY, model TEXT, dim INTEGER, source_hash TEXT, embedded_at INTEGER
+);
 `;
 
 export class Store {
   raw: Database.Database;
+  private vecLoaded = false;
 
   constructor(db: Database.Database) {
     this.raw = db;
@@ -197,6 +202,22 @@ export class Store {
 
   setState(key: string, value: string): void {
     this.raw.prepare("INSERT INTO sync_state(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
+  }
+
+  enableVectors(): boolean {
+    if (this.vecLoaded) return true;
+    try {
+      sqliteVec.load(this.raw);
+      this.vecLoaded = true;
+      return true;
+    } catch {
+      this.vecLoaded = false;
+      return false;
+    }
+  }
+
+  ensureVecTable(dim: number): void {
+    this.raw.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(embedding float[${dim}])`);
   }
 
   close(): void {
