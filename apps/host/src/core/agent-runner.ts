@@ -29,6 +29,9 @@ export async function runTurn(
       // is authoritative regardless of the SDK's own "is this dangerous?"
       // judgement.
       hooks: { PreToolUse: [{ hooks: [gate] }] },
+      // Hide account connectors (Gmail/Google) the SDK exposes from the login;
+      // the policy's deny-prefixes are the deterministic backstop.
+      disallowedTools: config.disallowedTools,
       // Isolation: do NOT inherit the user's Claude Code settings/permissions.
       settingSources: [],
       permissionMode: "default",

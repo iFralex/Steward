@@ -41,8 +41,19 @@ export function createPreToolUseGate(
     if (input.hook_event_name !== "PreToolUse") return {};
 
     const toolName = input.tool_name;
-    if (decideTool(policy, toolName) === "allow") {
+    const decision = decideTool(policy, toolName);
+    if (decision === "allow") {
       return allow();
+    }
+    if (decision === "deny") {
+      // Hard deny — never prompt the user. Steer the agent back to Apple Mail.
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: `Tool ${toolName} is disabled. Use Apple Mail (mcp__mail__*) for email.`,
+        },
+      };
     }
 
     const outcome = await requestApproval({ tool: toolName, input: toRecord(input.tool_input) });

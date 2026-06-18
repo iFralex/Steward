@@ -26,6 +26,17 @@ test("default policy is default-deny (gate) and allows read-only tools", () => {
   assert.equal(decideTool(defaultPolicy, "send_email"), "gate");
 });
 
+test("account connectors (Gmail/Google) are hard-denied via deny-prefixes", () => {
+  assert.equal(decideTool(defaultPolicy, "mcp__claude_ai_Gmail__authenticate"), "deny");
+  assert.equal(decideTool(defaultPolicy, "mcp__claude_ai_Google_Calendar__authenticate"), "deny");
+  assert.equal(decideTool(defaultPolicy, "mcp__claude_ai_Google_Drive__search_files"), "deny");
+});
+
+test("deny-prefixes do not affect our own mail/wiki tools", () => {
+  assert.equal(decideTool(defaultPolicy, "mcp__mail__search_messages"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__llm-wiki__llm_wiki_search"), "allow");
+});
+
 test("mail read tools are allowed; mail send tools are gated", () => {
   assert.equal(decideTool(defaultPolicy, "mcp__mail__search_messages"), "allow");
   assert.equal(decideTool(defaultPolicy, "mcp__mail__read_message"), "allow");

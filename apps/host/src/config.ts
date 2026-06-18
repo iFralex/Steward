@@ -16,6 +16,8 @@ export interface HostConfig {
   policy: ToolPolicy;
   approvalTimeoutMs: number;
   mcpServers: Record<string, McpServerConfig>;
+  /** Tools hidden from the agent entirely (account connectors we don't want). */
+  disallowedTools: string[];
 }
 
 const DEFAULT_SYSTEM_PROMPT = [
@@ -23,10 +25,24 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Use the LLM Wiki tools (mcp__llm-wiki__*) as your long-term memory:",
   "search and read the wiki before answering questions about the user's",
   "knowledge, projects, or documents.",
+  "For email, use ONLY Apple Mail (mcp__mail__*) — search, read, send, reply.",
+  "Do NOT use Gmail or other Google/account connectors; they are disabled.",
   "Sensitive actions (sending email, running commands, writing files)",
   "require the user's approval — propose them via the appropriate tool",
   "and the host will ask the user to confirm.",
 ].join(" ");
+
+/**
+ * Account-level connectors the Agent SDK exposes from the Claude.ai login that
+ * we hide from the agent (email is handled by Apple Mail only). The policy's
+ * deny-prefixes are the deterministic backstop; this just stops the agent from
+ * seeing/attempting them.
+ */
+const DISALLOWED_TOOLS = [
+  "mcp__claude_ai_Gmail",
+  "mcp__claude_ai_Google_Calendar",
+  "mcp__claude_ai_Google_Drive",
+];
 
 export function loadConfig(): HostConfig {
   // Path to the LLM Wiki MCP server entry (built). Requires the LLM Wiki
@@ -50,5 +66,6 @@ export function loadConfig(): HostConfig {
       "llm-wiki": { type: "stdio", command: process.execPath, args: [llmWikiMcpEntry] },
       mail: { type: "stdio", command: process.execPath, args: ["--import", "tsx", mailMcpEntry] },
     },
+    disallowedTools: DISALLOWED_TOOLS,
   };
 }

@@ -12,18 +12,32 @@
  * reverse → gate.
  */
 
-export type ToolDecision = "allow" | "gate";
+export type ToolDecision = "allow" | "gate" | "deny";
 
 export interface ToolPolicy {
   /** Decision for any tool not matched by an explicit rule. */
   default: ToolDecision;
   /** Exact tool-name → decision overrides. */
   rules: Record<string, ToolDecision>;
+  /**
+   * Tool-name prefixes that are hard-denied (no user prompt). Used to block
+   * account-level connectors the Agent SDK exposes but the host doesn't
+   * configure (e.g. the Claude.ai Gmail/Google connectors) — we want email to
+   * go through Apple Mail (mcp__mail__*) only. Explicit `rules` win over this.
+   */
+  denyPrefixes?: string[];
 }
 
-/** Decide whether a tool call runs automatically or must be confirmed. */
+/**
+ * Decide whether a tool call runs automatically (`allow`), must be confirmed
+ * (`gate`), or is rejected outright without asking the user (`deny`). Explicit
+ * rules take precedence, then deny-prefixes, then the default.
+ */
 export function decideTool(policy: ToolPolicy, toolName: string): ToolDecision {
-  return policy.rules[toolName] ?? policy.default;
+  const explicit = policy.rules[toolName];
+  if (explicit) return explicit;
+  if (policy.denyPrefixes?.some((p) => toolName.startsWith(p))) return "deny";
+  return policy.default;
 }
 
 /**
@@ -37,6 +51,9 @@ export function decideTool(policy: ToolPolicy, toolName: string): ToolDecision {
  */
 export const defaultPolicy: ToolPolicy = {
   default: "gate",
+  // Block account-level connectors the SDK exposes from the Claude.ai account
+  // (Gmail, Google Calendar/Drive, …). Email goes through Apple Mail only.
+  denyPrefixes: ["mcp__claude_ai_", "mcp__plugin_"],
   rules: {
     // Agent SDK built-ins — read-only.
     WebSearch: "allow",
