@@ -47,3 +47,9 @@ test("http auth error -> null with API error string", async () => {
   assert.equal(r.vector, null);
   assert.match(r.error!, /API 401/);
 });
+
+test("empty endpoint returns null vector with no error (wiki parity)", async () => {
+  const r = await fetchEmbedding("x", { endpoint: "", model: "m" }, depsReturning([{ ok: true, json: { data: [{ embedding: [1] }] } }]));
+  assert.equal(r.vector, null);
+  assert.equal(r.error, undefined);
+});

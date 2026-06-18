@@ -18,7 +18,7 @@ export async function fetchEmbedding(
   deps: EmbeddingDeps,
   maxRetries = 3,
 ): Promise<EmbeddingResult> {
-  if (!cfg.endpoint) return { vector: null, error: "No endpoint configured" }
+  if (!cfg.endpoint) return { vector: null }
 
   const isGoogleNative = isGoogleEmbeddingConfig(cfg)
   const isDoubaoMultimodal = isDoubaoMultimodalEmbeddingConfig(cfg)
