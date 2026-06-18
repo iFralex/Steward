@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
@@ -42,5 +42,28 @@ test("ingest stores message and groups a reply into the same thread", async () =
   const t1 = store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("root@x") as { thread_id: number };
   const t2 = store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("reply@x") as { thread_id: number };
   assert.ok(t1.thread_id != null && t1.thread_id === t2.thread_id);
+  store.close();
+});
+
+test("ingest is idempotent: re-ingesting the same message does not inflate thread counters", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ing-idem-"));
+  const store = Store.open(":memory:");
+  const blobs = new BlobStore(join(dir, "blobs"));
+  const deps = { store, blobs };
+
+  const e1: EmlxEntry = { path: emlx(dir, "1.emlx", ROOT("idem@x")), account: "ACC", mailbox: "INBOX", isPartial: false, mtimeMs: 1 };
+
+  await ingestEmlxFile(deps, e1);
+  await ingestEmlxFile(deps, e1); // second ingest of the same message
+
+  const msg = store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("idem@x") as { thread_id: number } | undefined;
+  assert.ok(msg != null, "message should exist exactly once");
+
+  const thread = store.raw.prepare("SELECT msg_count FROM threads WHERE id=?").get(msg!.thread_id) as { msg_count: number };
+  assert.equal(thread.msg_count, 1, "msg_count must be 1, not 2, after duplicate ingest");
+
+  const rows = store.raw.prepare("SELECT COUNT(*) as cnt FROM messages WHERE message_id=?").get("idem@x") as { cnt: number };
+  assert.equal(rows.cnt, 1, "message row count must be 1");
+
   store.close();
 });

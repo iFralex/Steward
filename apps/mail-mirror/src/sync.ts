@@ -77,9 +77,10 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
     gmThrid: parsed.gmThrid,
     size: parsed.attachments.reduce((n, a) => n + a.size, parsed.bodyText.length),
   };
+  const isNew = deps.store.getMessage(messageId) === undefined;
   deps.store.upsertMessage(row);
   deps.store.setThreadId(messageId, threadId);
-  bumpThread(deps.store, threadId, parsed.date);
+  if (isNew) bumpThread(deps.store, threadId, parsed.date);
 
   const atts = parsed.attachments.map((a) => {
     const { sha256, relPath } = deps.blobs.put(a.content);
