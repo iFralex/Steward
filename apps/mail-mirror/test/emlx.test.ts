@@ -36,6 +36,20 @@ test("sliceMessageBytes returns exactly the RFC822 message (by byte count)", () 
   assert.ok(!msg.includes("<plist>"));
 });
 
+test("parseEmlx collects all addresses when To has multiple recipients", async () => {
+  const rfc =
+    "From: sender@example.com\r\n" +
+    "To: a@x.com, b@x.com\r\n" +
+    "Subject: Multi-recipient\r\n" +
+    "Message-ID: <multi@example.com>\r\n" +
+    "Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+    "body\r\n";
+  const m = await parseEmlx(makeEmlx(rfc));
+  assert.ok(m.to.includes("a@x.com"), "should include a@x.com");
+  assert.ok(m.to.includes("b@x.com"), "should include b@x.com");
+  assert.equal(m.to.length, 2);
+});
+
 test("parseEmlx extracts headers, body, threading, attachments", async () => {
   const m = await parseEmlx(makeEmlx(RFC));
   assert.equal(m.messageId, "abc123@trenitalia.it");

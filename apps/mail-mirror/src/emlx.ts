@@ -30,8 +30,10 @@ export async function parseEmlx(buf: Buffer): Promise<ParsedMessage> {
   const m = await simpleParser(sliceMessageBytes(buf));
   const fromAddr = m.from?.value?.[0]?.address ?? "";
   const fromName = m.from?.value?.[0]?.name ?? "";
-  const toList = (m.to && !Array.isArray(m.to) ? m.to.value : []).map((a) => a.address ?? "").filter(Boolean);
-  const ccList = (m.cc && !Array.isArray(m.cc) ? m.cc.value : []).map((a) => a.address ?? "").filter(Boolean);
+  const addrs = (v: typeof m.to) =>
+    (Array.isArray(v) ? v : v ? [v] : []).flatMap((g) => g.value).map((a) => a.address ?? "").filter(Boolean);
+  const toList = addrs(m.to);
+  const ccList = addrs(m.cc);
   const bodyText = m.text ?? (m.html ? String(m.html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
   const attachments: ParsedAttachment[] = (m.attachments ?? []).map((a) => ({
     filename: a.filename ?? "attachment",
@@ -51,7 +53,7 @@ export async function parseEmlx(buf: Buffer): Promise<ParsedMessage> {
     bodyText,
     inReplyTo: normalizeId(m.inReplyTo),
     references: normalizeRefs(m.references),
-    gmThrid: gm ? String(gm) : null,
+    gmThrid: typeof gm === "string" ? gm : null,
     attachments,
   };
 }
