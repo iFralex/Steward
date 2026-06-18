@@ -1,0 +1,181 @@
+import Database from "better-sqlite3";
+import type { ParsedMessage } from "./types.ts";
+
+export type BodyState = "full" | "partial" | "none";
+
+export interface MessageRow {
+  messageId: string;
+  account: string;
+  mailbox: string;
+  fromName: string;
+  fromAddr: string;
+  to: string[];
+  cc: string[];
+  subject: string;
+  date: number;
+  bodyText: string;
+  bodyState: BodyState;
+  source: "emlx" | "applescript";
+  emlxPath: string | null;
+  inReplyTo: string | null;
+  references: string[];
+  gmThrid: string | null;
+  size: number;
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS messages (
+  message_id TEXT PRIMARY KEY, account TEXT NOT NULL, mailbox TEXT,
+  from_name TEXT, from_addr TEXT, to_addrs TEXT, cc_addrs TEXT,
+  subject TEXT, date INTEGER, snippet TEXT, body_text TEXT,
+  body_state TEXT NOT NULL, source TEXT NOT NULL, emlx_path TEXT,
+  in_reply_to TEXT, reference_ids TEXT, gm_thrid TEXT, thread_id INTEGER,
+  flagged INTEGER DEFAULT 0, unread INTEGER DEFAULT 0, size INTEGER,
+  deleted INTEGER DEFAULT 0, ingested_at INTEGER, updated_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
+CREATE INDEX IF NOT EXISTS idx_messages_account_date ON messages(account, date);
+CREATE INDEX IF NOT EXISTS idx_messages_emlx_path ON messages(emlx_path);
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  subject, from_addr, from_name, to_addrs, body_text
+);
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY, message_id TEXT NOT NULL, filename TEXT, mime TEXT,
+  size INTEGER, sha256 TEXT NOT NULL, blob_path TEXT, downloaded INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_att_message ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_att_sha ON attachments(sha256);
+CREATE TABLE IF NOT EXISTS threads (
+  id INTEGER PRIMARY KEY, subject TEXT, participants TEXT,
+  first_date INTEGER, last_date INTEGER, msg_count INTEGER
+);
+CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY, value TEXT);
+`;
+
+export class Store {
+  raw: Database.Database;
+
+  constructor(db: Database.Database) {
+    this.raw = db;
+    db.pragma("journal_mode = WAL");
+    db.exec(SCHEMA);
+  }
+
+  static open(path: string): Store {
+    return new Store(new Database(path));
+  }
+
+  upsertMessage(r: MessageRow): void {
+    const snippet = r.bodyText.slice(0, 200);
+    const now = Math.floor(Date.now() / 1000);
+    this.raw
+      .prepare(
+        `INSERT INTO messages (message_id, account, mailbox, from_name, from_addr, to_addrs, cc_addrs,
+           subject, date, snippet, body_text, body_state, source, emlx_path, in_reply_to, reference_ids,
+           gm_thrid, size, deleted, ingested_at, updated_at)
+         VALUES (@message_id,@account,@mailbox,@from_name,@from_addr,@to_addrs,@cc_addrs,
+           @subject,@date,@snippet,@body_text,@body_state,@source,@emlx_path,@in_reply_to,@reference_ids,
+           @gm_thrid,@size,0,@now,@now)
+         ON CONFLICT(message_id) DO UPDATE SET
+           account=excluded.account, mailbox=excluded.mailbox, from_name=excluded.from_name,
+           from_addr=excluded.from_addr, to_addrs=excluded.to_addrs, cc_addrs=excluded.cc_addrs,
+           subject=excluded.subject, date=excluded.date, snippet=excluded.snippet,
+           body_text=excluded.body_text, body_state=excluded.body_state, source=excluded.source,
+           emlx_path=excluded.emlx_path, in_reply_to=excluded.in_reply_to,
+           reference_ids=excluded.reference_ids, gm_thrid=excluded.gm_thrid, size=excluded.size,
+           deleted=0, updated_at=@now`,
+      )
+      .run({
+        message_id: r.messageId, account: r.account, mailbox: r.mailbox,
+        from_name: r.fromName, from_addr: r.fromAddr,
+        to_addrs: JSON.stringify(r.to), cc_addrs: JSON.stringify(r.cc),
+        subject: r.subject, date: r.date, snippet, body_text: r.bodyText,
+        body_state: r.bodyState, source: r.source, emlx_path: r.emlxPath,
+        in_reply_to: r.inReplyTo, reference_ids: JSON.stringify(r.references),
+        gm_thrid: r.gmThrid, size: r.size, now,
+      });
+    this.reindexFts(r.messageId);
+  }
+
+  private reindexFts(messageId: string): void {
+    const m = this.raw.prepare("SELECT rowid, subject, from_addr, from_name, to_addrs, body_text FROM messages WHERE message_id=?").get(messageId) as
+      | { rowid: number; subject: string; from_addr: string; from_name: string; to_addrs: string; body_text: string }
+      | undefined;
+    if (!m) return;
+    this.raw.prepare("DELETE FROM messages_fts WHERE rowid=?").run(m.rowid);
+    this.raw
+      .prepare("INSERT INTO messages_fts(rowid, subject, from_addr, from_name, to_addrs, body_text) VALUES (?,?,?,?,?,?)")
+      .run(m.rowid, m.subject, m.from_addr, m.from_name, m.to_addrs, m.body_text);
+  }
+
+  insertAttachments(messageId: string, atts: { filename: string; mime: string; size: number; sha256: string; relPath: string; downloaded: boolean }[]): void {
+    this.raw.prepare("DELETE FROM attachments WHERE message_id=?").run(messageId);
+    const ins = this.raw.prepare("INSERT INTO attachments (message_id, filename, mime, size, sha256, blob_path, downloaded) VALUES (?,?,?,?,?,?,?)");
+    for (const a of atts) ins.run(messageId, a.filename, a.mime, a.size, a.sha256, a.relPath, a.downloaded ? 1 : 0);
+  }
+
+  setThreadId(messageId: string, threadId: number): void {
+    this.raw.prepare("UPDATE messages SET thread_id=? WHERE message_id=?").run(threadId, messageId);
+  }
+
+  getMessage(messageId: string): MessageRow | undefined {
+    const m = this.raw.prepare("SELECT * FROM messages WHERE message_id=?").get(messageId) as Record<string, unknown> | undefined;
+    return m ? rowToMessage(m) : undefined;
+  }
+
+  searchFts(query: string, limit: number): MessageRow[] {
+    const rows = this.raw
+      .prepare(
+        `SELECT m.* FROM messages_fts f JOIN messages m ON m.rowid=f.rowid
+         WHERE messages_fts MATCH ? AND m.deleted=0 ORDER BY rank LIMIT ?`,
+      )
+      .all(query, limit) as Record<string, unknown>[];
+    return rows.map(rowToMessage);
+  }
+
+  softDelete(messageId: string): void {
+    this.raw.prepare("UPDATE messages SET deleted=1, updated_at=? WHERE message_id=?").run(Math.floor(Date.now() / 1000), messageId);
+  }
+
+  allMessageIdsByPath(): Map<string, string> {
+    const rows = this.raw.prepare("SELECT message_id, emlx_path FROM messages WHERE emlx_path IS NOT NULL AND deleted=0").all() as { message_id: string; emlx_path: string }[];
+    const map = new Map<string, string>();
+    for (const r of rows) map.set(r.emlx_path, r.message_id);
+    return map;
+  }
+
+  getState(key: string): string | undefined {
+    const r = this.raw.prepare("SELECT value FROM sync_state WHERE key=?").get(key) as { value: string } | undefined;
+    return r?.value;
+  }
+
+  setState(key: string, value: string): void {
+    this.raw.prepare("INSERT INTO sync_state(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
+  }
+
+  close(): void {
+    this.raw.close();
+  }
+}
+
+function rowToMessage(m: Record<string, unknown>): MessageRow {
+  return {
+    messageId: m.message_id as string,
+    account: m.account as string,
+    mailbox: (m.mailbox as string) ?? "",
+    fromName: (m.from_name as string) ?? "",
+    fromAddr: (m.from_addr as string) ?? "",
+    to: JSON.parse((m.to_addrs as string) || "[]"),
+    cc: JSON.parse((m.cc_addrs as string) || "[]"),
+    subject: (m.subject as string) ?? "",
+    date: (m.date as number) ?? 0,
+    bodyText: (m.body_text as string) ?? "",
+    bodyState: (m.body_state as BodyState) ?? "none",
+    source: (m.source as "emlx" | "applescript") ?? "emlx",
+    emlxPath: (m.emlx_path as string) ?? null,
+    inReplyTo: (m.in_reply_to as string) ?? null,
+    references: JSON.parse((m.reference_ids as string) || "[]"),
+    gmThrid: (m.gm_thrid as string) ?? null,
+    size: (m.size as number) ?? 0,
+  };
+}
