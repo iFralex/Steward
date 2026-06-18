@@ -266,6 +266,30 @@ threads reconstructed, kept live via FSEvents + nightly reconcile, with an
 AppleScript fallback for not-yet-downloaded content; CLI (`backfill`, `watch`,
 `reconcile`, `status`) and a LaunchAgent for persistent operation.
 
+## Spike validation (2026-06-18)
+
+The risky assumptions were prototyped before planning; all hold:
+
+- **Stack on Node 24:** `better-sqlite3` compiles natively, FTS5 + WAL work;
+  `mailparser` decodes encoded subjects, bodies, attachments, and threading
+  headers; `chokidar` FSEvents `add` events fire. 8/8 spike checks passed.
+- **Real store layout confirmed:** `~/Library/Mail/V10/<account-UUID>/<Mailbox>.mbox/<UUID>/Data/Messages/N.emlx`.
+  Discover the version dir via glob `V*`.
+- **`.emlx` format confirmed:** first line = byte count (may have trailing
+  spaces), then the RFC822 message, then a plist trailer. **Parse by BYTES**
+  (`buffer.subarray(nl+1, nl+1+count)`), not by characters — the count is
+  UTF-8 byte length. A real full message parsed cleanly with a 3-deep
+  `References` chain.
+- **Full Disk Access is grantable and works** (granted to VS Code for the
+  spike; production grant goes to the LaunchAgent daemon).
+- **Coverage reality (important):** this Mac has **~36.6k full `.emlx`** and
+  **~32.2k `.partial.emlx`** — roughly **47% of messages are header-only stubs**
+  (body not downloaded). The AppleScript fallback / "request download" path is
+  therefore **core, not an edge case**: backfill must record `body_state` per
+  message and the reader must be able to fill partials on demand. Consider an
+  optional bulk pre-download (Mail account setting "Download all messages") to
+  raise local coverage.
+
 ## Global constraints (apply to every task in the plan)
 
 - **Reuse over reimplement** (very important): the AppleScript fallback reuses
