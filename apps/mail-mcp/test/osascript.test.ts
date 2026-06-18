@@ -18,3 +18,20 @@ test("runOsa uses the injected exec and returns its output", async () => {
   const out = await runOsa("script", { exec: async (s) => `ran:${s}` });
   assert.equal(out, "ran:script");
 });
+
+test("mapOsaError flags the transient -609 connection error", () => {
+  assert.match(mapOsaError("execution error: ... (-609)"), /-609/);
+});
+
+test("runOsa retries once on a transient -609 failure", async () => {
+  let calls = 0;
+  const out = await runOsa("script", {
+    exec: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("Mail connection was temporarily invalid (-609).");
+      return "ok";
+    },
+  });
+  assert.equal(out, "ok");
+  assert.equal(calls, 2);
+});

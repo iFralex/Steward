@@ -9,7 +9,15 @@ export function mapOsaError(stderr: string): string {
   if (/-1743\b|Not authorized/i.test(stderr)) {
     return "Automation permission for Mail is not granted. Allow it in System Settings → Privacy & Security → Automation.";
   }
+  if (/-609\b|connection is invalid/i.test(stderr)) {
+    return "Mail connection was temporarily invalid (-609). Retried.";
+  }
   return stderr.trim() || "osascript failed";
+}
+
+/** Transient failures worth one automatic retry. */
+function isTransient(message: string): boolean {
+  return /-609\b|connection is invalid|temporarily invalid/i.test(message);
 }
 
 const defaultExec: OsaExec = (script, timeoutMs) =>
@@ -30,5 +38,13 @@ export async function runOsa(
   opts: { timeoutMs?: number; exec?: OsaExec } = {},
 ): Promise<string> {
   const exec = opts.exec ?? defaultExec;
-  return exec(script, opts.timeoutMs ?? 30_000);
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  try {
+    return await exec(script, timeoutMs);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!isTransient(message)) throw err;
+    await new Promise((r) => setTimeout(r, 300));
+    return exec(script, timeoutMs);
+  }
 }

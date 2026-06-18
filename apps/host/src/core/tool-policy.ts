@@ -44,6 +44,8 @@ export const defaultPolicy: ToolPolicy = {
     Read: "allow",
     Glob: "allow",
     Grep: "allow",
+    // Internal tool discovery (no side effects).
+    ToolSearch: "allow",
     // LLM Wiki MCP — read-only (the wiki as memory).
     "mcp__llm-wiki__llm_wiki_status": "allow",
     "mcp__llm-wiki__llm_wiki_projects": "allow",

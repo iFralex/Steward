@@ -16,6 +16,7 @@ test("decideTool falls back to the default for unmatched tools", () => {
 test("default policy is default-deny (gate) and allows read-only tools", () => {
   // Read-only → allowed automatically.
   assert.equal(decideTool(defaultPolicy, "WebSearch"), "allow");
+  assert.equal(decideTool(defaultPolicy, "ToolSearch"), "allow");
   assert.equal(decideTool(defaultPolicy, "mcp__llm-wiki__llm_wiki_search"), "allow");
   assert.equal(decideTool(defaultPolicy, "mcp__llm-wiki__llm_wiki_read_file"), "allow");
   // Side-effecting / unknown → gated (requires confirmation).
