@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { esc, sendScript, searchScript, replyScript } from "../src/applescript.ts";
+import { esc, sendScript, searchScript, replyScript, mailboxesScript, readScript } from "../src/applescript.ts";
 
 test("esc escapes backslashes and quotes for AppleScript literals", () => {
   assert.equal(esc('a "b" \\ c'), 'a \\"b\\" \\\\ c');
@@ -25,4 +25,20 @@ test("replyScript sends a reply and honours replyAll", () => {
   const s = replyScript({ messageId: "id1", body: "ok", replyAll: true });
   assert.ok(s.includes("reply to all true"));
   assert.ok(/\bsend\b/.test(s));
+});
+
+test("mailboxesScript includes the account email addresses", () => {
+  assert.ok(mailboxesScript().includes("email addresses of acct"));
+});
+
+test("searchScript with account filters by name OR email address", () => {
+  const s = searchScript({ account: "alessio.antonucci@mail.polimi.it", sender: "x" });
+  assert.ok(s.includes('email addresses contains "alessio.antonucci@mail.polimi.it"'));
+  assert.ok(s.includes("repeat with acct in (accounts"));
+});
+
+test("readScript locates the message across all mailboxes, not just inbox", () => {
+  const s = readScript("id1");
+  assert.ok(s.includes("repeat with acct in accounts"));
+  assert.ok(!s.includes("message of inbox"));
 });

@@ -17,6 +17,8 @@ export interface MessageDetail extends MessageSummary {
 
 export interface Mailbox {
   account: string;
+  /** Email address(es) configured for this account — lets the agent map an address to its account. */
+  emails: string[];
   name: string;
 }
 

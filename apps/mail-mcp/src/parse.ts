@@ -24,7 +24,11 @@ export function parseSummaries(out: string): MessageSummary[] {
 }
 
 export function parseMailboxes(out: string): Mailbox[] {
-  return records(out).map(([account, name]) => ({ account: account ?? "", name: name ?? "" }));
+  return records(out).map(([account, emails, name]) => ({
+    account: account ?? "",
+    emails: emails ? emails.split(", ").filter((e) => e.length > 0) : [],
+    name: name ?? "",
+  }));
 }
 
 export function parseDetail(out: string): { subject: string; from: string; date: string; body: string } {

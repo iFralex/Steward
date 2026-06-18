@@ -14,11 +14,13 @@ test("parseSummaries splits records and fields", () => {
   assert.equal(rows[0].mailbox, "Inbox");
 });
 
-test("parseMailboxes parses account/name", () => {
-  const out = ["Gmail", "Sent"].join(US) + RS + ["iCloud", "Drafts"].join(US) + RS;
+test("parseMailboxes parses account, emails, name", () => {
+  const out =
+    ["Gmail", "a@gmail.com, a2@gmail.com", "Sent"].join(US) + RS +
+    ["Polimi", "alessio.antonucci@mail.polimi.it", "Drafts"].join(US) + RS;
   assert.deepEqual(parseMailboxes(out), [
-    { account: "Gmail", name: "Sent" },
-    { account: "iCloud", name: "Drafts" },
+    { account: "Gmail", emails: ["a@gmail.com", "a2@gmail.com"], name: "Sent" },
+    { account: "Polimi", emails: ["alessio.antonucci@mail.polimi.it"], name: "Drafts" },
   ]);
 });
 
