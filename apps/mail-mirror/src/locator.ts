@@ -32,6 +32,11 @@ export function enumerateEmlx(mailRoot: string): EmlxEntry[] {
   return out;
 }
 
+export function entryForPath(mailRoot: string, path: string, mtimeMs: number): import("./types.ts").EmlxEntry {
+  const { account, mailbox } = accountAndMailbox(mailRoot, path);
+  return { path, account, mailbox, isPartial: path.endsWith(".partial.emlx"), mtimeMs };
+}
+
 function accountAndMailbox(mailRoot: string, filePath: string): { account: string; mailbox: string } {
   const rel = filePath.slice(mailRoot.length + 1);
   const parts = rel.split("/");
