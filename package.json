@@ -4,6 +4,7 @@
   "workspaces": [
     "apps/host",
     "apps/web",
+    "apps/mail-mcp",
     "packages/*"
   ]
 }
