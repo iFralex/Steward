@@ -46,3 +46,16 @@ test("state get/set round-trips", () => {
   assert.equal(s.getState("missing"), undefined);
   s.close();
 });
+
+test("getMessageIdByPath: stored message found; unknown path returns undefined; soft-deleted row returns undefined", () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage(row({ messageId: "path1@x", emlxPath: "/mail/1.emlx" }));
+  // stored message is found by emlx_path
+  assert.equal(s.getMessageIdByPath("/mail/1.emlx"), "path1@x");
+  // unknown path returns undefined
+  assert.equal(s.getMessageIdByPath("/mail/nope.emlx"), undefined);
+  // soft-deleted row returns undefined
+  s.softDelete("path1@x");
+  assert.equal(s.getMessageIdByPath("/mail/1.emlx"), undefined);
+  s.close();
+});

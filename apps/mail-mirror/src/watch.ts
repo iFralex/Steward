@@ -11,7 +11,7 @@ export function startWatch(deps: SyncDeps, mailRoot: string): { close(): Promise
 
   const onUpsert = async (path: string) => {
     if (!path.endsWith(".emlx")) return;
-    let mtimeMs = Date.now();
+    let mtimeMs: number;
     try {
       mtimeMs = statSync(path).mtimeMs;
     } catch {
@@ -22,10 +22,14 @@ export function startWatch(deps: SyncDeps, mailRoot: string): { close(): Promise
 
   const onUnlink = (path: string) => {
     if (!path.endsWith(".emlx")) return;
-    const row = deps.store.raw.prepare("SELECT message_id FROM messages WHERE emlx_path=?").get(path) as { message_id: string } | undefined;
-    if (row) deps.store.softDelete(row.message_id);
+    const id = deps.store.getMessageIdByPath(path);
+    if (id) deps.store.softDelete(id);
   };
 
-  watcher.on("add", onUpsert).on("change", onUpsert).on("unlink", onUnlink);
+  watcher
+    .on("add", onUpsert)
+    .on("change", onUpsert)
+    .on("unlink", onUnlink)
+    .on("error", (err) => console.error("[mail-mirror watcher]", err));
   return { close: () => watcher.close() };
 }

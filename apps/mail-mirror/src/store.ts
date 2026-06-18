@@ -137,6 +137,13 @@ export class Store {
     this.raw.prepare("UPDATE messages SET deleted=1, updated_at=? WHERE message_id=?").run(Math.floor(Date.now() / 1000), messageId);
   }
 
+  getMessageIdByPath(emlxPath: string): string | undefined {
+    const r = this.raw
+      .prepare("SELECT message_id FROM messages WHERE emlx_path=? AND deleted=0")
+      .get(emlxPath) as { message_id: string } | undefined;
+    return r?.message_id;
+  }
+
   allMessageIdsByPath(): Map<string, string> {
     const rows = this.raw.prepare("SELECT message_id, emlx_path FROM messages WHERE emlx_path IS NOT NULL AND deleted=0").all() as { message_id: string; emlx_path: string }[];
     const map = new Map<string, string>();
