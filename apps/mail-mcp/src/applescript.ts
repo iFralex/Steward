@@ -82,30 +82,36 @@ export function searchScript(args: SearchArgs): string {
     ].join("\n");
   }
 
-  // Targeted: iterate the matching account(s)/mailbox(es). `account` matches
-  // the account name OR one of its email addresses.
-  const acctWhose = args.account
-    ? ` whose (name is "${esc(args.account)}" or email addresses contains "${esc(args.account)}")`
-    : "";
-  const mbWhose = args.mailbox ? ` whose name is "${esc(args.mailbox)}"` : "";
+  // Targeted: iterate the matching account(s)/mailbox(es). Use `repeat` + an
+  // `if` guard rather than a `whose` clause, because Mail's `whose` cannot
+  // filter the list-valued `email addresses` property (errors -1719).
+  // `account` matches the account name OR one of its email addresses.
+  const acctMatch = args.account
+    ? `(name of acct is "${esc(args.account)}" or "${esc(args.account)}" is in (email addresses of acct))`
+    : "true";
+  const mbMatch = args.mailbox ? `(name of mb is "${esc(args.mailbox)}")` : "true";
   return [
     ...SEP,
     'set out to ""',
     "set n to 0",
     'tell application "Mail"',
-    `  repeat with acct in (accounts${acctWhose})`,
-    `    repeat with mb in (mailboxes of acct${mbWhose})`,
-    `      if n < ${limit} then`,
-    "        try",
-    `          set msgs to (messages of mb${whose})`,
-    "          repeat with m in msgs",
-    `            if n ≥ ${limit} then exit repeat`,
-    `            ${record}`,
-    "            set n to n + 1",
-    "          end repeat",
-    "        end try",
-    "      end if",
-    "    end repeat",
+    "  repeat with acct in accounts",
+    `    if ${acctMatch} then`,
+    "      repeat with mb in mailboxes of acct",
+    `        if ${mbMatch} then`,
+    `          if n < ${limit} then`,
+    "            try",
+    `              set msgs to (messages of mb${whose})`,
+    "              repeat with m in msgs",
+    `                if n ≥ ${limit} then exit repeat`,
+    `                ${record}`,
+    "                set n to n + 1",
+    "              end repeat",
+    "            end try",
+    "          end if",
+    "        end if",
+    "      end repeat",
+    "    end if",
     "  end repeat",
     "end tell",
     "return out",
@@ -120,8 +126,13 @@ export function readScript(messageId: string): string {
     '  set theBody to ""',
     "  try",
     "    set theBody to (content of theMsg)",
-    "  on error errMsg",
-    '    set theBody to ("[body unavailable: " & errMsg & "]")',
+    "  on error",
+    "    try",
+    "      delay 0.4",
+    "      set theBody to (content of theMsg)",
+    "    on error errMsg2",
+    '      set theBody to ("[body unavailable: " & errMsg2 & "]")',
+    "    end try",
     "  end try",
     "  set out to (subject of theMsg) & US & (sender of theMsg) & US & ((date received of theMsg) as string) & US & theBody",
     "end tell",

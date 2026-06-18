@@ -31,10 +31,12 @@ test("mailboxesScript includes the account email addresses", () => {
   assert.ok(mailboxesScript().includes("email addresses of acct"));
 });
 
-test("searchScript with account filters by name OR email address", () => {
+test("searchScript with account filters by name OR email address (repeat + is in)", () => {
   const s = searchScript({ account: "alessio.antonucci@mail.polimi.it", sender: "x" });
-  assert.ok(s.includes('email addresses contains "alessio.antonucci@mail.polimi.it"'));
-  assert.ok(s.includes("repeat with acct in (accounts"));
+  assert.ok(s.includes('"alessio.antonucci@mail.polimi.it" is in (email addresses of acct)'));
+  assert.ok(s.includes("repeat with acct in accounts"));
+  // must NOT use the unsupported whose-on-list form
+  assert.ok(!s.includes("email addresses contains"));
 });
 
 test("readScript locates the message across all mailboxes, not just inbox", () => {
