@@ -15,6 +15,16 @@ test("sendScript escapes body/subject and emits one recipient per address", () =
   assert.ok(/\bsend\b/.test(s));
 });
 
+test("sendScript sets the sender when `from` is given", () => {
+  const s = sendScript({ from: "me@polimi.it", to: ["a@b.co"], subject: "x", body: "y" });
+  assert.ok(s.includes('sender:"me@polimi.it"'));
+});
+
+test("sendScript omits the sender (default account) when `from` is absent", () => {
+  const s = sendScript({ to: ["a@b.co"], subject: "x", body: "y" });
+  assert.ok(!s.includes("sender:"));
+});
+
 test("searchScript escapes the sender filter and bounds the limit", () => {
   const s = searchScript({ limit: 5, sender: 'boss"@co' });
   assert.ok(s.includes('boss\\"@co'));
@@ -39,8 +49,59 @@ test("searchScript with account filters by name OR email address (repeat + is in
   assert.ok(!s.includes("email addresses contains"));
 });
 
+test("searchScript searches the fast unified inbox when no location filter is given", () => {
+  const s = searchScript({ subject: "hi" });
+  assert.ok(s.includes("messages of inbox"));
+  assert.ok(!s.includes("repeat with acct in accounts"));
+});
+
+test("searchScript maps a standard mailbox name to its unified mailbox keyword", () => {
+  assert.ok(searchScript({ mailbox: "Sent" }).includes("messages of sent mailbox"));
+  assert.ok(searchScript({ mailbox: "Bozze" }).includes("messages of drafts mailbox"));
+});
+
+test("searchScript scopes an account search to the inbox mailbox by name (avoids archive scan)", () => {
+  const s = searchScript({ account: "Polimi", limit: 5 });
+  assert.ok(s.includes("repeat with mb in mailboxes of acct"));
+  assert.ok(s.includes('name of mb is "Posta in arrivo"'));
+  assert.ok(s.includes('name of mb is "Inbox"'));
+  // not the unbounded unified scan
+  assert.ok(!s.includes("set msgs to (messages of inbox"));
+});
+
+test("searchScript scopes an account Sent search to localized sent-folder names", () => {
+  const s = searchScript({ account: "Polimi", mailbox: "Sent" });
+  assert.ok(s.includes('name of mb is "Posta inviata"'));
+  assert.ok(s.includes('name of mb is "Sent"'));
+});
+
+test("searchScript falls back to per-account folder iteration for a custom mailbox name", () => {
+  const s = searchScript({ mailbox: "Projects/2026" });
+  assert.ok(s.includes("repeat with mb in mailboxes of acct"));
+  assert.ok(s.includes('name of mb is "Projects/2026"'));
+});
+
 test("readScript locates the message across all mailboxes, not just inbox", () => {
-  const s = readScript("id1");
+  const s = readScript({ messageId: "id1" });
   assert.ok(s.includes("repeat with acct in accounts"));
   assert.ok(!s.includes("message of inbox"));
+});
+
+test("readScript uses the indexed `whose id is` fast path when given a native id", () => {
+  const s = readScript({ id: "93914" });
+  assert.ok(s.includes("whose id is 93914"));
+  assert.ok(!s.includes("whose message id is"));
+});
+
+test("readScript falls back to the slow `whose message id is` path for an RFC id", () => {
+  const s = readScript({ messageId: "abc@host" });
+  assert.ok(s.includes('whose message id is "abc@host"'));
+});
+
+test("readScript rejects a non-numeric native id (injection guard)", () => {
+  assert.throws(() => readScript({ id: '1 or true' }), /numeric id/);
+});
+
+test("searchScript record emits Mail's native id first for fast follow-up lookups", () => {
+  assert.ok(searchScript({ limit: 5 }).includes("(id of m as string)"));
 });

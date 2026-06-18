@@ -27,8 +27,22 @@ const defaultExec: OsaExec = (script, timeoutMs) =>
       ["-e", script],
       { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout, stderr) => {
-        if (err) reject(new Error(mapOsaError(stderr || err.message)));
-        else resolve(stdout);
+        if (!err) {
+          resolve(stdout);
+          return;
+        }
+        // A timeout kills osascript with SIGTERM and leaves stderr empty;
+        // avoid echoing the whole script as the error.
+        const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string };
+        if (e.killed || e.signal === "SIGTERM") {
+          reject(
+            new Error(
+              "Mail timed out — the message body may still be downloading from the server (Exchange/IMAP). Try again in a moment.",
+            ),
+          );
+        } else {
+          reject(new Error(mapOsaError(stderr || "osascript failed")));
+        }
       },
     );
   });

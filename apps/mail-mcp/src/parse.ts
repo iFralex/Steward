@@ -12,7 +12,8 @@ function records(out: string): string[][] {
 }
 
 export function parseSummaries(out: string): MessageSummary[] {
-  return records(out).map(([messageId, subject, from, date, mailbox, account, snippet]) => ({
+  return records(out).map(([id, messageId, subject, from, date, mailbox, account, snippet]) => ({
+    id: id ?? "",
     messageId: messageId ?? "",
     subject: subject ?? "",
     from: from ?? "",

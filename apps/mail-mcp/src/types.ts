@@ -1,4 +1,10 @@
 export interface MessageSummary {
+  /**
+   * Mail.app's native numeric id (as a string). Indexed → fast to look up
+   * (`whose id is`). Pass this back to read_message/reply/save_attachment.
+   */
+  id: string;
+  /** RFC 5322 Message-ID header. Stable across sessions but NOT indexed (slow lookup). */
   messageId: string;
   subject: string;
   from: string;
@@ -6,6 +12,16 @@ export interface MessageSummary {
   mailbox: string;
   account: string;
   snippet: string;
+}
+
+/**
+ * How to locate a single message. Prefer `id` (Mail's native numeric id from
+ * a search result) — it is indexed and fast. `messageId` (RFC) is a slow
+ * fallback used only when a native id is not available.
+ */
+export interface MessageRef {
+  id?: string;
+  messageId?: string;
 }
 
 export interface MessageDetail extends MessageSummary {
@@ -38,17 +54,16 @@ export interface SearchArgs {
   offset?: number;
 }
 
-export interface ReadArgs {
-  messageId: string;
-}
+export interface ReadArgs extends MessageRef {}
 
-export interface SaveAttachmentArgs {
-  messageId: string;
+export interface SaveAttachmentArgs extends MessageRef {
   attachment: string | number;
   destDir?: string;
 }
 
 export interface SendArgs {
+  /** Sender address — must be one of your account email addresses. Defaults to Mail's default account. */
+  from?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -57,8 +72,7 @@ export interface SendArgs {
   attachments?: string[];
 }
 
-export interface ReplyArgs {
-  messageId: string;
+export interface ReplyArgs extends MessageRef {
   body: string;
   attachments?: string[];
   replyAll?: boolean;

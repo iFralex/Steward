@@ -9,7 +9,7 @@ import type {
   SearchArgs,
   SendArgs,
 } from "./types.ts";
-import { assertEmails, assertSafeDestPath } from "./validate.ts";
+import { assertEmails, assertSafeDestPath, isEmail } from "./validate.ts";
 import { runOsa } from "./osascript.ts";
 import {
   mailboxesScript,
@@ -21,13 +21,16 @@ import {
 } from "./applescript.ts";
 import { parseDetail, parseMailboxes, parseSummaries } from "./parse.ts";
 
-type Runner = (script: string) => Promise<string>;
+type Runner = (script: string, timeoutMs?: number) => Promise<string>;
+
+/** Reading a message body waits on a server download — allow longer. */
+const READ_TIMEOUT_MS = 90_000;
 
 export class Mail {
   private readonly run: Runner;
 
   constructor(runner?: Runner) {
-    this.run = runner ?? ((script) => runOsa(script));
+    this.run = runner ?? ((script, timeoutMs) => runOsa(script, { timeoutMs }));
   }
 
   async listMailboxes(): Promise<Mailbox[]> {
@@ -47,18 +50,21 @@ export class Mail {
   }
 
   async read(args: ReadArgs): Promise<{ subject: string; from: string; date: string; body: string }> {
-    return parseDetail(await this.run(readScript(args.messageId)));
+    return parseDetail(await this.run(readScript(args), READ_TIMEOUT_MS));
   }
 
   async saveAttachment(args: SaveAttachmentArgs): Promise<{ path: string }> {
     const dir = args.destDir ? assertSafeDestPath(args.destDir) : tmpdir();
     const name = typeof args.attachment === "string" ? args.attachment : `attachment-${args.attachment}`;
     const dest = join(dir, name);
-    await this.run(saveAttachmentScript(args.messageId, args.attachment, dest));
+    await this.run(saveAttachmentScript(args, args.attachment, dest), READ_TIMEOUT_MS);
     return { path: dest };
   }
 
   async send(args: SendArgs): Promise<{ sent: true }> {
+    if (args.from && !isEmail(args.from)) {
+      throw new Error(`from: must be one of your account email addresses, got "${args.from}"`);
+    }
     assertEmails(args.to, "to");
     if (args.cc?.length) assertEmails(args.cc, "cc");
     if (args.bcc?.length) assertEmails(args.bcc, "bcc");

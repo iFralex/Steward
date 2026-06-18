@@ -17,6 +17,19 @@ test("send validates recipients then runs the send script", async () => {
   assert.ok(/\bsend\b/.test(ran));
 });
 
+test("send rejects an invalid `from` address without running anything", async () => {
+  let ran = false;
+  const mail = new Mail(async () => {
+    ran = true;
+    return "";
+  });
+  await assert.rejects(
+    () => mail.send({ from: "Polimi", to: ["a@b.co"], subject: "x", body: "y" }),
+    /account email addresses/,
+  );
+  assert.equal(ran, false);
+});
+
 test("send rejects an invalid recipient without running anything", async () => {
   let ran = false;
   const mail = new Mail(async () => {
@@ -28,16 +41,17 @@ test("send rejects an invalid recipient without running anything", async () => {
 });
 
 test("search returns parsed summaries", async () => {
-  const out = ["id1", "S", "a@b", "2026", "Inbox", "", ""].join(US) + RS;
+  const out = ["100", "id1", "S", "a@b", "2026", "Inbox", "", ""].join(US) + RS;
   const mail = new Mail(async () => out);
   const rows = await mail.search({ sender: "a@b" });
+  assert.equal(rows[0].id, "100");
   assert.equal(rows[0].messageId, "id1");
 });
 
 test("search query post-filters on subject", async () => {
   const out =
-    ["id1", "About cats", "a@b", "2026", "Inbox", "", ""].join(US) + RS +
-    ["id2", "About dogs", "a@b", "2026", "Inbox", "", ""].join(US) + RS;
+    ["100", "id1", "About cats", "a@b", "2026", "Inbox", "", ""].join(US) + RS +
+    ["101", "id2", "About dogs", "a@b", "2026", "Inbox", "", ""].join(US) + RS;
   const mail = new Mail(async () => out);
   const rows = await mail.search({ query: "cats" });
   assert.equal(rows.length, 1);

@@ -6,9 +6,10 @@ const US = "\x1f";
 const RS = "\x1e";
 
 test("parseSummaries splits records and fields", () => {
-  const out = ["id1", "Subj", "a@b", "2026", "Inbox", "acct", "snip"].join(US) + RS;
+  const out = ["93914", "id1", "Subj", "a@b", "2026", "Inbox", "acct", "snip"].join(US) + RS;
   const rows = parseSummaries(out);
   assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, "93914");
   assert.equal(rows[0].messageId, "id1");
   assert.equal(rows[0].subject, "Subj");
   assert.equal(rows[0].mailbox, "Inbox");

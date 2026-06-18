@@ -8,7 +8,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Mail } from "./mail.ts";
-import type { ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } from "./types.ts";
+import type { ReadArgs, ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } from "./types.ts";
 
 const mail = new Mail();
 const server = new Server({ name: "mail", version: "0.0.0" }, { capabilities: { tools: {} } });
@@ -48,11 +48,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "read_message",
-      description: "Read a message's body and attachment list by its Message-ID.",
+      description: "Read a message's body and attachment list. Pass the `id` from a search_messages result (fast).",
       inputSchema: {
         type: "object",
-        properties: { messageId: { type: "string" } },
-        required: ["messageId"],
+        properties: {
+          id: { type: "string", description: "Mail's native `id` from a search result (preferred, fast)" },
+          messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
+        },
         additionalProperties: false,
       },
     },
@@ -62,11 +64,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          messageId: { type: "string" },
+          id: { type: "string", description: "Mail's native `id` from a search result (preferred, fast)" },
+          messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
           attachment: { type: ["string", "number"], description: "attachment name or 1-based index" },
           destDir: { type: "string", description: "absolute dir; defaults to a temp dir" },
         },
-        required: ["messageId", "attachment"],
+        required: ["attachment"],
         additionalProperties: false,
       },
     },
@@ -76,6 +79,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
+          from: {
+            type: "string",
+            description: "sender address; must be one of your account emails (see list_mailboxes). Omit to use Mail's default account.",
+          },
           to: STRINGS("recipient addresses"),
           cc: STRINGS("cc addresses"),
           bcc: STRINGS("bcc addresses"),
@@ -93,12 +100,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          messageId: { type: "string" },
+          id: { type: "string", description: "Mail's native `id` from a search result (preferred, fast)" },
+          messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
           body: { type: "string" },
           attachments: STRINGS("absolute file paths to attach"),
           replyAll: { type: "boolean" },
         },
-        required: ["messageId", "body"],
+        required: ["body"],
         additionalProperties: false,
       },
     },
@@ -118,7 +126,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "search_messages":
         return text(await mail.search(args as SearchArgs));
       case "read_message":
-        return text(await mail.read({ messageId: String(args.messageId) }));
+        return text(await mail.read(args as ReadArgs));
       case "save_attachment":
         return text(await mail.saveAttachment(args as unknown as SaveAttachmentArgs));
       case "send_email":
