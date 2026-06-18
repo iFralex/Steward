@@ -1,3 +1,4 @@
+// Reserved for sub-project 2 (search-result grouping): a pure union-find utility, not dead code.
 export class ThreadIndex {
   private parent = new Map<string, string>();
 

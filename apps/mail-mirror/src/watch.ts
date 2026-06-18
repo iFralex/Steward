@@ -22,8 +22,8 @@ export function startWatch(deps: SyncDeps, mailRoot: string): { close(): Promise
 
   const onUnlink = (path: string) => {
     if (!path.endsWith(".emlx")) return;
-    const id = deps.store.getMessageIdByPath(path);
-    if (id) deps.store.softDelete(id);
+    const mid = deps.store.removePath(path);
+    if (mid && !deps.store.messageHasPath(mid)) deps.store.softDelete(mid);
   };
 
   watcher

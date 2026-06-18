@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS threads (
   first_date INTEGER, last_date INTEGER, msg_count INTEGER
 );
 CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS message_paths (
+  path TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  mailbox TEXT,
+  is_partial INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mpaths_message ON message_paths(message_id);
 `;
 
 export class Store {
@@ -142,6 +149,38 @@ export class Store {
       .prepare("SELECT message_id FROM messages WHERE emlx_path=? AND deleted=0")
       .get(emlxPath) as { message_id: string } | undefined;
     return r?.message_id;
+  }
+
+  recordPath(messageId: string, path: string, mailbox: string, isPartial: boolean): void {
+    this.raw
+      .prepare(
+        `INSERT INTO message_paths(path, message_id, mailbox, is_partial) VALUES(?,?,?,?)
+         ON CONFLICT(path) DO UPDATE SET message_id=excluded.message_id, mailbox=excluded.mailbox, is_partial=excluded.is_partial`,
+      )
+      .run(path, messageId, mailbox, isPartial ? 1 : 0);
+  }
+
+  pathsForMessage(messageId: string): { path: string; mailbox: string; isPartial: boolean }[] {
+    const rows = this.raw
+      .prepare("SELECT path, mailbox, is_partial FROM message_paths WHERE message_id=?")
+      .all(messageId) as { path: string; mailbox: string | null; is_partial: number }[];
+    return rows.map((r) => ({ path: r.path, mailbox: r.mailbox ?? "", isPartial: !!r.is_partial }));
+  }
+
+  allKnownPaths(): Set<string> {
+    const rows = this.raw.prepare("SELECT path FROM message_paths").all() as { path: string }[];
+    return new Set(rows.map((r) => r.path));
+  }
+
+  removePath(path: string): string | undefined {
+    const r = this.raw.prepare("SELECT message_id FROM message_paths WHERE path=?").get(path) as { message_id: string } | undefined;
+    this.raw.prepare("DELETE FROM message_paths WHERE path=?").run(path);
+    return r?.message_id;
+  }
+
+  messageHasPath(messageId: string): boolean {
+    const r = this.raw.prepare("SELECT 1 FROM message_paths WHERE message_id=? LIMIT 1").get(messageId) as { 1: number } | undefined;
+    return r !== undefined;
   }
 
   allMessageIdsByPath(): Map<string, string> {

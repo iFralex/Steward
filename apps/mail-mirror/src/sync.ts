@@ -16,16 +16,29 @@ export function bodyStateFor(isPartial: boolean, bodyText: string): BodyState {
   return bodyText.trim().length > 0 ? "partial" : "none";
 }
 
+function isAllMail(mailbox: string): boolean {
+  const m = (mailbox || "").toLowerCase();
+  return m.includes("all mail") || m.includes("tutti i messaggi") || m === "[gmail]" || m === "[google mail]";
+}
+
 /** Resolve (and persist) a surrogate thread_id for a message, before it is upserted. */
 function resolveThreadId(store: Store, m: ParsedMessage & { messageId: string }): number {
   const db = store.raw;
+  // 0) Own existing thread: re-ingest of a known message keeps its thread (avoids orphan-thread churn).
+  const own = db.prepare("SELECT thread_id FROM messages WHERE message_id=? AND thread_id IS NOT NULL").get(m.messageId) as { thread_id: number } | undefined;
+  if (own?.thread_id != null) return own.thread_id;
+  // 1) Gmail thread id groups messages with no usable References (e.g. distinct subjects).
+  if (m.gmThrid) {
+    const row = db.prepare("SELECT thread_id FROM messages WHERE gm_thrid=? AND thread_id IS NOT NULL LIMIT 1").get(m.gmThrid) as { thread_id: number } | undefined;
+    if (row?.thread_id != null) return row.thread_id;
+  }
   const linkedIds = [m.inReplyTo, ...m.references].filter((x): x is string => !!x);
-  // 1) Any already-stored linked message shares its thread.
+  // 2) Any already-stored linked message shares its thread.
   for (const id of linkedIds) {
     const row = db.prepare("SELECT thread_id FROM messages WHERE message_id=? AND thread_id IS NOT NULL").get(id) as { thread_id: number } | undefined;
     if (row?.thread_id != null) return row.thread_id;
   }
-  // 2) Subject + participant + 14-day fallback.
+  // 3) Subject + participant + 14-day fallback.
   const subj = normalizeSubject(m.subject);
   if (subj) {
     const since = m.date - 14 * 86400;
@@ -39,7 +52,7 @@ function resolveThreadId(store: Store, m: ParsedMessage & { messageId: string })
       if ([...parts].some((p) => p && cParts.has(p))) return c.thread_id;
     }
   }
-  // 3) New thread.
+  // 4) New thread.
   const info = db.prepare("INSERT INTO threads(subject, participants, first_date, last_date, msg_count) VALUES (?,?,?,?,0)").run(subj, JSON.stringify([m.fromAddr, ...m.to]), m.date, m.date);
   return Number(info.lastInsertRowid);
 }
@@ -60,10 +73,18 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
   const messageId = parsed.messageId || `nomsgid:${entry.account}:${entry.path}`;
   const threadId = resolveThreadId(deps.store, { ...parsed, messageId });
 
+  const existing = deps.store.getMessage(messageId);
+  const isNew = existing === undefined;
+  // Mailbox precedence: keep the most specific mailbox/path. Do not let an All-Mail copy
+  // overwrite a row already attributed to a specific mailbox (Gmail dupes the message everywhere).
+  const keepExisting = existing != null && isAllMail(entry.mailbox) && !isAllMail(existing.mailbox);
+  const mailbox = keepExisting ? existing!.mailbox : entry.mailbox;
+  const emlxPath = keepExisting ? existing!.emlxPath : entry.path;
+
   const row: MessageRow = {
     messageId,
     account: entry.account,
-    mailbox: entry.mailbox,
+    mailbox,
     fromName: parsed.fromName,
     fromAddr: parsed.fromAddr,
     to: parsed.to,
@@ -73,15 +94,15 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
     bodyText: parsed.bodyText,
     bodyState: bodyStateFor(entry.isPartial, parsed.bodyText),
     source: "emlx",
-    emlxPath: entry.path,
+    emlxPath,
     inReplyTo: parsed.inReplyTo,
     references: parsed.references,
     gmThrid: parsed.gmThrid,
     size: parsed.attachments.reduce((n, a) => n + a.size, parsed.bodyText.length),
   };
-  const isNew = deps.store.getMessage(messageId) === undefined;
   deps.store.upsertMessage(row);
   deps.store.setThreadId(messageId, threadId);
+  deps.store.recordPath(messageId, entry.path, entry.mailbox, entry.isPartial);
   if (isNew) bumpThread(deps.store, threadId, parsed.date);
 
   const atts = parsed.attachments.map((a) => {
@@ -97,30 +118,34 @@ export async function backfill(deps: SyncDeps, mailRoot: string, opts: { recentM
   let ingested = 0;
   for (const e of entries) {
     const id = await ingestEmlxFile(deps, e);
-    if (id) {
-      ingested++;
-      deps.store.setState("backfill.last_path", e.path);
-      deps.store.setState("backfill.ingested", String(ingested));
-    }
+    if (id) ingested++;
   }
+  deps.store.setState("backfill.ingested", String(ingested));
   return { ingested };
 }
 
 export async function reconcile(deps: SyncDeps, mailRoot: string): Promise<{ ingested: number; deleted: number }> {
   const entries = enumerateEmlx(mailRoot);
   const onDisk = new Set(entries.map((e) => e.path));
-  const known = deps.store.allMessageIdsByPath(); // path -> messageId
+  const known = deps.store.allKnownPaths();
   let ingested = 0;
   for (const e of entries) {
     if (!known.has(e.path)) {
-      const id = await ingestEmlxFile(deps, e);
-      if (id) ingested++;
+      if (await ingestEmlxFile(deps, e)) ingested++;
+    }
+  }
+  // Prune dead paths; soft-delete a message only when NONE of its paths remain.
+  const affected = new Set<string>();
+  for (const path of known) {
+    if (!onDisk.has(path) && !existsSync(path)) {
+      const mid = deps.store.removePath(path);
+      if (mid) affected.add(mid);
     }
   }
   let deleted = 0;
-  for (const [path, messageId] of known) {
-    if (!onDisk.has(path) && !existsSync(path)) {
-      deps.store.softDelete(messageId);
+  for (const mid of affected) {
+    if (!deps.store.messageHasPath(mid)) {
+      deps.store.softDelete(mid);
       deleted++;
     }
   }

@@ -45,6 +45,44 @@ test("ingest stores message and groups a reply into the same thread", async () =
   store.close();
 });
 
+const RFC2 = (mid: string, subject: string, extra = "") =>
+  `From: A <a@x>\r\nTo: me@x\r\nSubject: ${subject}\r\nMessage-ID: <${mid}>\r\n${extra}Content-Type: text/plain\r\n\r\nbody ${mid}\r\n`;
+
+test("gm_thrid groups two messages with no references and different subjects", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ing-gm-"));
+  const store = Store.open(":memory:");
+  const deps = { store, blobs: new BlobStore(join(dir, "blobs")) };
+
+  const e1: EmlxEntry = { path: emlx(dir, "1.emlx", RFC2("g1@x", "Alpha", "X-GM-THRID: 12345\r\n")), account: "ACC", mailbox: "INBOX", isPartial: false, mtimeMs: 1 };
+  const e2: EmlxEntry = { path: emlx(dir, "2.emlx", RFC2("g2@x", "Beta", "X-GM-THRID: 12345\r\n")), account: "ACC", mailbox: "INBOX", isPartial: false, mtimeMs: 2 };
+
+  await ingestEmlxFile(deps, e1);
+  await ingestEmlxFile(deps, e2);
+
+  const t1 = store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("g1@x") as { thread_id: number };
+  const t2 = store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("g2@x") as { thread_id: number };
+  assert.ok(t1.thread_id != null && t1.thread_id === t2.thread_id, "shared gm_thrid groups into one thread");
+  store.close();
+});
+
+test("re-ingesting a no-subject no-references message reuses its own thread (no orphan threads)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ing-own-"));
+  const store = Store.open(":memory:");
+  const deps = { store, blobs: new BlobStore(join(dir, "blobs")) };
+
+  const e1: EmlxEntry = { path: emlx(dir, "1.emlx", RFC2("own@x", "")), account: "ACC", mailbox: "INBOX", isPartial: false, mtimeMs: 1 };
+
+  await ingestEmlxFile(deps, e1);
+  const t1 = (store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("own@x") as { thread_id: number }).thread_id;
+  await ingestEmlxFile(deps, e1);
+  const t2 = (store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("own@x") as { thread_id: number }).thread_id;
+
+  assert.equal(t1, t2, "re-ingest reuses own thread");
+  const threadCount = store.raw.prepare("SELECT COUNT(*) AS c FROM threads").get() as { c: number };
+  assert.equal(threadCount.c, 1, "no orphan empty threads created on re-ingest");
+  store.close();
+});
+
 test("ingest is idempotent: re-ingesting the same message does not inflate thread counters", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ing-idem-"));
   const store = Store.open(":memory:");
