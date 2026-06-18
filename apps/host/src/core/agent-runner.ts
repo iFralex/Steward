@@ -5,7 +5,7 @@
  *
  * We reuse the SDK's agent loop; we do not hand-roll it.
  */
-import { query, type Options, type SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { createPreToolUseGate } from "./permission-gate.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
@@ -41,8 +41,13 @@ export async function runTurn(
         session.lastSessionId = message.session_id;
       }
       if (message.type === "assistant") {
-        const text = extractAssistantText(message);
-        if (text) emit({ type: "assistant_token", sessionId: session.id, text });
+        for (const block of message.message.content) {
+          if (block.type === "text") {
+            if (block.text) emit({ type: "assistant_token", sessionId: session.id, text: block.text });
+          } else if (block.type === "tool_use") {
+            emit({ type: "tool_call", sessionId: session.id, tool: block.name, input: block.input });
+          }
+        }
       }
     }
     emit({ type: "assistant_done", sessionId: session.id });
@@ -55,13 +60,4 @@ export async function runTurn(
   } finally {
     emit({ type: "status", sessionId: session.id, state: "idle" });
   }
-}
-
-/** Concatenate the text blocks of an assistant message. */
-function extractAssistantText(message: SDKAssistantMessage): string {
-  let out = "";
-  for (const block of message.message.content) {
-    if (block.type === "text") out += block.text;
-  }
-  return out;
 }

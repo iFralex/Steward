@@ -13,8 +13,10 @@ import type {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   text: string;
+  /** For role "tool": the tool's input payload. */
+  toolInput?: unknown;
   /** True while the assistant is still streaming into this message. */
   open?: boolean;
 }
@@ -64,6 +66,12 @@ export function useHostSocket(url: string): HostSocket {
           break;
         case "assistant_done":
           setMessages((prev) => closeAssistant(prev));
+          break;
+        case "tool_call":
+          setMessages((prev) => [
+            ...prev,
+            { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input },
+          ]);
           break;
         case "approval_request":
           setApprovals((prev) => [

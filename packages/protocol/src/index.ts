@@ -25,6 +25,13 @@ export type ServerEvent =
   | { type: "assistant_token"; sessionId: string; text: string }
   | { type: "assistant_done"; sessionId: string }
   | {
+      /** The agent invoked a tool (shown in the transcript so nothing is lost). */
+      type: "tool_call";
+      sessionId: string;
+      tool: string;
+      input: unknown;
+    }
+  | {
       /**
        * The core is asking the user to approve a sensitive tool call.
        * The channel renders `input` (typed payload, e.g. an email draft)
