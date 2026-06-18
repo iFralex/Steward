@@ -53,3 +53,16 @@ test("empty endpoint returns null vector with no error (wiki parity)", async () 
   assert.equal(r.vector, null);
   assert.equal(r.error, undefined);
 });
+
+test("onRetry callback is called once with auto-halve message on 413 then success", async () => {
+  const messages: string[] = [];
+  const baseDeps = depsReturning([
+    { ok: false, status: 413, text: "payload too large" },
+    { ok: true, json: { data: [{ embedding: [1, 2] }] } },
+  ]);
+  const deps: EmbeddingDeps = { ...baseDeps, onRetry: (m) => messages.push(m) };
+  const r = await fetchEmbedding("a".repeat(2000), cfg, deps);
+  assert.deepEqual(r.vector, [1, 2]);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /^auto-halving after HTTP 413/);
+});

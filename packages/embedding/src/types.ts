@@ -19,6 +19,8 @@ export interface EmbeddingDeps {
   originHeader?: () => Record<string, string>;
   /** Optional network-error classifier (wiki injects Tauri's; defaults to false). */
   isNetworkError?: (err: unknown) => boolean;
+  /** Optional retry notifier (the wiki logs auto-halve retries; mail omits it). */
+  onRetry?: (message: string) => void;
 }
 
 export interface EmbeddingResult {

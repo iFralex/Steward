@@ -96,7 +96,7 @@ export async function fetchEmbedding(
         if (current.length > 64 && attempts <= maxRetries) {
           const prev = current.length
           current = current.slice(0, Math.floor(current.length / 2))
-          void prev // suppress unused warning — prev captured in original log
+          deps.onRetry?.(`auto-halving after HTTP ${resp.status} at ${prev} chars → retrying at ${current.length} chars (attempt ${attempts}/${maxRetries + 1})`);
           continue
         }
         // Out of retries on a SERVER-oversize error — give the user a

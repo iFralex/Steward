@@ -98,6 +98,7 @@ export async function fetchEmbedding(
     fetch: httpFetch,
     originHeader: localLlmOriginHeader,
     isNetworkError: isFetchNetworkError,
+    onRetry: (m) => console.warn(`[Embedding] ${m}`),
   }, maxRetries)
   if (result.error) {
     lastEmbeddingError = result.error
