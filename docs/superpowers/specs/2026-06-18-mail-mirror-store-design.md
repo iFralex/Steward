@@ -290,6 +290,30 @@ The risky assumptions were prototyped before planning; all hold:
   optional bulk pre-download (Mail account setting "Download all messages") to
   raise local coverage.
 
+## Implementation deviations (sanctioned during build — read for sub-project 2)
+
+- **FTS5 is a PLAIN table, not external-content.** The external-content design
+  corrupted the index (`SQLITE_CORRUPT_VTAB`) because the rowid-only `'delete'`
+  command cannot reconstruct old values after an upsert. `messages_fts` now
+  stores its own copy of the indexed columns and is reindexed by rowid
+  (`DELETE FROM messages_fts WHERE rowid=?` + `INSERT`). `messages.rowid ==
+  messages_fts.rowid`, so the search JOIN holds. Modest extra storage, robust.
+- **Multi-path per Message-ID** via a `message_paths` table
+  `(path PK, message_id, mailbox, is_partial)`. Gmail "All Mail" + labels expose
+  the same Message-ID at many paths; the single `emlx_path` on `messages` is the
+  most-specific (non-All-Mail) one, while `message_paths` tracks every copy.
+  `reconcile`/`watch` soft-delete a message ONLY when none of its paths remain.
+- **Threading uses `gm_thrid`.** `resolveThreadId` order is: own existing
+  `thread_id` (re-ingest) -> `gm_thrid` match -> `References`/`In-Reply-To` ->
+  subject+participant (14 days) -> new thread. `threads.ts` `ThreadIndex`
+  (union-find) is built and tested but reserved for sub-project 2 (grouping
+  search results), not yet wired into ingest.
+- **Deferred to sub-project 2:** the AppleScript fallback (`fillBody`) currently
+  uses mail-mcp's `whose message id is` (unindexed, ~90s on large Exchange). The
+  mirror stores `account`+`mailbox` per message, so #2 should add a *scoped*
+  AppleScript read (search only that account+mailbox) to make partial-body fills
+  fast.
+
 ## Global constraints (apply to every task in the plan)
 
 - **Reuse over reimplement** (very important): the AppleScript fallback reuses
