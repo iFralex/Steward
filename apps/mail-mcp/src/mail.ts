@@ -21,6 +21,7 @@ import { parseMailboxes } from "./parse.ts";
 import type { Store } from "../../mail-mirror/src/store.ts";
 import { searchDb, type SearchDbArgs } from "./db-search.ts";
 import { readDb, type MailDetail } from "./db-read.ts";
+import { getThread } from "./db-thread.ts";
 
 type Runner = (script: string, timeoutMs?: number) => Promise<string>;
 
@@ -100,5 +101,9 @@ export class Mail {
   async reply(args: ReplyArgs): Promise<{ sent: true }> {
     await this.run(replyScript(args));
     return { sent: true };
+  }
+
+  async getThread(args: { threadId?: number; id?: string; messageId?: string }): Promise<MessageSummary[]> {
+    return getThread(this.store, args);
   }
 }
