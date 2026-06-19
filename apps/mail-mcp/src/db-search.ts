@@ -11,6 +11,11 @@ export interface SearchDbArgs extends DbFilters {
   perMessage?: boolean;
   sort?: "date" | "size";
   sortDir?: "asc" | "desc";
+  fromName?: string;
+  fromAddr?: string;
+  toName?: string;
+  subjectContains?: string;
+  bodyContains?: string;
 }
 
 const CANDIDATES = 50;
@@ -76,6 +81,22 @@ export async function searchDb(
       .prepare(`SELECT m.message_id FROM messages m WHERE ${clause} ORDER BY ${col} ${dir} LIMIT ${CANDIDATES}`)
       .all(...params)
       .map((r) => (r as { message_id: string }).message_id);
+  }
+
+  // Restrict orderedIds by field-scoped trigram substring params (AND semantics).
+  const TRIG: [keyof SearchDbArgs, string][] = [
+    ["fromName", "from_name"], ["fromAddr", "from_addr"], ["toName", "to_names"],
+    ["subjectContains", "subject"], ["bodyContains", "body_text"],
+  ];
+  const trigParams = TRIG.filter(([k]) => typeof args[k] === "string" && (args[k] as string).length);
+  if (trigParams.length) {
+    let allowed: Set<string> | null = null;
+    for (const [k, field] of trigParams) {
+      const ids = new Set(store.searchTrig(field, args[k] as string, 500).map((m) => m.messageId));
+      allowed = allowed === null ? ids : new Set(([...allowed] as string[]).filter((id) => ids.has(id)));
+    }
+    const ok = allowed ?? new Set<string>();
+    orderedIds = orderedIds.filter((id) => ok.has(id));
   }
 
   // Load summaries in ranked order; group by thread (best-ranked wins) unless perMessage.
