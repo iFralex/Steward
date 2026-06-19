@@ -12,6 +12,7 @@ function partialRow(): MessageRow {
     subject: "Subj", date: 1750000000, bodyText: "", bodyState: "none",
     source: "emlx", emlxPath: "/p/1.partial.emlx", inReplyTo: null,
     references: [], gmThrid: null, size: 0,
+    toNames: [], ccNames: [], unread: false, flagged: false, answered: false, junk: false, flagColor: null, appleThrid: null,
   };
 }
 

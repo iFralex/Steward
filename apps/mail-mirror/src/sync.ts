@@ -89,6 +89,8 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
     fromAddr: parsed.fromAddr,
     to: parsed.to,
     cc: parsed.cc,
+    toNames: parsed.toNames,
+    ccNames: parsed.ccNames,
     subject: parsed.subject,
     date: parsed.date,
     bodyText: parsed.bodyText,
@@ -99,6 +101,12 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
     references: parsed.references,
     gmThrid: parsed.gmThrid,
     size: parsed.attachments.reduce((n, a) => n + a.size, parsed.bodyText.length),
+    unread: parsed.flags ? !parsed.flags.read : false,
+    flagged: parsed.flags?.flagged ?? false,
+    answered: parsed.flags?.answered ?? false,
+    junk: parsed.flags?.junk ?? false,
+    flagColor: parsed.flagColor,
+    appleThrid: parsed.appleThrid,
   };
   deps.store.upsertMessage(row);
   deps.store.setThreadId(messageId, threadId);

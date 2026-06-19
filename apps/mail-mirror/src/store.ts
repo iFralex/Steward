@@ -21,6 +21,14 @@ export interface MessageRow {
   references: string[];
   gmThrid: string | null;
   size: number;
+  toNames: string[];
+  ccNames: string[];
+  unread: boolean;
+  flagged: boolean;
+  answered: boolean;
+  junk: boolean;
+  flagColor: number | null;
+  appleThrid: number | null;
 }
 
 const SCHEMA = `
@@ -118,10 +126,12 @@ export class Store {
       .prepare(
         `INSERT INTO messages (message_id, account, mailbox, from_name, from_addr, to_addrs, cc_addrs,
            subject, date, snippet, body_text, body_state, source, emlx_path, in_reply_to, reference_ids,
-           gm_thrid, size, deleted, ingested_at, updated_at)
+           gm_thrid, size, deleted, ingested_at, updated_at,
+           to_names, cc_names, unread, flagged, answered, junk, flag_color, apple_thrid)
          VALUES (@message_id,@account,@mailbox,@from_name,@from_addr,@to_addrs,@cc_addrs,
            @subject,@date,@snippet,@body_text,@body_state,@source,@emlx_path,@in_reply_to,@reference_ids,
-           @gm_thrid,@size,0,@now,@now)
+           @gm_thrid,@size,0,@now,@now,
+           @to_names,@cc_names,@unread,@flagged,@answered,@junk,@flag_color,@apple_thrid)
          ON CONFLICT(message_id) DO UPDATE SET
            account=excluded.account, mailbox=excluded.mailbox, from_name=excluded.from_name,
            from_addr=excluded.from_addr, to_addrs=excluded.to_addrs, cc_addrs=excluded.cc_addrs,
@@ -129,7 +139,10 @@ export class Store {
            body_text=excluded.body_text, body_state=excluded.body_state, source=excluded.source,
            emlx_path=excluded.emlx_path, in_reply_to=excluded.in_reply_to,
            reference_ids=excluded.reference_ids, gm_thrid=excluded.gm_thrid, size=excluded.size,
-           deleted=0, updated_at=@now`,
+           deleted=0, updated_at=@now,
+           to_names=excluded.to_names, cc_names=excluded.cc_names, unread=excluded.unread,
+           flagged=excluded.flagged, answered=excluded.answered, junk=excluded.junk,
+           flag_color=excluded.flag_color, apple_thrid=excluded.apple_thrid`,
       )
       .run({
         message_id: r.messageId, account: r.account, mailbox: r.mailbox,
@@ -139,8 +152,37 @@ export class Store {
         body_state: r.bodyState, source: r.source, emlx_path: r.emlxPath,
         in_reply_to: r.inReplyTo, reference_ids: JSON.stringify(r.references),
         gm_thrid: r.gmThrid, size: r.size, now,
+        to_names: JSON.stringify(r.toNames), cc_names: JSON.stringify(r.ccNames),
+        unread: r.unread ? 1 : 0, flagged: r.flagged ? 1 : 0,
+        answered: r.answered ? 1 : 0, junk: r.junk ? 1 : 0,
+        flag_color: r.flagColor, apple_thrid: r.appleThrid,
       });
     this.reindexFts(r.messageId);
+    this.reindexTrig(r.messageId);
+  }
+
+  private reindexTrig(messageId: string): void {
+    const m = this.raw.prepare(
+      "SELECT rowid, from_name, from_addr, to_names, to_addrs, cc_names, cc_addrs, subject, body_text FROM messages WHERE message_id=?",
+    ).get(messageId) as
+      | { rowid: number; from_name: string; from_addr: string; to_names: string; to_addrs: string; cc_names: string; cc_addrs: string; subject: string; body_text: string }
+      | undefined;
+    if (!m) return;
+    this.raw.prepare("DELETE FROM messages_trig WHERE rowid=?").run(m.rowid);
+    this.raw.prepare(
+      "INSERT INTO messages_trig(rowid, from_name, from_addr, to_names, to_addrs, cc_names, cc_addrs, subject, body_text) VALUES (?,?,?,?,?,?,?,?,?)",
+    ).run(m.rowid, m.from_name, m.from_addr, m.to_names, m.to_addrs, m.cc_names, m.cc_addrs, m.subject, m.body_text);
+  }
+
+  /** Substring/fuzzy match in one trigram field. `field` must be a known column name. */
+  searchTrig(field: string, needle: string, limit: number): MessageRow[] {
+    const cols = new Set(["from_name", "from_addr", "to_names", "to_addrs", "cc_names", "cc_addrs", "subject", "body_text"]);
+    if (!cols.has(field)) throw new Error(`unknown trigram field: ${field}`);
+    const rows = this.raw.prepare(
+      `SELECT m.* FROM messages_trig t JOIN messages m ON m.rowid=t.rowid
+       WHERE t.${field} MATCH ? AND m.deleted=0 ORDER BY rank LIMIT ?`,
+    ).all(`"${needle.replace(/"/g, '""')}"`, limit) as Record<string, unknown>[];
+    return rows.map(rowToMessage);
   }
 
   private reindexFts(messageId: string): void {
@@ -331,5 +373,13 @@ function rowToMessage(m: Record<string, unknown>): MessageRow {
     references: JSON.parse((m.reference_ids as string) || "[]"),
     gmThrid: (m.gm_thrid as string) ?? null,
     size: (m.size as number) ?? 0,
+    toNames: JSON.parse((m.to_names as string) || "[]"),
+    ccNames: JSON.parse((m.cc_names as string) || "[]"),
+    unread: !!(m.unread as number),
+    flagged: !!(m.flagged as number),
+    answered: !!(m.answered as number),
+    junk: !!(m.junk as number),
+    flagColor: (m.flag_color as number) ?? null,
+    appleThrid: (m.apple_thrid as number) ?? null,
   };
 }

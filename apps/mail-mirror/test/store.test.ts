@@ -12,6 +12,7 @@ function row(overrides: Partial<MessageRow> = {}): MessageRow {
     bodyText: "Frecciarossa Roma Milano FRECCIA20",
     bodyState: "full", source: "emlx", emlxPath: "/p/1.emlx",
     inReplyTo: null, references: [], gmThrid: null, size: 100,
+    toNames: [], ccNames: [], unread: false, flagged: false, answered: false, junk: false, flagColor: null, appleThrid: null,
     ...overrides,
   };
 }

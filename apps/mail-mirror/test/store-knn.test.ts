@@ -7,6 +7,7 @@ function row(id: string, subject: string): MessageRow {
     messageId: id, account: "ACC", mailbox: "INBOX", fromName: "", fromAddr: "a@x",
     to: [], cc: [], subject, date: 1750000000, bodyText: subject, bodyState: "full",
     source: "emlx", emlxPath: "/p/" + id, inReplyTo: null, references: [], gmThrid: null, size: 1,
+    toNames: [], ccNames: [], unread: false, flagged: false, answered: false, junk: false, flagColor: null, appleThrid: null,
   };
 }
 
