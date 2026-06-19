@@ -8,6 +8,7 @@ function row(id: string, subject: string, body: string, thread: number, date = 1
     messageId: id, account: "ACC", mailbox: "INBOX", fromName: "T", fromAddr: "noreply@trenitalia.it",
     to: ["me@x"], cc: [], subject, date, bodyText: body, bodyState: "full",
     source: "emlx", emlxPath: "/p/" + id, inReplyTo: null, references: [], gmThrid: null, size: 1,
+    toNames: [], ccNames: [], unread: false, flagged: false, answered: false, junk: false, flagColor: null, appleThrid: null,
   };
 }
 
