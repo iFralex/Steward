@@ -61,10 +61,12 @@ export async function parseEmlx(buf: Buffer): Promise<ParsedMessage> {
   const trailer = parsePlistTrailer(buf);
   const fromAddr = m.from?.value?.[0]?.address ?? "";
   const fromName = m.from?.value?.[0]?.name ?? "";
-  const addrs = (v: typeof m.to) =>
-    (Array.isArray(v) ? v : v ? [v] : []).flatMap((g) => g.value).map((a) => a.address ?? "").filter(Boolean);
-  const toList = addrs(m.to);
-  const ccList = addrs(m.cc);
+  const addrParts = (v: typeof m.to) => {
+    const list = (Array.isArray(v) ? v : v ? [v] : []).flatMap((g) => g.value).filter((a) => a.address);
+    return { addrs: list.map((a) => a.address ?? ""), names: list.map((a) => a.name ?? "") };
+  };
+  const to = addrParts(m.to);
+  const cc = addrParts(m.cc);
   const bodyText = m.text ?? (m.html ? String(m.html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
   const attachments: ParsedAttachment[] = (m.attachments ?? []).map((a) => ({
     filename: a.filename ?? "attachment",
@@ -77,8 +79,10 @@ export async function parseEmlx(buf: Buffer): Promise<ParsedMessage> {
     messageId: normalizeId(m.messageId) ?? "",
     fromName,
     fromAddr,
-    to: toList,
-    cc: ccList,
+    to: to.addrs,
+    cc: cc.addrs,
+    toNames: to.names,
+    ccNames: cc.names,
     subject: m.subject ?? "",
     date: m.date ? Math.floor(m.date.getTime() / 1000) : 0,
     bodyText,

@@ -11,6 +11,8 @@ export interface ParsedMessage {
   fromAddr: string;
   to: string[];
   cc: string[];
+  toNames: string[];
+  ccNames: string[];
   subject: string;
   date: number; // epoch seconds
   bodyText: string;
