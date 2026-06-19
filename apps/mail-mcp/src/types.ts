@@ -12,6 +12,7 @@ export interface MessageSummary {
   mailbox: string;
   account: string;
   snippet: string;
+  threadId?: number;
 }
 
 /**
