@@ -65,7 +65,7 @@ export async function discoverRoles(deps: RoleDiscoveryDeps): Promise<number> {
     for (const b of boxes) {
       let role: Role | null = roleFromAttributes(b.attr, b.name);
       if (!role && deps.classifyRole) {
-        try { role = await deps.classifyRole(b.name); } catch { role = null; }
+        try { role = await deps.classifyRole(b.name); } catch (err) { role = null; console.warn(`[mail-mirror] mailbox role classifier failed for "${b.name}": ${err instanceof Error ? err.message : String(err)}`); }
       }
       if (!role && terms) {
         const lc = b.name.toLowerCase();

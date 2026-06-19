@@ -21,6 +21,7 @@ test("discoverRoles: SPECIAL-USE first, AI fallback for an attribute-less name, 
     { name: "Posta inviata", attr: 64 + 0x8000 }, // SPECIAL-USE → sent
     { name: "Quarantena", attr: 0 },              // no bit → AI
     { name: "Bozze", attr: 0 },                   // no bit, AI says none → localized term
+    { name: "RandomXYZ", attr: 0 },               // no bit, AI returns null, not in localizedTerms → null role
   ];
   const classifyRole = async (n: string) => (n === "Quarantena" ? "junk" : null);
   const localizedTerms = async () => ({
@@ -30,6 +31,7 @@ test("discoverRoles: SPECIAL-USE first, AI fallback for an attribute-less name, 
   assert.equal(s.roleForMailbox("U1", "Posta inviata"), "sent");
   assert.equal(s.roleForMailbox("U1", "Quarantena"), "junk");
   assert.equal(s.roleForMailbox("U1", "Bozze"), "drafts");
+  assert.equal(s.roleForMailbox("U1", "RandomXYZ"), undefined);
   assert.deepEqual(s.mailboxesForRole("U1", "sent"), ["Posta inviata"]);
   s.close();
 });
