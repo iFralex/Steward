@@ -24,6 +24,12 @@ import { readDb, type MailDetail } from "./db-read.ts";
 
 type Runner = (script: string, timeoutMs?: number) => Promise<string>;
 
+function toEpochSeconds(s?: string): number | undefined {
+  if (!s) return undefined;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? undefined : Math.floor(t / 1000);
+}
+
 /** Reading a message body waits on a server download — allow longer. */
 const READ_TIMEOUT_MS = 90_000;
 
@@ -49,7 +55,22 @@ export class Mail {
   }
 
   async search(args: SearchArgs): Promise<MessageSummary[]> {
-    return searchDb(this.store, args as unknown as SearchDbArgs, this.embedQuery);
+    const dbArgs: SearchDbArgs = {
+      query: args.query,
+      account: args.account,
+      mailbox: args.mailbox,
+      sender: args.sender,
+      recipient: args.recipient,
+      dateFrom: toEpochSeconds(args.dateFrom),
+      dateTo: toEpochSeconds(args.dateTo),
+      unreadOnly: args.unreadOnly,
+      flaggedOnly: args.flaggedOnly,
+      hasAttachments: args.hasAttachments,
+      limit: args.limit,
+      offset: args.offset,
+      perMessage: undefined,
+    };
+    return searchDb(this.store, dbArgs, this.embedQuery);
   }
 
   async read(args: ReadArgs): Promise<MailDetail> {

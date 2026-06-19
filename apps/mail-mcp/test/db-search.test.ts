@@ -55,3 +55,45 @@ test("no query returns recent-first filtered messages", async () => {
   assert.ok(hits.find((h) => h.messageId === "a@x"));
   s.close();
 });
+
+// Fix 3: FTS query sanitization — special chars do not throw
+test("FTS: query with double-quote and asterisk does not throw and still matches", async () => {
+  const s = Store.open(":memory:");
+  // epoch 1735689600 = 2026-01-01T00:00:00Z
+  s.upsertMessage(row("cats@x", "cats subject", "I love cats", 10, 1735689600));
+  s.upsertMessage(row("dogs@x", "dogs subject", "dogs are great", 11, 1735689600));
+  // Raw FTS5 would throw on unbalanced quote; ftsQuery should sanitise it
+  const hits = await searchDb(s, { query: 'cats "', limit: 5 });
+  assert.ok(hits.find((h) => h.messageId === "cats@x"), "cats message should be found");
+  assert.ok(!hits.find((h) => h.messageId === "dogs@x"), "dogs message should not match");
+  s.close();
+});
+
+// Fix 4: offset is honoured
+test("offset skips leading results", async () => {
+  const s = Store.open(":memory:");
+  // Two messages, different thread_ids so grouping keeps both.
+  // Use distinct dates so ordering is deterministic (no query => date DESC).
+  s.upsertMessage(row("first@x", "First", "body first", 100, 1750000010));
+  s.setThreadId("first@x", 100);
+  s.upsertMessage(row("second@x", "Second", "body second", 101, 1750000000));
+  s.setThreadId("second@x", 101);
+  // Without offset both are returned; with offset:1,limit:1 we get the second (older).
+  const all = await searchDb(s, { limit: 10, offset: 0 });
+  assert.equal(all.length, 2);
+  const offsetHits = await searchDb(s, { limit: 1, offset: 1 });
+  assert.equal(offsetHits.length, 1);
+  assert.equal(offsetHits[0].messageId, all[1].messageId);
+  s.close();
+});
+
+// Fix 5: date output is ISO-8601 not raw epoch string
+test("date field is ISO-8601", async () => {
+  const s = seeded();
+  const hits = await searchDb(s, { limit: 5 });
+  for (const h of hits) {
+    assert.ok(!Number.isInteger(Number(h.date)), `date should not be a plain integer string, got: ${h.date}`);
+    assert.ok(!Number.isNaN(Date.parse(h.date)), `date should be ISO-8601 parseable, got: ${h.date}`);
+  }
+  s.close();
+});

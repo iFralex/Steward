@@ -18,6 +18,10 @@ export async function readDb(
   runScoped: (script: string) => Promise<string> = (s) => runOsa(s, { timeoutMs: 90_000 }),
 ): Promise<MailDetail> {
   const messageId = ref.messageId ?? ref.id ?? "";
+  const live = store.raw
+    .prepare("SELECT deleted FROM messages WHERE message_id=?")
+    .get(messageId) as { deleted: number } | undefined;
+  if (!live || live.deleted) throw new Error(`Message not found in the mail mirror: ${messageId}`);
   const row = store.getMessage(messageId);
   if (!row) throw new Error(`Message not found in the mail mirror: ${messageId}`);
 
@@ -39,7 +43,7 @@ export async function readDb(
   return {
     subject: row.subject,
     from: row.fromName ? `${row.fromName} <${row.fromAddr}>` : row.fromAddr,
-    date: String(row.date),
+    date: new Date(row.date * 1000).toISOString(),
     body,
     attachments,
     bodyState,

@@ -45,3 +45,26 @@ test("readDb throws a clear error when the message is unknown", async () => {
   await assert.rejects(() => readDb(s, { messageId: "missing@x" }), /not found/i);
   s.close();
 });
+
+// Fix 2: soft-deleted message should throw not-found, not return the record
+test("readDb throws not-found for a soft-deleted message", async () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage(row("del@x", "full"));
+  s.softDelete("del@x");
+  await assert.rejects(
+    () => readDb(s, { messageId: "del@x" }),
+    /not found/i,
+    "soft-deleted message must not be readable",
+  );
+  s.close();
+});
+
+// Fix 5: date field in readDb is ISO-8601
+test("readDb date field is ISO-8601", async () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage(row("iso@x", "full"));
+  const d = await readDb(s, { messageId: "iso@x" }, async () => "");
+  assert.ok(!Number.isInteger(Number(d.date)), `date should not be a plain integer string, got: ${d.date}`);
+  assert.ok(!Number.isNaN(Date.parse(d.date)), `date should be ISO-8601 parseable, got: ${d.date}`);
+  s.close();
+});
