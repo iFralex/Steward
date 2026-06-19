@@ -5,6 +5,7 @@ import { normalizeSubject } from "./threads.ts";
 import type { BlobStore } from "./blobstore.ts";
 import type { BodyState, MessageRow, Store } from "./store.ts";
 import type { EmlxEntry, ParsedMessage } from "./types.ts";
+import { refreshIdentity } from "./enrich.ts";
 
 export interface SyncDeps {
   store: Store;
@@ -147,6 +148,10 @@ export async function reconcile(deps: SyncDeps, mailRoot: string): Promise<{ ing
       }
     }
   }
+  // Newly appeared account? refresh identity so its name/emails/roles are known.
+  const unknown = entries.find((e) => !deps.store.hasAccount(e.account));
+  if (unknown) { try { await refreshIdentity({ store: deps.store, mailRoot }); } catch { /* best-effort */ } }
+
   // Prune dead paths; soft-delete a message only when NONE of its paths remain.
   const affected = new Set<string>();
   for (const path of known) {

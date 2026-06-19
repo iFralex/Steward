@@ -1,8 +1,10 @@
 #!/usr/bin/env -S node --import tsx
 import { fileURLToPath } from "node:url";
+import { statSync } from "node:fs";
 import { Store } from "./store.ts";
 import { BlobStore } from "./blobstore.ts";
-import { backfill, reconcile, type SyncDeps } from "./sync.ts";
+import { backfill, reconcile, ingestEmlxFile, type SyncDeps } from "./sync.ts";
+import { refreshIdentity } from "./enrich.ts";
 import { startWatch } from "./watch.ts";
 import { findMailRoot, canRead } from "./locator.ts";
 import { dbPath, blobsDir } from "./paths.ts";
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
     const root = requireMailRoot();
     const d = deps();
     const res = await backfill(d, root);
+    try { await refreshIdentity({ store: d.store, mailRoot: root }); } catch { /* best-effort */ }
     console.log(`backfill: ingested ${res.ingested}`);
     d.store.close();
   } else if (cmd === "reconcile") {
@@ -78,6 +81,8 @@ async function main(): Promise<void> {
     const ed = makeEmbedDeps(d.store);
     if (ed) { startEmbedWorker(ed); console.log("embed worker started"); }
     else console.log("embedding disabled (set MAIL_EMBED_ENDPOINT to enable)");
+    refreshIdentity({ store: d.store, mailRoot: root }).catch(() => {});
+    setInterval(() => refreshIdentity({ store: d.store, mailRoot: root }).catch(() => {}), 300_000);
     console.log(`watching ${root} (Ctrl+C to stop)`);
   } else if (cmd === "status") {
     const d = deps();
@@ -85,12 +90,31 @@ async function main(): Promise<void> {
     const full = d.store.raw.prepare("SELECT COUNT(*) c FROM messages WHERE body_state='full' AND deleted=0").get() as { c: number };
     const threads = d.store.raw.prepare("SELECT COUNT(*) c FROM threads").get() as { c: number };
     const embedded = d.store.embeddedCount();
+    const accts = d.store.raw.prepare("SELECT COUNT(*) c FROM accounts").get() as { c: number };
+    const roles = d.store.raw.prepare("SELECT COUNT(*) c FROM mailbox_roles WHERE role IS NOT NULL").get() as { c: number };
     console.log(`messages: ${total.c} (full bodies: ${full.c}), threads: ${threads.c}`);
     console.log(`embedded: ${embedded}`);
+    console.log(`accounts: ${accts.c}, classified mailboxes: ${roles.c}`);
     console.log(`db: ${dbPath()}`);
     d.store.close();
+  } else if (cmd === "migrate") {
+    const root = requireMailRoot();
+    const d = deps();
+    let n = 0;
+    const paths = d.store.raw.prepare("SELECT path FROM message_paths").all() as { path: string }[];
+    for (const { path } of paths) {
+      const mid = d.store.getMessageIdByPath(path);
+      const mailbox = (d.store.raw.prepare("SELECT mailbox FROM message_paths WHERE path=?").get(path) as { mailbox: string } | undefined)?.mailbox ?? "";
+      const account = (d.store.getMessage(mid ?? "")?.account) ?? path.slice(root.length + 1).split("/")[0];
+      let mtimeMs = 0;
+      try { mtimeMs = statSync(path).mtimeMs; } catch { continue; }
+      if (await ingestEmlxFile(d, { path, account, mailbox, isPartial: path.endsWith(".partial.emlx"), mtimeMs })) n++;
+    }
+    const ident = await refreshIdentity({ store: d.store, mailRoot: root });
+    console.log(`migrate: re-ingested ${n}, accounts ${ident.accounts}, roles ${ident.roles}`);
+    d.store.close();
   } else {
-    console.log("usage: mail-mirror <backfill|watch|reconcile|status|embed>");
+    console.log("usage: mail-mirror <backfill|watch|reconcile|status|embed|migrate>");
     process.exit(1);
   }
 }
