@@ -2,12 +2,15 @@ import type { Store } from "../../mail-mirror/src/store.ts";
 import type { MessageSummary } from "./types.ts";
 import { buildFilterSql, type DbFilters } from "./filters.ts";
 import { rrf } from "./rrf.ts";
+import { resolveScope } from "./scope.ts";
 
 export interface SearchDbArgs extends DbFilters {
   query?: string;
   limit?: number;
   offset?: number;
   perMessage?: boolean;
+  sort?: "date" | "size";
+  sortDir?: "asc" | "desc";
 }
 
 const CANDIDATES = 50;
@@ -29,7 +32,9 @@ export async function searchDb(
 ): Promise<MessageSummary[]> {
   const limit = Math.min(Math.max(args.limit ?? 20, 1), 100);
   const offset = Math.max(args.offset ?? 0, 0);
-  const { clause, params } = buildFilterSql(args);
+  const scope = resolveScope(store, { account: args.account, mailbox: args.mailbox, anyMailbox: args.anyMailbox });
+  const filters: DbFilters = { ...args, account: scope.account, mailbox: undefined, mailboxNames: scope.mailboxNames, anyMailbox: scope.anyMailbox };
+  const { clause, params } = buildFilterSql(filters);
 
   let orderedIds: string[];
   if (args.query) {
@@ -65,8 +70,10 @@ export async function searchDb(
     }
     orderedIds = vecIds.length ? rrf([ftsIds, vecIds]).map((r) => r.id) : ftsIds;
   } else {
+    const col = args.sort === "size" ? "m.size" : "m.date";
+    const dir = args.sortDir === "asc" ? "ASC" : "DESC";
     orderedIds = store.raw
-      .prepare(`SELECT m.message_id FROM messages m WHERE ${clause} ORDER BY m.date DESC LIMIT ${CANDIDATES}`)
+      .prepare(`SELECT m.message_id FROM messages m WHERE ${clause} ORDER BY ${col} ${dir} LIMIT ${CANDIDATES}`)
       .all(...params)
       .map((r) => (r as { message_id: string }).message_id);
   }
