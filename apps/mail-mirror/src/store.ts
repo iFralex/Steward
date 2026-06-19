@@ -260,7 +260,16 @@ export class Store {
   }
 
   ensureVecTable(dim: number): void {
+    const cur = this.getState("vec_dim");
+    if (cur && Number(cur) !== dim) {
+      // Model/dim changed: existing vectors live in a different space and are
+      // incompatible. Drop them and clear embed_state so every message is
+      // re-embedded at the new dimension.
+      this.raw.exec("DROP TABLE IF EXISTS vec_messages");
+      this.raw.exec("DELETE FROM embed_state");
+    }
     this.raw.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(embedding float[${dim}])`);
+    if (cur !== String(dim)) this.setState("vec_dim", String(dim));
   }
 
   close(): void {
