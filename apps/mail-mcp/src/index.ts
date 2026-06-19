@@ -14,6 +14,7 @@ import { loadEmbedConfig } from "../../mail-mirror/src/embed-config.ts";
 import { embedText } from "../../mail-mirror/src/embed-client.ts";
 import { Mail } from "./mail.ts";
 import type { ReadArgs, ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } from "./types.ts";
+import { enrichmentReady } from "./capabilities.ts";
 
 // Open the read-only Store once at startup if the DB exists.
 // send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.
@@ -22,6 +23,7 @@ const path = dbPath();
 const dbReady = existsSync(path);
 const store = dbReady ? Store.openReadonly(path) : Store.open(":memory:");
 if (dbReady) store.enableVectors();
+const enriched = dbReady && enrichmentReady(store);
 
 const embedCfg = loadEmbedConfig();
 const embedQuery = embedCfg ? (text: string) => embedText(text, embedCfg) : undefined;
@@ -42,7 +44,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "search_messages",
       description:
-        "Search mail across any mailbox/account (Inbox, Sent, Drafts, …). All filters optional and combined with AND.",
+        "Search mail across any mailbox/account (Inbox, Sent, Drafts, …). All filters optional and combined with AND. Advanced filters (toName, fromName, fromAddr, subjectContains, bodyContains, cc, senderDomain, attachmentType, attachmentName, minSize, maxSize, answeredOnly, junkOnly, sort) require `mail-mirror migrate` to have run once.",
       inputSchema: {
         type: "object",
         properties: {
@@ -50,13 +52,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           subject: { type: "string" },
           sender: { type: "string" },
           recipient: { type: "string" },
-          account: { type: "string" },
-          mailbox: { type: "string", description: "e.g. Sent, Drafts" },
+          cc: { type: "string", description: "Substring match against CC addresses or names" },
+          senderDomain: { type: "string", description: "Match sender's email domain (e.g. gmail.com)" },
+          account: { type: "string", description: "account email, name, or UUID" },
+          mailbox: {
+            type: "string",
+            description: "mailbox name or role keyword (inbox, drafts, sent, trash, junk, archive, important, flagged); use anyMailbox to match a message in ANY of its mailboxes",
+          },
+          anyMailbox: { type: "boolean", description: "When true, match if the message appears in any of the resolved mailboxes" },
           dateFrom: { type: "string" },
           dateTo: { type: "string" },
-          unreadOnly: { type: "boolean", description: "(not yet populated by the mirror)" },
-          flaggedOnly: { type: "boolean", description: "(not yet populated by the mirror)" },
+          unreadOnly: { type: "boolean" },
+          flaggedOnly: { type: "boolean" },
+          answeredOnly: { type: "boolean", description: "Only messages that have been replied to" },
+          junkOnly: { type: "boolean", description: "Only messages marked as junk/spam" },
           hasAttachments: { type: "boolean" },
+          attachmentType: { type: "string", description: "Substring match against attachment MIME type or file extension" },
+          attachmentName: { type: "string", description: "Substring match against attachment filename" },
+          minSize: { type: "number", description: "Minimum message size in bytes" },
+          maxSize: { type: "number", description: "Maximum message size in bytes" },
+          fromName: { type: "string", description: "Substring match against sender display name" },
+          fromAddr: { type: "string", description: "Substring match against sender email address" },
+          toName: { type: "string", description: "Substring match against recipient display name" },
+          subjectContains: { type: "string", description: "Substring match against subject (trigram)" },
+          bodyContains: { type: "string", description: "Substring match against body text (trigram)" },
+          sort: { type: "string", enum: ["date", "size"], description: "Sort field (default: date)" },
+          sortDir: { type: "string", enum: ["asc", "desc"], description: "Sort direction (default: desc)" },
           limit: { type: "number" },
           offset: { type: "number" },
         },
@@ -127,6 +148,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
+    {
+      name: "get_thread",
+      description: "Return every message in a conversation, oldest first. Pass a threadId from a search result, or a message id/messageId.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          threadId: { type: "number" },
+          id: { type: "string", description: "Mail native id from a search result" },
+          messageId: { type: "string", description: "RFC Message-ID" },
+        },
+        additionalProperties: false,
+      },
+    },
   ],
 }));
 
@@ -167,6 +201,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         return text(await mail.send(args as unknown as SendArgs));
       case "reply":
         return text(await mail.reply(args as unknown as ReplyArgs));
+      case "get_thread": {
+        const check = dbEmptyCheck();
+        if (check.empty) return text({ error: check.message });
+        return text(await mail.getThread(args as { threadId?: number; id?: string; messageId?: string }));
+      }
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${req.params.name}`);
     }
