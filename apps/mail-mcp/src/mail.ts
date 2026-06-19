@@ -13,24 +13,35 @@ import { assertEmails, assertSafeDestPath, isEmail } from "./validate.ts";
 import { runOsa } from "./osascript.ts";
 import {
   mailboxesScript,
-  readScript,
   replyScript,
   saveAttachmentScript,
-  searchScript,
   sendScript,
 } from "./applescript.ts";
-import { parseDetail, parseMailboxes, parseSummaries } from "./parse.ts";
+import { parseMailboxes } from "./parse.ts";
+import type { Store } from "../../mail-mirror/src/store.ts";
+import { searchDb, type SearchDbArgs } from "./db-search.ts";
+import { readDb, type MailDetail } from "./db-read.ts";
 
 type Runner = (script: string, timeoutMs?: number) => Promise<string>;
 
 /** Reading a message body waits on a server download — allow longer. */
 const READ_TIMEOUT_MS = 90_000;
 
+export interface MailDeps {
+  store: Store;
+  embedQuery?: (text: string) => Promise<number[] | null>;
+  runner?: Runner;
+}
+
 export class Mail {
+  private readonly store: Store;
+  private readonly embedQuery?: (text: string) => Promise<number[] | null>;
   private readonly run: Runner;
 
-  constructor(runner?: Runner) {
-    this.run = runner ?? ((script, timeoutMs) => runOsa(script, { timeoutMs }));
+  constructor(deps: MailDeps) {
+    this.store = deps.store;
+    this.embedQuery = deps.embedQuery;
+    this.run = deps.runner ?? ((script, timeoutMs) => runOsa(script, { timeoutMs }));
   }
 
   async listMailboxes(): Promise<Mailbox[]> {
@@ -38,19 +49,11 @@ export class Mail {
   }
 
   async search(args: SearchArgs): Promise<MessageSummary[]> {
-    let rows = parseSummaries(await this.run(searchScript(args)));
-    // Costly filters applied post-hoc (see spec). subject/sender/flags are
-    // handled in-script; body-`query`/recipient/date/hasAttachments are
-    // refined against real Mail.app — `query` matches the subject here.
-    if (args.query) {
-      const q = args.query.toLowerCase();
-      rows = rows.filter((r) => r.subject.toLowerCase().includes(q));
-    }
-    return rows;
+    return searchDb(this.store, args as unknown as SearchDbArgs, this.embedQuery);
   }
 
-  async read(args: ReadArgs): Promise<{ subject: string; from: string; date: string; body: string }> {
-    return parseDetail(await this.run(readScript(args), READ_TIMEOUT_MS));
+  async read(args: ReadArgs): Promise<MailDetail> {
+    return readDb(this.store, args, (script) => this.run(script, READ_TIMEOUT_MS));
   }
 
   async saveAttachment(args: SaveAttachmentArgs): Promise<{ path: string }> {

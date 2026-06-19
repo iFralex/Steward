@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -7,10 +8,26 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
+import { Store } from "../../mail-mirror/src/store.ts";
+import { dbPath } from "../../mail-mirror/src/paths.ts";
+import { loadEmbedConfig } from "../../mail-mirror/src/embed-config.ts";
+import { embedText } from "../../mail-mirror/src/embed-client.ts";
 import { Mail } from "./mail.ts";
 import type { ReadArgs, ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } from "./types.ts";
 
-const mail = new Mail();
+// Open the read-only Store once at startup if the DB exists.
+// send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.
+// search/read require the DB and return an actionable message when it is absent or empty.
+const path = dbPath();
+const dbReady = existsSync(path);
+const store = dbReady ? Store.openReadonly(path) : Store.open(":memory:");
+if (dbReady) store.enableVectors();
+
+const embedCfg = loadEmbedConfig();
+const embedQuery = embedCfg ? (text: string) => embedText(text, embedCfg) : undefined;
+
+const mail = new Mail({ store, embedQuery });
+
 const server = new Server({ name: "mail", version: "0.0.0" }, { capabilities: { tools: {} } });
 
 const STRINGS = (description: string) => ({ type: "array", items: { type: "string" }, description });
@@ -48,11 +65,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "read_message",
-      description: "Read a message's body and attachment list. Pass the `id` from a search_messages result (fast).",
+      description: "Read a message body and attachment list. Pass the `messageId` from a search_messages result.",
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Mail's native `id` from a search result (preferred, fast)" },
+          id: { type: "string", description: "Mail native `id` from a search result (preferred, fast)" },
           messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
         },
         additionalProperties: false,
@@ -64,7 +81,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Mail's native `id` from a search result (preferred, fast)" },
+          id: { type: "string", description: "Mail native `id` from a search result (preferred, fast)" },
           messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
           attachment: { type: ["string", "number"], description: "attachment name or 1-based index" },
           destDir: { type: "string", description: "absolute dir; defaults to a temp dir" },
@@ -75,13 +92,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "send_email",
-      description: "SEND an email (requires the user's approval in the host). Plain-text body.",
+      description: "SEND an email (requires the user approval in the host). Plain-text body.",
       inputSchema: {
         type: "object",
         properties: {
           from: {
             type: "string",
-            description: "sender address; must be one of your account emails (see list_mailboxes). Omit to use Mail's default account.",
+            description: "sender address; must be one of your account emails (see list_mailboxes). Omit to use Mail default account.",
           },
           to: STRINGS("recipient addresses"),
           cc: STRINGS("cc addresses"),
@@ -96,11 +113,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "reply",
-      description: "SEND a reply on a message's thread (requires the user's approval).",
+      description: "SEND a reply on a message thread (requires the user approval).",
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Mail's native `id` from a search result (preferred, fast)" },
+          id: { type: "string", description: "Mail native `id` from a search result (preferred, fast)" },
           messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
           body: { type: "string" },
           attachments: STRINGS("absolute file paths to attach"),
@@ -117,16 +134,33 @@ function text(value: unknown) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
 
+function dbEmptyCheck(): { empty: boolean; message: string } {
+  if (!dbReady) {
+    return { empty: true, message: "Mail mirror not found. Run: mail-mirror backfill" };
+  }
+  const total = (store.raw.prepare("SELECT COUNT(*) c FROM messages WHERE deleted=0").get() as { c: number }).c;
+  if (total === 0) {
+    return { empty: true, message: "Mail mirror is empty. Run: mail-mirror backfill" };
+  }
+  return { empty: false, message: "" };
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const args = (req.params.arguments ?? {}) as Record<string, unknown>;
   try {
     switch (req.params.name) {
       case "list_mailboxes":
         return text(await mail.listMailboxes());
-      case "search_messages":
+      case "search_messages": {
+        const check = dbEmptyCheck();
+        if (check.empty) return text({ error: check.message });
         return text(await mail.search(args as SearchArgs));
-      case "read_message":
+      }
+      case "read_message": {
+        const check = dbEmptyCheck();
+        if (check.empty) return text({ error: check.message });
         return text(await mail.read(args as ReadArgs));
+      }
       case "save_attachment":
         return text(await mail.saveAttachment(args as unknown as SaveAttachmentArgs));
       case "send_email":
