@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import type { ParsedMessage } from "./types.ts";
 
 export type BodyState = "full" | "partial" | "none";
 
@@ -260,6 +259,7 @@ export class Store {
   }
 
   ensureVecTable(dim: number): void {
+    if (!Number.isInteger(dim) || dim <= 0) throw new Error(`invalid embedding dimension: ${dim}`);
     const cur = this.getState("vec_dim");
     if (cur && Number(cur) !== dim) {
       // Model/dim changed: existing vectors live in a different space and are

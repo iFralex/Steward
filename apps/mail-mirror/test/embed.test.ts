@@ -17,7 +17,7 @@ function deps(store: Store, embed: (t: string) => Promise<number[] | null>): Emb
 
 test("embedMessage embeds, then skips unchanged, re-embeds on change, no-ops when down", async () => {
   const s = Store.open(":memory:");
-  s.enableVectors(); s.ensureVecTable(4);
+  s.enableVectors();
   s.upsertMessage(row("a@x", "trains"));
   const d = deps(s, async () => [1, 0, 0, 0]);
 

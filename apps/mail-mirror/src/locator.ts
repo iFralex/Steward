@@ -1,6 +1,6 @@
 import { readdirSync, statSync, accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { EmlxEntry } from "./types.ts";
 
 export function findMailRoot(home: string = homedir()): string | null {
