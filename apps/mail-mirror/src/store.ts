@@ -369,6 +369,22 @@ export class Store {
     return r?.uuid;
   }
 
+  upsertMailboxRole(accountUuid: string, mailbox: string, role: string | null): void {
+    this.raw.prepare(
+      `INSERT INTO mailbox_roles(account_uuid, mailbox_name, role) VALUES (?,?,?)
+       ON CONFLICT(account_uuid, mailbox_name) DO UPDATE SET role=excluded.role`,
+    ).run(accountUuid, mailbox, role);
+  }
+
+  roleForMailbox(accountUuid: string, mailbox: string): string | undefined {
+    const r = this.raw.prepare("SELECT role FROM mailbox_roles WHERE account_uuid=? AND mailbox_name=?").get(accountUuid, mailbox) as { role: string | null } | undefined;
+    return r?.role ?? undefined;
+  }
+
+  mailboxesForRole(accountUuid: string, role: string): string[] {
+    return (this.raw.prepare("SELECT mailbox_name FROM mailbox_roles WHERE account_uuid=? AND role=?").all(accountUuid, role) as { mailbox_name: string }[]).map((r) => r.mailbox_name);
+  }
+
   close(): void {
     this.raw.close();
   }
