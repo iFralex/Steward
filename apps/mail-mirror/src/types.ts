@@ -17,6 +17,9 @@ export interface ParsedMessage {
   inReplyTo: string | null; // normalised
   references: string[]; // normalised
   gmThrid: string | null;
+  flags: { read: boolean; answered: boolean; flagged: boolean; junk: boolean } | null;
+  flagColor: number | null;
+  appleThrid: number | null;
   attachments: ParsedAttachment[];
 }
 
