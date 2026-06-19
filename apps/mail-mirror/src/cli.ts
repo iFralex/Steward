@@ -101,14 +101,13 @@ async function main(): Promise<void> {
     const root = requireMailRoot();
     const d = deps();
     let n = 0;
-    const paths = d.store.raw.prepare("SELECT path FROM message_paths").all() as { path: string }[];
-    for (const { path } of paths) {
+    const paths = d.store.raw.prepare("SELECT path, mailbox FROM message_paths").all() as { path: string; mailbox: string | null }[];
+    for (const { path, mailbox } of paths) {
       const mid = d.store.getMessageIdByPath(path);
-      const mailbox = (d.store.raw.prepare("SELECT mailbox FROM message_paths WHERE path=?").get(path) as { mailbox: string } | undefined)?.mailbox ?? "";
       const account = (d.store.getMessage(mid ?? "")?.account) ?? path.slice(root.length + 1).split("/")[0];
       let mtimeMs = 0;
       try { mtimeMs = statSync(path).mtimeMs; } catch { continue; }
-      if (await ingestEmlxFile(d, { path, account, mailbox, isPartial: path.endsWith(".partial.emlx"), mtimeMs })) n++;
+      if (await ingestEmlxFile(d, { path, account, mailbox: mailbox ?? "", isPartial: path.endsWith(".partial.emlx"), mtimeMs })) n++;
     }
     const ident = await refreshIdentity({ store: d.store, mailRoot: root });
     console.log(`migrate: re-ingested ${n}, accounts ${ident.accounts}, roles ${ident.roles}`);
