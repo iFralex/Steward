@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS messages (
   body_state TEXT NOT NULL, source TEXT NOT NULL, emlx_path TEXT,
   in_reply_to TEXT, reference_ids TEXT, gm_thrid TEXT, thread_id INTEGER,
   flagged INTEGER DEFAULT 0, unread INTEGER DEFAULT 0, size INTEGER,
-  deleted INTEGER DEFAULT 0, ingested_at INTEGER, updated_at INTEGER
+  deleted INTEGER DEFAULT 0, ingested_at INTEGER, updated_at INTEGER,
+  answered INTEGER DEFAULT 0, junk INTEGER DEFAULT 0, flag_color INTEGER, apple_thrid INTEGER,
+  to_names TEXT, cc_names TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_account_date ON messages(account, date);
@@ -60,6 +62,17 @@ CREATE INDEX IF NOT EXISTS idx_mpaths_message ON message_paths(message_id);
 CREATE TABLE IF NOT EXISTS embed_state (
   message_id TEXT PRIMARY KEY, model TEXT, dim INTEGER, source_hash TEXT, embedded_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS accounts (
+  uuid TEXT PRIMARY KEY, name TEXT, emails TEXT
+);
+CREATE TABLE IF NOT EXISTS mailbox_roles (
+  account_uuid TEXT NOT NULL, mailbox_name TEXT NOT NULL, role TEXT,
+  PRIMARY KEY (account_uuid, mailbox_name)
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_trig USING fts5(
+  from_name, from_addr, to_names, to_addrs, cc_names, cc_addrs, subject, body_text,
+  tokenize='trigram'
+);
 `;
 
 export class Store {
@@ -71,6 +84,22 @@ export class Store {
     if (!opts.readonly) {
       db.pragma("journal_mode = WAL");
       db.exec(SCHEMA);
+      this.migrate();
+    }
+  }
+
+  /** Idempotently add columns absent from a pre-enrichment DB. CREATE ... IF NOT EXISTS in SCHEMA covers tables. */
+  private migrate(): void {
+    const have = new Set(
+      (this.raw.prepare("PRAGMA table_info(messages)").all() as { name: string }[]).map((r) => r.name),
+    );
+    const add: [string, string][] = [
+      ["answered", "INTEGER DEFAULT 0"], ["junk", "INTEGER DEFAULT 0"],
+      ["flag_color", "INTEGER"], ["apple_thrid", "INTEGER"],
+      ["to_names", "TEXT"], ["cc_names", "TEXT"],
+    ];
+    for (const [col, type] of add) {
+      if (!have.has(col)) this.raw.exec(`ALTER TABLE messages ADD COLUMN ${col} ${type}`);
     }
   }
 
