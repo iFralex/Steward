@@ -110,7 +110,7 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
   };
   deps.store.upsertMessage(row);
   deps.store.setThreadId(messageId, threadId);
-  deps.store.recordPath(messageId, entry.path, entry.mailbox, entry.isPartial);
+  deps.store.recordPath(messageId, entry.path, entry.mailbox, entry.isPartial, entry.mtimeMs);
   if (isNew) bumpThread(deps.store, threadId, parsed.date);
 
   const atts = parsed.attachments.map((a) => {
@@ -140,6 +140,11 @@ export async function reconcile(deps: SyncDeps, mailRoot: string): Promise<{ ing
   for (const e of entries) {
     if (!known.has(e.path)) {
       if (await ingestEmlxFile(deps, e)) ingested++;
+    } else {
+      const prev = deps.store.pathMtime(e.path);
+      if (prev === undefined || e.mtimeMs > prev) {
+        if (await ingestEmlxFile(deps, e)) ingested++;
+      }
     }
   }
   // Prune dead paths; soft-delete a message only when NONE of its paths remain.

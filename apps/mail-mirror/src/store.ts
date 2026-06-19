@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS message_paths (
   path TEXT PRIMARY KEY,
   message_id TEXT NOT NULL,
   mailbox TEXT,
-  is_partial INTEGER DEFAULT 0
+  is_partial INTEGER DEFAULT 0,
+  mtime_ms REAL
 );
 CREATE INDEX IF NOT EXISTS idx_mpaths_message ON message_paths(message_id);
 CREATE TABLE IF NOT EXISTS embed_state (
@@ -109,6 +110,8 @@ export class Store {
     for (const [col, type] of add) {
       if (!have.has(col)) this.raw.exec(`ALTER TABLE messages ADD COLUMN ${col} ${type}`);
     }
+    const mp = new Set((this.raw.prepare("PRAGMA table_info(message_paths)").all() as { name: string }[]).map((r) => r.name));
+    if (!mp.has("mtime_ms")) this.raw.exec("ALTER TABLE message_paths ADD COLUMN mtime_ms REAL");
   }
 
   static open(path: string): Store {
@@ -232,13 +235,19 @@ export class Store {
     return r?.message_id;
   }
 
-  recordPath(messageId: string, path: string, mailbox: string, isPartial: boolean): void {
+  recordPath(messageId: string, path: string, mailbox: string, isPartial: boolean, mtimeMs?: number): void {
     this.raw
       .prepare(
-        `INSERT INTO message_paths(path, message_id, mailbox, is_partial) VALUES(?,?,?,?)
-         ON CONFLICT(path) DO UPDATE SET message_id=excluded.message_id, mailbox=excluded.mailbox, is_partial=excluded.is_partial`,
+        `INSERT INTO message_paths(path, message_id, mailbox, is_partial, mtime_ms) VALUES(?,?,?,?,?)
+         ON CONFLICT(path) DO UPDATE SET message_id=excluded.message_id, mailbox=excluded.mailbox,
+           is_partial=excluded.is_partial, mtime_ms=excluded.mtime_ms`,
       )
-      .run(path, messageId, mailbox, isPartial ? 1 : 0);
+      .run(path, messageId, mailbox, isPartial ? 1 : 0, mtimeMs ?? null);
+  }
+
+  pathMtime(path: string): number | undefined {
+    const r = this.raw.prepare("SELECT mtime_ms FROM message_paths WHERE path=?").get(path) as { mtime_ms: number | null } | undefined;
+    return r?.mtime_ms ?? undefined;
   }
 
   pathsForMessage(messageId: string): { path: string; mailbox: string; isPartial: boolean }[] {
