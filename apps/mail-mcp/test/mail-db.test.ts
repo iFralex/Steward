@@ -47,3 +47,16 @@ test("Mail.search: dateFrom/dateTo ISO strings filter messages correctly", async
   assert.ok(!hits.find((h) => h.messageId === "out@x"), "out-of-range message should be excluded");
   s.close();
 });
+
+test("Mail.search: subject filter matches substring case-insensitively", async () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage(row("a@x", "Project Protiviti Review", "body a"));
+  s.upsertMessage(row("b@x", "Unrelated Project", "body b"));
+  s.upsertMessage(row("c@x", "PROTIVITI Annual Report", "body c"));
+  const mail = new Mail({ store: s });
+  const hits = await mail.search({ subject: "Protiviti" });
+  assert.ok(hits.find((h) => h.messageId === "a@x"), "message with Protiviti in subject should match");
+  assert.ok(!hits.find((h) => h.messageId === "b@x"), "message without Protiviti should not match");
+  assert.ok(hits.find((h) => h.messageId === "c@x"), "PROTIVITI uppercase should match");
+  s.close();
+});

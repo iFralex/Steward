@@ -1,6 +1,7 @@
 export interface DbFilters {
   account?: string;
   mailbox?: string;
+  subject?: string;
   sender?: string;
   recipient?: string;
   dateFrom?: number;
@@ -15,6 +16,7 @@ export function buildFilterSql(f: DbFilters): { clause: string; params: unknown[
   const params: unknown[] = [];
   if (f.account) { conds.push("m.account=?"); params.push(f.account); }
   if (f.mailbox) { conds.push("m.mailbox=?"); params.push(f.mailbox); }
+  if (f.subject) { conds.push("m.subject LIKE ?"); params.push(`%${f.subject}%`); }
   if (f.sender) { conds.push("(m.from_addr LIKE ? OR m.from_name LIKE ?)"); params.push(`%${f.sender}%`, `%${f.sender}%`); }
   if (f.recipient) { conds.push("m.to_addrs LIKE ?"); params.push(`%${f.recipient}%`); }
   if (typeof f.dateFrom === "number") { conds.push("m.date>=?"); params.push(f.dateFrom); }

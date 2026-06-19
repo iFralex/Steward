@@ -23,3 +23,9 @@ test("filters compose with params in order", () => {
   assert.match(clause, /EXISTS \(SELECT 1 FROM attachments/);
   assert.deepEqual(params, ["ACC", "INBOX", "%trenitalia%", "%trenitalia%", 1000, 2000]);
 });
+
+test("subject filter generates LIKE clause with wildcard params", () => {
+  const { clause, params } = buildFilterSql({ subject: "Protiviti" });
+  assert.match(clause, /m\.subject LIKE \?/);
+  assert.deepEqual(params, ["%Protiviti%"]);
+});

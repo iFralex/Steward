@@ -59,6 +59,7 @@ export class Mail {
       query: args.query,
       account: args.account,
       mailbox: args.mailbox,
+      subject: args.subject,
       sender: args.sender,
       recipient: args.recipient,
       dateFrom: toEpochSeconds(args.dateFrom),
