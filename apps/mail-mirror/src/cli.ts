@@ -6,7 +6,7 @@ import { BlobStore } from "./blobstore.ts";
 import { backfill, reconcile, ingestEmlxFile, type SyncDeps } from "./sync.ts";
 import { refreshIdentity } from "./enrich.ts";
 import { startWatch } from "./watch.ts";
-import { findMailRoot, canRead } from "./locator.ts";
+import { findMailRoot, canRead, entryForPath } from "./locator.ts";
 import { dbPath, blobsDir } from "./paths.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
 import { embedText, embedTexts } from "./embed-client.ts";
@@ -103,13 +103,11 @@ async function main(): Promise<void> {
     const root = requireMailRoot();
     const d = deps();
     let n = 0;
-    const paths = d.store.raw.prepare("SELECT path, mailbox FROM message_paths").all() as { path: string; mailbox: string | null }[];
-    for (const { path, mailbox } of paths) {
-      const mid = d.store.getMessageIdByPath(path);
-      const account = (d.store.getMessage(mid ?? "")?.account) ?? path.slice(root.length + 1).split("/")[0];
+    const paths = d.store.raw.prepare("SELECT path FROM message_paths").all() as { path: string }[];
+    for (const { path } of paths) {
       let mtimeMs = 0;
       try { mtimeMs = statSync(path).mtimeMs; } catch { continue; }
-      if (await ingestEmlxFile(d, { path, account, mailbox: mailbox ?? "", isPartial: path.endsWith(".partial.emlx"), mtimeMs })) n++;
+      if (await ingestEmlxFile(d, entryForPath(root, path, mtimeMs))) n++;
     }
     const ident = await refreshIdentity({ store: d.store, mailRoot: root, classifyRole });
     console.log(`migrate: re-ingested ${n}, accounts ${ident.accounts}, roles ${ident.roles}`);

@@ -34,3 +34,9 @@ test("trigram index matches an arbitrary substring inside a recipient name", () 
   assert.equal(hits[0].messageId, "m1");
   s.close();
 });
+
+test("searchTrig throws on an unknown field", () => {
+  const s = Store.open(":memory:");
+  assert.throws(() => s.searchTrig("evil; DROP TABLE--", "x", 1), /unknown trigram field/);
+  s.close();
+});

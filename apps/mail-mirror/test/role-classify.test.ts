@@ -17,3 +17,9 @@ test("classifier returns null on a fetch error", async () => {
   const c = makeRoleClassifier({ endpoint: "http://x", model: "m" }, async () => { throw new Error("down"); });
   assert.equal(await c("x"), null);
 });
+
+test("classifier returns null on a non-ok HTTP response", async () => {
+  const fetchStub = async () => ({ ok: false, json: async () => ({}) }) as any;
+  const c = makeRoleClassifier({ endpoint: "http://x/v1/chat/completions", model: "m" }, fetchStub);
+  assert.equal(await c("AnyFolder"), null);
+});

@@ -54,6 +54,7 @@ export interface RoleDiscoveryDeps {
 export async function discoverRoles(deps: RoleDiscoveryDeps): Promise<number> {
   const read = deps.readMboxCache ?? readMboxCacheDefault;
   const terms = deps.localizedTerms ? await deps.localizedTerms() : null;
+  const hasTerms = terms != null && Object.values(terms).some((l) => l.length > 0);
   let n = 0;
   for (const uuid of deps.accountUuids) {
     let boxes: { name: string; attr: number }[];
@@ -67,9 +68,9 @@ export async function discoverRoles(deps: RoleDiscoveryDeps): Promise<number> {
       if (!role && deps.classifyRole) {
         try { role = await deps.classifyRole(b.name); } catch (err) { role = null; console.warn(`[mail-mirror] mailbox role classifier failed for "${b.name}": ${err instanceof Error ? err.message : String(err)}`); }
       }
-      if (!role && terms) {
+      if (!role && hasTerms) {
         const lc = b.name.toLowerCase();
-        for (const [r, list] of Object.entries(terms) as [Role, string[]][]) {
+        for (const [r, list] of Object.entries(terms!) as [Role, string[]][]) {
           if (list.some((t) => t && lc.includes(t))) { role = r; break; }
         }
       }

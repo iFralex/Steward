@@ -177,7 +177,7 @@ export class Store {
     ).run(m.rowid, m.from_name, m.from_addr, m.to_names, m.to_addrs, m.cc_names, m.cc_addrs, m.subject, m.body_text);
   }
 
-  /** Substring/fuzzy match in one trigram field. `field` must be a known column name. */
+  /** Substring match in one trigram field. `field` must be a known column name. */
   searchTrig(field: string, needle: string, limit: number): MessageRow[] {
     const cols = new Set(["from_name", "from_addr", "to_names", "to_addrs", "cc_names", "cc_addrs", "subject", "body_text"]);
     if (!cols.has(field)) throw new Error(`unknown trigram field: ${field}`);
