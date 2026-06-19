@@ -349,6 +349,26 @@ export class Store {
     if (cur !== String(dim)) this.setState("vec_dim", String(dim));
   }
 
+  upsertAccount(uuid: string, name: string, emails: string[]): void {
+    this.raw.prepare(
+      `INSERT INTO accounts(uuid, name, emails) VALUES (?,?,?)
+       ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, emails=excluded.emails`,
+    ).run(uuid, name, emails.join(","));
+  }
+
+  hasAccount(uuid: string): boolean {
+    return this.raw.prepare("SELECT 1 FROM accounts WHERE uuid=? LIMIT 1").get(uuid) !== undefined;
+  }
+
+  /** Resolve a friendly email or account name (case-insensitive substring) to its account UUID. */
+  accountByEmailOrName(q: string): string | undefined {
+    const needle = `%${q.toLowerCase()}%`;
+    const r = this.raw.prepare(
+      "SELECT uuid FROM accounts WHERE lower(emails) LIKE ? OR lower(name) LIKE ? LIMIT 1",
+    ).get(needle, needle) as { uuid: string } | undefined;
+    return r?.uuid;
+  }
+
   close(): void {
     this.raw.close();
   }
