@@ -62,7 +62,16 @@ Two plans, executed in order. Plan B depends on Plan A's data.
    existing plain FTS5 (BM25, word ranking). The plain index keeps powering the
    `query` free-text relevance ranking; trigram powers substring / fuzzy
    field-scoped matching. Neither replaces the other.
-5. **Dynamic by construction.** All enrichment runs in the existing
+5. **Mailbox roles are auto-discovered, never hardcoded.** The role of each
+   mailbox (drafts / sent / trash / junk / inbox / archive / important /
+   flagged) is derived from the IMAP SPECIAL-USE attributes Mail caches per
+   account, then — for mailboxes without that attribute — an optional AI
+   classification of the mailbox name (if an LLM endpoint is configured), then
+   the localized role terms Mail itself exposes. No author-maintained list of
+   localized mailbox names. Adding a new account (possibly with
+   differently-named mailboxes, in any language) gets its roles discovered
+   automatically — see A6.
+6. **Dynamic by construction.** All enrichment runs in the existing
    `backfill` / `watch` / `reconcile` loop, not only at first import.
 
 ---
@@ -117,6 +126,42 @@ Today the trailer is sliced off and discarded. Parse it.
 - Enables arbitrary substring (`MATCH 'ristian'`) and field-scoped
   (`from_name : cristiana`) matching in any field.
 
+### A6. Mailbox role discovery (`mailbox_roles` table)
+
+Roles are discovered, not hardcoded, so a newly added account — whatever its
+mailboxes are named, in any language — is classified automatically.
+
+- New table `mailbox_roles(account_uuid TEXT, mailbox_name TEXT, role TEXT,
+  PRIMARY KEY (account_uuid, mailbox_name))`. `role` ∈ {inbox, drafts, sent,
+  trash, junk, archive, important, flagged} or NULL when unknown.
+- **Primary source — IMAP SPECIAL-USE bits.** Parse each account's
+  `~/Library/Mail/V10/<UUID>/.mboxCache.plist`, walk `mboxes` recursively
+  through `IMAPMailboxChildren`, and decode each mailbox's
+  `IMAPMailboxAttributes` (the low `0x40` base bit is masked off). Validated on
+  real data: `0x1000` drafts, `0x8000` sent, `0x10000` trash, `0x4000` junk,
+  `0x400` archive/all, `0x20000` important, `0x2000` flagged; `INBOX` by name.
+  The exact bit set is re-confirmed during implementation with a unit test over
+  captured real attribute integers.
+- **Fallback 1 — AI classification (if an LLM is configured).** For a mailbox
+  with no SPECIAL-USE bit, optionally ask a configured LLM to map its name to a
+  role keyword (or "none") for non-standard / oddly-named mailboxes. This is
+  injected like the embed dependency (a `classifyRole?` function, gated by an
+  env-configured chat endpoint — "se disponibile"); when absent it is skipped.
+  Volume is tiny (tens of distinct mailbox names total, not per-message) and the
+  result is cached in `mailbox_roles`, so at most a handful of calls ever run.
+  An LLM error or low-confidence "none" falls through to Fallback 2.
+- **Fallback 2 — Mail's own localized role terms.** When no LLM is configured
+  (or it returned "none"), fetch the localized role *names* Mail itself reports
+  for its app-level special mailboxes via AppleScript (`name of drafts mailbox`,
+  `sent mailbox`, `trash mailbox`, `junk mailbox`), strip the unified-suffix
+  (e.g. "(tutte)"/"(all)"), and match the base term against the account's
+  mailbox names. These terms come from Mail in the current UI language — they
+  are not authored here and adapt automatically to the user's language.
+- **Literal names always work.** A mailbox whose role can't be determined is
+  still fully searchable by its verbatim name (B1).
+- Populated during `backfill`, refreshed each `watch` cycle and whenever a new
+  account UUID appears (alongside A1's account refresh).
+
 ### A5. Migration + incremental freshness
 
 - A `mail-mirror migrate` command (idempotent): runs `ALTER TABLE` for the new
@@ -137,12 +182,13 @@ Today the trailer is sliced off and discarded. Parse it.
 
 - `account` filter accepts a friendly **email or account name** (resolved via
   `accounts`) in addition to a raw UUID.
-- `mailbox` filter gains **canonical localized aliases**: a small role map so
-  `drafts → {Drafts, Bozze}`, `trash → {Trash, Cestino, Posta eliminata,
-  Deleted Messages}`, `sent → {Sent, Posta inviata, Inviata, [Gmail]Sent Mail}`,
-  `junk → {Junk, Indesiderata, Bulk Mail, Spam}`, `inbox → {INBOX, Posta in
-  arrivo}`, `archive → {Archive, Tutti i messaggi, [Gmail]All Mail}`. A literal
-  mailbox name still matches verbatim.
+- `mailbox` filter accepts a **role keyword** (`drafts`, `sent`, `trash`,
+  `junk`, `inbox`, `archive`, `important`, `flagged`) resolved through the
+  auto-discovered `mailbox_roles` table (A6) — so `mailbox: "drafts"` matches
+  Bozze, Drafts, or whatever that account's drafts mailbox is named, in any
+  language, with no hardcoded list. A literal mailbox name still matches
+  verbatim. A role keyword can resolve to different mailbox names per account
+  and matches any of them.
 - **match-any-mailbox**: optionally resolve the mailbox/account filter through
   `message_paths` so a message that lives in several mailboxes (Gmail
   All-Mail + label) is found by any of them, not just its primary mailbox.
@@ -193,8 +239,9 @@ Today the trailer is sliced off and discarded. Parse it.
                                       ├──▶ messages_trig  (substring/fuzzy, all fields)
                                       └──▶ message_paths  (per-mailbox membership)
 AppleScript accountsScript ──────────────▶ accounts (uuid→email/name), refreshed in watch
+.mboxCache.plist + AppleScript fallback ─▶ mailbox_roles (uuid,mailbox→role), refreshed in watch
 
-mail-mcp search ── buildFilterSql(accounts join, mailbox aliases, flags, rich filters)
+mail-mcp search ── buildFilterSql(accounts join, mailbox_roles resolution, flags, rich filters)
                ── + messages_trig field-scoped substring
                ── + hybrid query (plain FTS BM25 ⊕ vector KNN via RRF)
                ── group by thread_id
@@ -210,6 +257,15 @@ get_thread     ── thread_id (or apple_thrid) → all messages ordered by dat
   to all-false, parsing of the RFC822 body is unaffected.
 - `messages_trig` is rebuilt from `messages`, so a corrupt trigram index is
   recoverable by `migrate` without data loss.
+- A missing / unparseable `.mboxCache.plist`, or a provider that advertises no
+  SPECIAL-USE and is resolved by neither the optional AI step nor a localized
+  term, leaves `role` NULL for that mailbox: a role-keyword filter simply won't
+  match it, but the mailbox stays searchable by its literal name. Role discovery
+  never blocks ingest.
+- The AI classifier is optional and best-effort: no configured endpoint, a
+  network error, or a "none" answer all fall through to the localized-term
+  match. It is never on the message ingest hot path (per distinct mailbox name,
+  cached).
 
 ## Testing
 
@@ -217,8 +273,13 @@ get_thread     ── thread_id (or apple_thrid) → all messages ordered by dat
 - A4/B3: trigram substring + field-scoped matching against seeded rows.
 - A2: bitfield decoder over captured real flag integers (read/flagged/answered
   /junk permutations).
-- B1: mailbox-alias resolution (localized names → role) and email→UUID account
-  resolution.
+- A6: SPECIAL-USE attribute decoder over captured real `IMAPMailboxAttributes`
+  integers (drafts/sent/trash/junk/archive/important/flagged); the optional
+  AI-classifier step with an injected stub (resolves a non-standard name, falls
+  through on "none"/error); and the localized-term fallback for an
+  attribute-less, LLM-less account.
+- B1: role-keyword → mailbox resolution via `mailbox_roles`, and email→UUID
+  account resolution; literal mailbox names still match verbatim.
 - B2: each rich filter in isolation and combined.
 - B4: `get_thread` ordering and completeness.
 - The wiki embedding gate (90/90) must remain green and unmodified.
