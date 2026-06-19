@@ -11,6 +11,7 @@ import { dbPath, blobsDir } from "./paths.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
 import { embedText, embedTexts } from "./embed-client.ts";
 import { embedBackfill, startEmbedWorker, type EmbedDeps } from "./embed.ts";
+import { loadRoleClassifier } from "./role-classify.ts";
 
 function deps(): SyncDeps {
   return { store: Store.open(dbPath()), blobs: new BlobStore(blobsDir()) };
@@ -44,11 +45,12 @@ function requireMailRoot(): string {
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
+  const classifyRole = loadRoleClassifier();
   if (cmd === "backfill") {
     const root = requireMailRoot();
     const d = deps();
     const res = await backfill(d, root);
-    try { await refreshIdentity({ store: d.store, mailRoot: root }); } catch { /* best-effort */ }
+    try { await refreshIdentity({ store: d.store, mailRoot: root, classifyRole }); } catch { /* best-effort */ }
     console.log(`backfill: ingested ${res.ingested}`);
     d.store.close();
   } else if (cmd === "reconcile") {
@@ -81,8 +83,8 @@ async function main(): Promise<void> {
     const ed = makeEmbedDeps(d.store);
     if (ed) { startEmbedWorker(ed); console.log("embed worker started"); }
     else console.log("embedding disabled (set MAIL_EMBED_ENDPOINT to enable)");
-    refreshIdentity({ store: d.store, mailRoot: root }).catch(() => {});
-    setInterval(() => refreshIdentity({ store: d.store, mailRoot: root }).catch(() => {}), 300_000);
+    refreshIdentity({ store: d.store, mailRoot: root, classifyRole }).catch(() => {});
+    setInterval(() => refreshIdentity({ store: d.store, mailRoot: root, classifyRole }).catch(() => {}), 300_000);
     console.log(`watching ${root} (Ctrl+C to stop)`);
   } else if (cmd === "status") {
     const d = deps();
@@ -109,7 +111,7 @@ async function main(): Promise<void> {
       try { mtimeMs = statSync(path).mtimeMs; } catch { continue; }
       if (await ingestEmlxFile(d, { path, account, mailbox: mailbox ?? "", isPartial: path.endsWith(".partial.emlx"), mtimeMs })) n++;
     }
-    const ident = await refreshIdentity({ store: d.store, mailRoot: root });
+    const ident = await refreshIdentity({ store: d.store, mailRoot: root, classifyRole });
     console.log(`migrate: re-ingested ${n}, accounts ${ident.accounts}, roles ${ident.roles}`);
     d.store.close();
   } else {
