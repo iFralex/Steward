@@ -66,14 +66,20 @@ export class Store {
   raw: Database.Database;
   private vecLoaded = false;
 
-  constructor(db: Database.Database) {
+  constructor(db: Database.Database, opts: { readonly?: boolean } = {}) {
     this.raw = db;
-    db.pragma("journal_mode = WAL");
-    db.exec(SCHEMA);
+    if (!opts.readonly) {
+      db.pragma("journal_mode = WAL");
+      db.exec(SCHEMA);
+    }
   }
 
   static open(path: string): Store {
     return new Store(new Database(path));
+  }
+
+  static openReadonly(path: string): Store {
+    return new Store(new Database(path, { readonly: true, fileMustExist: true }), { readonly: true });
   }
 
   upsertMessage(r: MessageRow): void {
