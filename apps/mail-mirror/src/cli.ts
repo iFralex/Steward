@@ -7,7 +7,7 @@ import { startWatch } from "./watch.ts";
 import { findMailRoot, canRead } from "./locator.ts";
 import { dbPath, blobsDir } from "./paths.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
-import { embedText } from "./embed-client.ts";
+import { embedText, embedTexts } from "./embed-client.ts";
 import { embedBackfill, startEmbedWorker, type EmbedDeps } from "./embed.ts";
 
 function deps(): SyncDeps {
@@ -18,7 +18,12 @@ export function makeEmbedDeps(store: Store): EmbedDeps | null {
   const cfg = loadEmbedConfig();
   if (!cfg) return null;
   store.enableVectors();
-  return { store, model: cfg.model, embed: (text) => embedText(text, cfg) };
+  return {
+    store,
+    model: cfg.model,
+    embed: (text) => embedText(text, cfg),
+    embedBatch: (texts) => embedTexts(texts, cfg),
+  };
 }
 
 function requireMailRoot(): string {

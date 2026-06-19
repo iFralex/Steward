@@ -12,6 +12,11 @@ import {
   looksLikeOversizeError,
 } from "./providers.ts";
 
+export interface EmbeddingBatchResult {
+  vectors: (number[] | null)[];
+  error?: string;
+}
+
 export async function fetchEmbedding(
   text: string,
   cfg: EmbeddingConfig,
@@ -124,4 +129,100 @@ export async function fetchEmbedding(
   // the retry branch and then the loop condition ended).
   const error = `Embedding endpoint rejected every size down to ${current.length} chars — the server's context is smaller than ${current.length * 2}. Lower Settings → Embedding → Max Chunk Chars.`
   return { vector: null, error }
+}
+
+// ---------------------------------------------------------------------------
+// Batch variant — sends the whole texts[] in a single OpenAI-compatible call.
+// For Google-native / Doubao configs that do not accept an array input, we
+// fall back to calling fetchEmbedding once per text (correctness over speed).
+// ---------------------------------------------------------------------------
+export async function fetchEmbeddingBatch(
+  texts: string[],
+  cfg: EmbeddingConfig,
+  deps: EmbeddingDeps,
+  maxRetries = 3,
+): Promise<EmbeddingBatchResult> {
+  if (texts.length === 0) return { vectors: [] };
+  if (!cfg.endpoint) return { vectors: texts.map(() => null) };
+
+  const isGoogleNative = isGoogleEmbeddingConfig(cfg);
+  const isDoubaoMultimodal = isDoubaoMultimodalEmbeddingConfig(cfg);
+
+  // Providers that require a custom (non-array) body format: fall back to
+  // one-at-a-time via the existing fetchEmbedding to stay correct.
+  if (isGoogleNative || isDoubaoMultimodal) {
+    const vectors: (number[] | null)[] = [];
+    for (const text of texts) {
+      const r = await fetchEmbedding(text, cfg, deps, maxRetries);
+      vectors.push(r.vector);
+    }
+    return { vectors };
+  }
+
+  // OpenAI-compatible path: POST { model, input: string[] }
+  const endpoint = volcengineEmbeddingEndpoint(cfg);
+
+  // Build headers (same logic as fetchEmbedding, intentionally inlined to
+  // avoid any risk of behavioural drift on the single-text path).
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(deps.originHeader && isLocalOrPrivateHttpEndpoint(endpoint) ? deps.originHeader() : {}),
+  };
+  if (cfg.apiKey) {
+    headers.Authorization = `Bearer ${cfg.apiKey}`;
+  }
+  if (cfg.extraHeaders) {
+    for (const [k, v] of Object.entries(cfg.extraHeaders)) {
+      const name = k.trim();
+      const value = v.trim();
+      if (!isSafeExtraHeader(name, value)) continue;
+      headers[name] = value;
+    }
+  }
+
+  const allNull = (): (number[] | null)[] => texts.map(() => null);
+
+  try {
+    const resp = await deps.fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: cfg.model, input: texts }),
+    });
+
+    if (resp.ok) {
+      const json = await resp.json() as any;
+      const data = json?.data;
+      if (!Array.isArray(data)) {
+        return { vectors: allNull(), error: "batch embedding response missing data[]" };
+      }
+      const vectors: (number[] | null)[] = texts.map(() => null);
+      for (const item of data) {
+        if (typeof item?.index === "number" && isNonEmptyNumberArray(item.embedding)) {
+          vectors[item.index] = item.embedding;
+        }
+      }
+      return { vectors };
+    }
+
+    // Non-OK response
+    let bodyText = "";
+    try { bodyText = await resp.text(); } catch { /* ignore */ }
+
+    // Oversize: split and recurse on halves when there is more than one text.
+    if (looksLikeOversizeError(resp.status, bodyText) && texts.length > 1) {
+      const mid = Math.floor(texts.length / 2);
+      const [left, right] = await Promise.all([
+        fetchEmbeddingBatch(texts.slice(0, mid), cfg, deps, maxRetries),
+        fetchEmbeddingBatch(texts.slice(mid), cfg, deps, maxRetries),
+      ]);
+      return { vectors: [...left.vectors, ...right.vectors] };
+    }
+
+    return { vectors: allNull(), error: `API ${resp.status} ${resp.statusText}` };
+  } catch (err) {
+    const error = deps.isNetworkError?.(err)
+      ? `Network error reaching ${endpoint}.`
+      : err instanceof Error ? err.message : String(err);
+    return { vectors: allNull(), error };
+  }
 }
