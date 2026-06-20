@@ -41,6 +41,22 @@ export async function searchDb(
   const filters: DbFilters = { ...args, account: scope.account, mailbox: undefined, mailboxNames: scope.mailboxNames, anyMailbox: scope.anyMailbox };
   const { clause, params } = buildFilterSql(filters);
 
+  // Field-scoped trigram substring params (AND across params), computed up front so
+  // they can DRIVE candidate selection — not merely filter a recency-limited window.
+  const TRIG: [keyof SearchDbArgs, string][] = [
+    ["fromName", "from_name"], ["fromAddr", "from_addr"], ["toName", "to_names"],
+    ["subjectContains", "subject"], ["bodyContains", "body_text"],
+  ];
+  const trigParams = TRIG.filter(([k]) => typeof args[k] === "string" && (args[k] as string).length);
+  let trigAllowed: Set<string> | null = null;
+  if (trigParams.length) {
+    for (const [k, field] of trigParams) {
+      const ids = new Set(store.searchTrig(field, args[k] as string, 500).map((m) => m.messageId));
+      trigAllowed = trigAllowed === null ? ids : new Set(([...trigAllowed] as string[]).filter((id) => ids.has(id)));
+    }
+    trigAllowed = trigAllowed ?? new Set<string>();
+  }
+
   let orderedIds: string[];
   if (args.query) {
     let ftsIds: string[];
@@ -74,29 +90,31 @@ export async function searchDb(
       }
     }
     orderedIds = vecIds.length ? rrf([ftsIds, vecIds]).map((r) => r.id) : ftsIds;
+    // Free-text ranking present: trigram params narrow the ranked results.
+    if (trigAllowed) orderedIds = orderedIds.filter((id) => trigAllowed!.has(id));
   } else {
     const col = args.sort === "size" ? "m.size" : "m.date";
     const dir = args.sortDir === "asc" ? "ASC" : "DESC";
-    orderedIds = store.raw
-      .prepare(`SELECT m.message_id FROM messages m WHERE ${clause} ORDER BY ${col} ${dir} LIMIT ${CANDIDATES}`)
-      .all(...params)
-      .map((r) => (r as { message_id: string }).message_id);
-  }
-
-  // Restrict orderedIds by field-scoped trigram substring params (AND semantics).
-  const TRIG: [keyof SearchDbArgs, string][] = [
-    ["fromName", "from_name"], ["fromAddr", "from_addr"], ["toName", "to_names"],
-    ["subjectContains", "subject"], ["bodyContains", "body_text"],
-  ];
-  const trigParams = TRIG.filter(([k]) => typeof args[k] === "string" && (args[k] as string).length);
-  if (trigParams.length) {
-    let allowed: Set<string> | null = null;
-    for (const [k, field] of trigParams) {
-      const ids = new Set(store.searchTrig(field, args[k] as string, 500).map((m) => m.messageId));
-      allowed = allowed === null ? ids : new Set(([...allowed] as string[]).filter((id) => ids.has(id)));
+    // No ranking to bound the pool: browse a wider window so filters/trigram
+    // (and a high offset/limit) can reach beyond the most-recent handful.
+    const BROWSE = 500;
+    if (trigAllowed) {
+      const ids = [...trigAllowed];
+      if (!ids.length) {
+        orderedIds = [];
+      } else {
+        const ph = ids.map(() => "?").join(",");
+        orderedIds = store.raw
+          .prepare(`SELECT m.message_id FROM messages m WHERE ${clause} AND m.message_id IN (${ph}) ORDER BY ${col} ${dir} LIMIT ${BROWSE}`)
+          .all(...params, ...ids)
+          .map((r) => (r as { message_id: string }).message_id);
+      }
+    } else {
+      orderedIds = store.raw
+        .prepare(`SELECT m.message_id FROM messages m WHERE ${clause} ORDER BY ${col} ${dir} LIMIT ${BROWSE}`)
+        .all(...params)
+        .map((r) => (r as { message_id: string }).message_id);
     }
-    const ok = allowed ?? new Set<string>();
-    orderedIds = orderedIds.filter((id) => ok.has(id));
   }
 
   // Load summaries in ranked order; group by thread (best-ranked wins) unless perMessage.
