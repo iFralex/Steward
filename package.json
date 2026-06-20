@@ -6,6 +6,7 @@
     "apps/web",
     "apps/mail-mcp",
     "apps/mail-mirror",
+    "apps/mail-promoter",
     "apps/llm-gateway",
     "packages/*"
   ]
