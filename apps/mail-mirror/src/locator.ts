@@ -41,7 +41,11 @@ function accountAndMailbox(mailRoot: string, filePath: string): { account: strin
   const rel = filePath.slice(mailRoot.length + 1);
   const parts = rel.split("/");
   const account = parts[0] ?? "";
-  const mboxPart = parts.find((p) => p.endsWith(".mbox")) ?? "";
+  // Use the LAST (most specific) .mbox in the path: Apple Mail nests folders as
+  // `[Gmail].mbox/Bozze.mbox/...`, so the first .mbox would collapse every Gmail
+  // sub-folder to "[Gmail]". The leaf name (e.g. "Bozze") is what mailbox roles key on.
+  const mboxParts = parts.filter((p) => p.endsWith(".mbox"));
+  const mboxPart = mboxParts[mboxParts.length - 1] ?? "";
   return { account, mailbox: mboxPart.replace(/\.mbox$/, "") };
 }
 

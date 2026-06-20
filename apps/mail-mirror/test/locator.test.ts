@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findMailRoot, canRead, enumerateEmlx } from "../src/locator.ts";
+import { findMailRoot, canRead, enumerateEmlx, entryForPath } from "../src/locator.ts";
 
 function fakeStore(): { home: string; root: string } {
   const home = mkdtempSync(join(tmpdir(), "home-"));
@@ -29,4 +29,17 @@ test("enumerateEmlx yields account, mailbox, isPartial", () => {
   assert.equal(entries[0].mailbox, "INBOX");
   assert.equal(entries.find((e) => e.path.endsWith("2.partial.emlx"))!.isPartial, true);
   assert.equal(entries.find((e) => e.path.endsWith("1.emlx"))!.isPartial, false);
+});
+
+test("nested mailbox uses the most specific (last) .mbox, not the [Gmail] container", () => {
+  const root = "/Mail/V10";
+  const e = entryForPath(root, "/Mail/V10/ACC/[Gmail].mbox/Bozze.mbox/UUID/Data/3/9/Messages/93.emlx", 1);
+  assert.equal(e.account, "ACC");
+  assert.equal(e.mailbox, "Bozze");
+});
+
+test("top-level mailbox name is preserved", () => {
+  const root = "/Mail/V10";
+  const e = entryForPath(root, "/Mail/V10/ACC/INBOX.mbox/UUID/Data/Messages/1.emlx", 1);
+  assert.equal(e.mailbox, "INBOX");
 });
