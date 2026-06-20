@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS promote_state (
 
 export interface PromoteRecord {
   messageId: string;
-  decision: "promoted" | "skipped";
+  decision: "promoted" | "skipped" | "filtered";
   categories: string[];
   classifyModel: string;
   distillModel: string | null;

@@ -29,6 +29,7 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
   const hash = sourceHash(msg);
   if (!deps.state.needsProcessing(msg.messageId, hash)) return "skipped";
   if (!shouldConsider({ fromAddr: msg.fromAddr, subject: msg.subject, bodyState: msg.bodyState }, deps.roleOf(msg.account, msg.mailbox))) {
+    deps.state.record({ messageId: msg.messageId, decision: "filtered", categories: [], classifyModel: "prefilter", distillModel: null, wikiFilename: null, sourceHash: hash });
     return "filtered";
   }
   let verdict: { promote: boolean; categories: string[] } | null;

@@ -40,6 +40,14 @@ test("processOne filters a junk-role mail without calling the LLM", async () => 
   const r = await processOne(d, d.store.getMessage("m1")!);
   assert.equal(r, "filtered");
   assert.equal(called, false);
+  assert.equal(d.state.get("m1")?.decision, "filtered");
+});
+
+test("a previously-filtered mail is skipped on re-run (no re-evaluation)", async () => {
+  const d = deps({ roleOf: () => "junk" });
+  const m = d.store.getMessage("m1")!;
+  assert.equal(await processOne(d, m), "filtered");
+  assert.equal(await processOne(d, m), "skipped");
 });
 
 test("processOne defers (no state) when the classifier is unavailable", async () => {

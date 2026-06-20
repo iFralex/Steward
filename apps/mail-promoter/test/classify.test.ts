@@ -19,3 +19,8 @@ test("classify returns null on unparseable output", async () => {
   const chat = async () => "I cannot answer that.";
   assert.equal(await classify(msg, chat), null);
 });
+
+test("classify drops out-of-allowlist categories", async () => {
+  const chat = async () => '{"promote": true, "categories": ["commitment", "spam", "urgent", "document"]}';
+  assert.deepEqual(await classify(msg, chat), { promote: true, categories: ["commitment", "document"] });
+});
