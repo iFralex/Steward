@@ -190,7 +190,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const check = dbEmptyCheck();
         if (check.empty) return text({ error: check.message });
         if (!enriched && usesAdvancedFilters(args as SearchArgs)) {
-          return text({ error: "Advanced filters (account/role, flags, attachments, size, sort, field-scoped, get_thread) require the enriched mirror. Run: mail-mirror migrate" });
+          return text({ error: "Advanced filters (account/role, flags, attachments, size, sort, field-scoped) require the enriched mirror. Run: mail-mirror migrate" });
         }
         return text(await mail.search(args as SearchArgs));
       }
