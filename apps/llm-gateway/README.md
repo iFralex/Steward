@@ -12,14 +12,32 @@ One OpenAI-compatible endpoint for every service. Tiers, selected via `model`:
 
 Gateway base URL: `http://127.0.0.1:4000` (`/v1/chat/completions`, `/v1/embeddings`).
 
-## Repoint services (Phase 1)
+## Centralized wiring
 
-These are already endpoint-agnostic — change only the env (no code):
+Every service except the host points at this gateway. The host stays on the
+Claude subscription via the Agent SDK and is intentionally NOT routed here.
 
-- mail-mirror: `MAIL_EMBED_ENDPOINT=http://127.0.0.1:4000/v1/embeddings`,
-  `MAIL_EMBED_MODEL=local-embed`, `MAIL_CLASSIFY_ENDPOINT=http://127.0.0.1:4000/v1/chat/completions`,
-  `MAIL_CLASSIFY_MODEL=api-default`.
-- llm-wiki: point its embedding endpoint at `http://127.0.0.1:4000/v1/embeddings` (model `local-embed`).
+**Default-on (no env needed).** mail-mirror and mail-mcp now default their
+embedding + role-classify endpoints to the gateway; mail-promoter already
+defaults its classify/distill calls here. With the gateway up they Just Work.
+
+- mail-mirror / mail-mcp embeddings → `http://127.0.0.1:4000/v1/embeddings`
+  (model `local-embed`). Override with `MAIL_EMBED_ENDPOINT` / `MAIL_EMBED_MODEL`;
+  disable with `MAIL_EMBED_ENDPOINT=off`.
+- mail-mirror role-classify → `http://127.0.0.1:4000/v1/chat/completions`
+  (model `local-chat`). Override with `MAIL_CLASSIFY_ENDPOINT` / `MAIL_CLASSIFY_MODEL`;
+  disable with `MAIL_CLASSIFY_ENDPOINT=off`.
+- mail-promoter → `MAIL_PROMOTER_LLM_ENDPOINT` (default `http://127.0.0.1:4000`),
+  classify=`local-chat`, distill=`sub-opus`.
+
+> Heads-up: because embeddings default-on, `mail-mirror watch` / `mail-mirror embed`
+> now embed the backlog through the gateway when run. Set `MAIL_EMBED_ENDPOINT=off`
+> to keep them disabled.
+
+**llm-wiki (manual, one-time).** llm-wiki reads its provider from app config,
+not env, so it can't be wired in code here. In the llm-wiki UI add a custom
+OpenAI-compatible provider with base URL `http://127.0.0.1:4000/v1` and select
+`local-embed` for embeddings (and a chat model from the tiers above as needed).
 
 ## Resilience (api tier)
 
