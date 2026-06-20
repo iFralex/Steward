@@ -45,3 +45,7 @@ test("parses a nested object inside a ```json fence with prose", () => {
 test("ignores braces inside string values", () => {
   assert.deepEqual(extractJson('{"a": "}{"}'), { a: "}{" });
 });
+
+test("throws on unbalanced (truncated) JSON", () => {
+  assert.throws(() => extractJson('{"a": 1'), /unbalanced/i);
+});

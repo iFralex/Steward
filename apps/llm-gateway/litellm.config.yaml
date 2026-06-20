@@ -19,7 +19,7 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY_1
   - model_name: api-default
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free   # placeholder
       api_key: os.environ/OPENROUTER_API_KEY_2
   # Fallback models (different free models), each across the key pool.
   - model_name: api-alt1
@@ -28,7 +28,7 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY_1
   - model_name: api-alt1
     litellm_params:
-      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
+      model: openrouter/meta-llama/llama-3.3-70b-instruct:free    # placeholder
       api_key: os.environ/OPENROUTER_API_KEY_2
   - model_name: api-alt2
     litellm_params:

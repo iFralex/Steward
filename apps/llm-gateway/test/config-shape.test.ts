@@ -18,6 +18,7 @@ test("api tier rotates keys and falls back across models", () => {
   // a fallbacks mapping from api-default to the alt models
   assert.match(yaml, /fallbacks:/);
   assert.match(yaml, /api-default[\s\S]*api-alt1/);
+  assert.match(yaml, /api-default[\s\S]*api-alt2/);
 });
 
 test("api keys and retries come from config, not hardcoded secrets", () => {
