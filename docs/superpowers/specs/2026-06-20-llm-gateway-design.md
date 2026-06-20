@@ -40,8 +40,13 @@ Stop every service from hardcoding its own LLM endpoint/model. Instead:
    100+ providers out (Ollama/LM Studio local, Anthropic API, free-tier APIs),
    with per-model routing, fallbacks, retries, key management, and cost/usage
    logging. Config-driven (`model_list` yaml). We do not hand-roll a router.
-2. **API backends from the start.** Phase 1 wires both `local-*` (Ollama) and
-   `api-*` (provider APIs) — not local-only.
+2. **API backends from the start — OpenRouter free tier.** Phase 1 wires both
+   `local-*` (Ollama) and `api-*`. The concrete `api-*` provider is **OpenRouter**
+   free models, which are frequently unavailable/rate-limited and so REQUIRE
+   resilience (model rotation, API-key rotation, backoff). That resilience is
+   provided by **LiteLLM's native router** — configured, not hand-rolled (see
+   "Resilience" below) — which is exactly why LiteLLM was chosen over a custom
+   gateway.
 3. **Subscription via a custom Agent-SDK adapter.** Off-the-shelf gateways
    can't use the claude.ai subscription (it's not a programmable API; it's
    OAuth bound to Claude Code / the Agent SDK). The host **already** runs the
@@ -91,6 +96,13 @@ service (mail-mirror / llm-wiki / mail-promoter / host)
 - **`apps/llm-gateway/README.md`** — how to run: start the adapter (Node,
   no `ANTHROPIC_API_KEY`), start LiteLLM (`litellm --config litellm.config.yaml`),
   and the gateway base URL services point at.
+- **`apps/llm-gateway/src/extract-json.ts`** — a lenient JSON extractor for
+  callers that ask a free `api-*` model for structured output (free models do
+  not reliably honor structured-output). It strips ```` ```json ```` fences,
+  normalizes curly quotes, removes zero-width/BOM chars, and parses the first
+  `{…}`/`[…]` found; throws on no/invalid JSON. Exported for consumers
+  (e.g. the future mail-promoter classifier/distiller). Modeled on the
+  reference `parse_json`.
 - **Repoint config** — mail-mirror env (`MAIL_EMBED_ENDPOINT`,
   `MAIL_CLASSIFY_ENDPOINT`) and the wiki embedding endpoint set to the gateway
   URL. Documented in the gateway README / `.env.example`; no service code
@@ -106,6 +118,28 @@ service (mail-mirror / llm-wiki / mail-promoter / host)
    subscription and returns the completion.
 4. The response comes back in OpenAI shape; the service consumes it exactly as
    it does today (no code change).
+
+## Resilience for free-tier `api-*` (OpenRouter)
+
+OpenRouter free models go unavailable, rate-limit, and 5xx often. The reference
+`ai_chat` function hand-rolls per-error multi-step recovery (backoff → key
+rotation → model rotation, plus a proxy fallback). We do **not** re-implement
+that loop — LiteLLM's router does it natively and more robustly. The reference
+function is the **behavior spec**; we map each behavior to LiteLLM config:
+
+| Reference behavior | LiteLLM mechanism |
+|---|---|
+| Pool of API keys, rotate on 429/401 | Multiple `model_list` deployments of the same model-group name, each with a key from `OPENROUTER_API_KEYS`; the router rotates/cooldowns across them. |
+| Rotate across a fallback model list (404/502/503/timeout) | `fallbacks: [{ "api-default": ["api-alt1", "api-alt2", …] }]` over a configurable OpenRouter free-model list. |
+| Exponential backoff + retry on 429 | `num_retries`, `retry_after`, `cooldown_time`, `allowed_fails`. |
+| Terminal on 400 (bad request) / 403 (moderated) | Not retried — surfaced as an OpenAI error to the caller. |
+| Lenient JSON parse of `format=json` replies | `extract-json.ts` helper at the caller (free models wrap JSON in fences). |
+| Proxy fallback on connection/proxy errors | **Out of scope.** No native LiteLLM per-error proxy switch; key+model rotation usually suffices. Add later as a custom backend only if geo-blocking proves necessary. |
+
+The concrete OpenRouter free-model list and the number of keys are
+**configuration** (the model IDs are chosen later, per Key Decision 4); the
+spec fixes the *structure* (rotate over a list, rotate over a key pool, back
+off, give up after a bounded number of attempts).
 
 ## Phasing
 
@@ -138,6 +172,9 @@ Each phase is its own implementation plan.
   are assembled into a correct OpenAI `chat.completion` body; a `query()`
   failure yields an OpenAI error shape; the startup guard rejects a present
   `ANTHROPIC_API_KEY`.
+- **`extract-json` unit tests**: fenced ```` ```json ```` blocks, curly quotes,
+  zero-width chars, and surrounding prose are stripped and the embedded
+  object/array is parsed; a string with no JSON throws.
 - **Parity**: the wiki embedding test suite (90/90) stays green unchanged
   (it does not point at the gateway in tests — only runtime config changes);
   a mail embedding/classify smoke through the running gateway returns vectors
