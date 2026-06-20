@@ -32,3 +32,16 @@ test("throws TypeError on non-string input", () => {
   // @ts-expect-error intentional wrong type
   assert.throws(() => extractJson(42), TypeError);
 });
+
+test("parses a NESTED object", () => {
+  assert.deepEqual(extractJson('{"a": {"b": 1}, "c": [1, 2]}'), { a: { b: 1 }, c: [1, 2] });
+});
+
+test("parses a nested object inside a ```json fence with prose", () => {
+  const s = 'Result:\n```json\n{"role": "junk", "meta": {"confidence": 0.9}}\n```\ndone';
+  assert.deepEqual(extractJson(s), { role: "junk", meta: { confidence: 0.9 } });
+});
+
+test("ignores braces inside string values", () => {
+  assert.deepEqual(extractJson('{"a": "}{"}'), { a: "}{" });
+});
