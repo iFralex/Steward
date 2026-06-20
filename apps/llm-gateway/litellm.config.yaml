@@ -1,0 +1,56 @@
+# LiteLLM gateway. Run: litellm --config litellm.config.yaml --port 4000
+# Tiers: local-* (Ollama), api-* (OpenRouter free, with rotation), sub-* (Phase 2).
+model_list:
+  # --- local tier (Ollama) ---
+  - model_name: local-chat
+    litellm_params:
+      model: ollama/llama3.2            # placeholder local chat model
+      api_base: http://127.0.0.1:11434
+  - model_name: local-embed
+    litellm_params:
+      model: ollama/bge-m3             # embeddings (matches the mail/wiki dim)
+      api_base: http://127.0.0.1:11434
+
+  # --- api tier (OpenRouter free) ---
+  # Key-pool rotation: one deployment per API key under the SAME model_name.
+  - model_name: api-default
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free   # placeholder
+      api_key: os.environ/OPENROUTER_API_KEY_1
+  - model_name: api-default
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      api_key: os.environ/OPENROUTER_API_KEY_2
+  # Fallback models (different free models), each across the key pool.
+  - model_name: api-alt1
+    litellm_params:
+      model: openrouter/meta-llama/llama-3.3-70b-instruct:free    # placeholder
+      api_key: os.environ/OPENROUTER_API_KEY_1
+  - model_name: api-alt1
+    litellm_params:
+      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY_2
+  - model_name: api-alt2
+    litellm_params:
+      model: openrouter/google/gemma-3-27b-it:free               # placeholder
+      api_key: os.environ/OPENROUTER_API_KEY_1
+  - model_name: api-alt2
+    litellm_params:
+      model: openrouter/google/gemma-3-27b-it:free
+      api_key: os.environ/OPENROUTER_API_KEY_2
+
+litellm_settings:
+  num_retries: 3
+  request_timeout: 60
+  # Rotate across free models on failure (rate-limit / 5xx / timeout).
+  fallbacks:
+    - api-default: ["api-alt1", "api-alt2"]
+  context_window_fallbacks:
+    - api-default: ["api-alt1", "api-alt2"]
+
+router_settings:
+  routing_strategy: simple-shuffle   # spread load across the key pool
+  num_retries: 3
+  retry_after: 5
+  cooldown_time: 30                  # park a deployment that just failed
+  allowed_fails: 2
