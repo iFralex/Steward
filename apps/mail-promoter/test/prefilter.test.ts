@@ -30,3 +30,14 @@ test("drops OTP / verification-code subjects", () => {
 test("drops empty-bodied (none) messages", () => {
   assert.equal(shouldConsider({ ...base, bodyState: "none" }), false);
 });
+
+test("keeps non-OTP subjects that merely contain code-related words (no numeric code)", () => {
+  for (const s of ["Security code review meeting tomorrow", "How to access the code repo", "Here is your documentation code sample"]) {
+    assert.equal(shouldConsider({ ...base, subject: s }), true, s);
+  }
+});
+
+test("still drops an explicit OTP subject without a number", () => {
+  assert.equal(shouldConsider({ ...base, subject: "Your OTP for login" }), false);
+  assert.equal(shouldConsider({ ...base, subject: "Your one-time password" }), false);
+});
