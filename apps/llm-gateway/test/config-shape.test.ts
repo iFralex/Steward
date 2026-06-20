@@ -26,3 +26,8 @@ test("api keys and retries come from config, not hardcoded secrets", () => {
   assert.match(yaml, /num_retries:/);
   assert.match(yaml, /cooldown_time:/);
 });
+
+test("config registers the sub-* adapter tier", () => {
+  assert.match(yaml, /model_name:\s*sub-opus\b/);
+  assert.match(yaml, /api_base:\s*http:\/\/127\.0\.0\.1:4001\/v1/);
+});

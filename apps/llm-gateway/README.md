@@ -27,6 +27,18 @@ LiteLLM's router handles it (configured in `litellm.config.yaml`): key-pool
 rotation (deployments sharing a `model_name`), model fallback (`fallbacks`),
 retries + cooldown. Proxy fallback is out of scope.
 
+## `sub-*` tier (Claude on the subscription)
+
+Low-volume only. Start the adapter in a process WITHOUT `ANTHROPIC_API_KEY`
+(so it uses the Claude subscription, not the API):
+
+    cd apps/llm-gateway
+    env -u ANTHROPIC_API_KEY node --import tsx src/adapter.ts   # listens on :4001
+
+Then LiteLLM routes `model: sub-opus` to it. Optionally set `SUB_MODEL` to pin a
+specific Claude model; otherwise the subscription default applies. The adapter
+refuses to start if `ANTHROPIC_API_KEY` is set.
+
 ## Smoke test (live)
 
 With the gateway running:

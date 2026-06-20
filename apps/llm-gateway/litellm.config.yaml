@@ -39,6 +39,15 @@ model_list:
       model: openrouter/google/gemma-3-27b-it:free
       api_key: os.environ/OPENROUTER_API_KEY_2
 
+  # --- sub tier (Claude on the subscription, via the Agent-SDK adapter) ---
+  # The adapter (apps/llm-gateway/src/adapter.ts) runs WITHOUT ANTHROPIC_API_KEY.
+  # Low volume only. api_key is ignored by the adapter (a placeholder satisfies LiteLLM).
+  - model_name: sub-opus
+    litellm_params:
+      model: openai/claude-opus-sub
+      api_base: http://127.0.0.1:4001/v1
+      api_key: "sub-adapter-ignored"
+
 litellm_settings:
   num_retries: 3
   request_timeout: 60
