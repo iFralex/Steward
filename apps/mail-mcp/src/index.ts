@@ -15,6 +15,7 @@ import { embedText } from "../../mail-mirror/src/embed-client.ts";
 import { Mail } from "./mail.ts";
 import type { ReadArgs, ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } from "./types.ts";
 import { enrichmentReady } from "./capabilities.ts";
+import { usesAdvancedFilters } from "./advanced-args.ts";
 
 // Open the read-only Store once at startup if the DB exists.
 // send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.
@@ -188,6 +189,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "search_messages": {
         const check = dbEmptyCheck();
         if (check.empty) return text({ error: check.message });
+        if (!enriched && usesAdvancedFilters(args as SearchArgs)) {
+          return text({ error: "Advanced filters (account/role, flags, attachments, size, sort, field-scoped, get_thread) require the enriched mirror. Run: mail-mirror migrate" });
+        }
         return text(await mail.search(args as SearchArgs));
       }
       case "read_message": {
