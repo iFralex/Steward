@@ -1,0 +1,46 @@
+// apps/mail-promoter/src/note.ts
+export interface DistilledNote {
+  summary: string;
+  facts: string[];
+  commitments: string[];
+  people: string[];
+  orgs: string[];
+}
+
+export function slugForMessageId(messageId: string): string {
+  const s = messageId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return s.slice(0, 80) || "msg";
+}
+
+function section(title: string, items: string[]): string {
+  if (!items.length) return "";
+  return `\n## ${title}\n${items.map((i) => `- ${i}`).join("\n")}\n`;
+}
+
+export function buildNote(args: {
+  msg: { messageId: string; fromName: string; fromAddr: string; subject: string; date: number; account: string };
+  accountLabel: string;
+  distilled: DistilledNote;
+  categories: string[];
+}): { filename: string; content: string } {
+  const { msg, accountLabel, distilled, categories } = args;
+  const from = msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr;
+  const fm = [
+    "---",
+    `source: message://${msg.messageId}`,
+    `subject: ${msg.subject}`,
+    `from: ${from}`,
+    `date: ${new Date(msg.date * 1000).toISOString()}`,
+    `account: ${accountLabel}`,
+    `categories: [${categories.join(", ")}]`,
+    "---",
+    "",
+  ].join("\n");
+  const body =
+    `${distilled.summary}\n` +
+    section("Facts", distilled.facts) +
+    section("Commitments", distilled.commitments) +
+    section("People", distilled.people) +
+    section("Organizations", distilled.orgs);
+  return { filename: `mail-${slugForMessageId(msg.messageId)}.md`, content: fm + body };
+}
