@@ -56,5 +56,11 @@ export class PromoteState {
     });
   }
 
+  counts(): { promoted: number; skipped: number } {
+    const rows = this.db.prepare("SELECT decision, COUNT(*) as cnt FROM promote_state GROUP BY decision").all() as { decision: string; cnt: number }[];
+    const map = Object.fromEntries(rows.map((r) => [r.decision, r.cnt]));
+    return { promoted: map["promoted"] ?? 0, skipped: map["skipped"] ?? 0 };
+  }
+
   close(): void { this.db.close(); }
 }
