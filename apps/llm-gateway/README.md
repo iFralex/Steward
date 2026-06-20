@@ -36,7 +36,8 @@ Low-volume only. Start the adapter in a process WITHOUT `ANTHROPIC_API_KEY`
     env -u ANTHROPIC_API_KEY node --import tsx src/adapter.ts   # listens on :4001
 
 Then LiteLLM routes `model: sub-opus` to it. Optionally set `SUB_MODEL` to pin a
-specific Claude model; otherwise the subscription default applies. The adapter
+specific Claude model; otherwise the subscription default applies. When set,
+`SUB_MODEL` overrides the model name requested by the caller. The adapter
 refuses to start if `ANTHROPIC_API_KEY` is set.
 
 ## Smoke test (live)
