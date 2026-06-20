@@ -63,7 +63,7 @@ async function main(): Promise<void> {
     const d = deps();
     const ed = makeEmbedDeps(d.store);
     if (!ed) {
-      console.log("Embedding disabled: set MAIL_EMBED_ENDPOINT (and MAIL_EMBED_MODEL) to enable semantic search.");
+      console.log("Embedding disabled (MAIL_EMBED_ENDPOINT=off). Default routes to the LLM gateway at :4000.");
       d.store.close();
       return;
     }
@@ -81,8 +81,8 @@ async function main(): Promise<void> {
     const d = deps();
     startWatch(d, root);
     const ed = makeEmbedDeps(d.store);
-    if (ed) { startEmbedWorker(ed); console.log("embed worker started"); }
-    else console.log("embedding disabled (set MAIL_EMBED_ENDPOINT to enable)");
+    if (ed) { startEmbedWorker(ed); console.log(`embed worker started (gateway: ${process.env.MAIL_EMBED_ENDPOINT ?? "http://127.0.0.1:4000/v1/embeddings"})`); }
+    else console.log("embed worker off (MAIL_EMBED_ENDPOINT=off)");
     refreshIdentity({ store: d.store, mailRoot: root, classifyRole }).catch(() => {});
     setInterval(() => refreshIdentity({ store: d.store, mailRoot: root, classifyRole }).catch(() => {}), 300_000);
     console.log(`watching ${root} (Ctrl+C to stop)`);

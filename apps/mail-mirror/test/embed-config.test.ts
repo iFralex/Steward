@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadEmbedConfig } from "../src/embed-config.ts";
 
-test("returns null when no endpoint", () => {
-  assert.equal(loadEmbedConfig({} as NodeJS.ProcessEnv), null);
+test("defaults to the LLM gateway when MAIL_EMBED_ENDPOINT is unset", () => {
+  const cfg = loadEmbedConfig({} as NodeJS.ProcessEnv);
+  assert.equal(cfg?.endpoint, "http://127.0.0.1:4000/v1/embeddings");
+  assert.equal(cfg?.model, "local-embed");
+});
+
+test("returns null when explicitly disabled (off / empty)", () => {
+  assert.equal(loadEmbedConfig({ MAIL_EMBED_ENDPOINT: "off" } as unknown as NodeJS.ProcessEnv), null);
+  assert.equal(loadEmbedConfig({ MAIL_EMBED_ENDPOINT: "" } as unknown as NodeJS.ProcessEnv), null);
 });
 
 test("reads endpoint/model/key/dim from env", () => {

@@ -31,7 +31,9 @@ export function makeRoleClassifier(cfg: ClassifyConfig, fetchImpl: typeof fetch 
 }
 
 export function loadRoleClassifier(env: NodeJS.ProcessEnv = process.env): ((name: string) => Promise<Role | null>) | undefined {
-  const endpoint = env.MAIL_CLASSIFY_ENDPOINT;
-  if (!endpoint) return undefined;
-  return makeRoleClassifier({ endpoint, model: env.MAIL_CLASSIFY_MODEL ?? "gpt-4o-mini", apiKey: env.MAIL_CLASSIFY_API_KEY });
+  // Default to the unified LLM gateway (sub-project 3). Override with
+  // MAIL_CLASSIFY_ENDPOINT/MODEL; set MAIL_CLASSIFY_ENDPOINT=off (or "") to disable.
+  const endpoint = env.MAIL_CLASSIFY_ENDPOINT ?? "http://127.0.0.1:4000/v1/chat/completions";
+  if (!endpoint || endpoint === "off") return undefined;
+  return makeRoleClassifier({ endpoint, model: env.MAIL_CLASSIFY_MODEL ?? "local-chat", apiKey: env.MAIL_CLASSIFY_API_KEY });
 }

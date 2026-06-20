@@ -1,7 +1,7 @@
 // apps/mail-mirror/test/role-classify.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { makeRoleClassifier } from "../src/role-classify.ts";
+import { makeRoleClassifier, loadRoleClassifier } from "../src/role-classify.ts";
 
 test("classifier maps a valid reply to a role and 'none' to null", async () => {
   const fetchStub = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: "junk" } }] }) }) as any;
@@ -22,4 +22,9 @@ test("classifier returns null on a non-ok HTTP response", async () => {
   const fetchStub = async () => ({ ok: false, json: async () => ({}) }) as any;
   const c = makeRoleClassifier({ endpoint: "http://x/v1/chat/completions", model: "m" }, fetchStub);
   assert.equal(await c("AnyFolder"), null);
+});
+
+test("loadRoleClassifier defaults to the gateway; 'off' disables", () => {
+  assert.notEqual(loadRoleClassifier({} as NodeJS.ProcessEnv), undefined);
+  assert.equal(loadRoleClassifier({ MAIL_CLASSIFY_ENDPOINT: "off" } as unknown as NodeJS.ProcessEnv), undefined);
 });
