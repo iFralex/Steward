@@ -26,3 +26,12 @@ These are already endpoint-agnostic — change only the env (no code):
 LiteLLM's router handles it (configured in `litellm.config.yaml`): key-pool
 rotation (deployments sharing a `model_name`), model fallback (`fallbacks`),
 retries + cooldown. Proxy fallback is out of scope.
+
+## Smoke test (live)
+
+With the gateway running:
+
+    node --import tsx scripts/smoke.mts
+
+Checks a `local-embed` embeddings call and an `api-default` OpenRouter chat
+(JSON round-trip via `extractJson`). Exits non-zero on failure.
