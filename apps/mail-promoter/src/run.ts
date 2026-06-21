@@ -39,7 +39,7 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
     return "deferred";
   }
   if (!verdict) return "deferred"; // LLM unavailable / unparseable — retry next run, no state
-  const classifyModel = deps.classifyModel ?? "local-chat";
+  const classifyModel = deps.classifyModel ?? "tier-3";
   if (!verdict.promote) {
     deps.state.record({ messageId: msg.messageId, decision: "skipped", categories: verdict.categories, classifyModel, distillModel: null, wikiFilename: null, sourceHash: hash });
     return "skipped";
@@ -48,7 +48,7 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
   if (!distilled) return "deferred";
   const note = buildNote({ msg, accountLabel: deps.accountLabelOf(msg.account), distilled, categories: verdict.categories });
   await promote(note, deps.wiki);
-  deps.state.record({ messageId: msg.messageId, decision: "promoted", categories: verdict.categories, classifyModel, distillModel: deps.distillModel ?? "sub-opus", wikiFilename: note.filename, sourceHash: hash });
+  deps.state.record({ messageId: msg.messageId, decision: "promoted", categories: verdict.categories, classifyModel, distillModel: deps.distillModel ?? "tier-6", wikiFilename: note.filename, sourceHash: hash });
   return "promoted";
 }
 

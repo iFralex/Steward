@@ -56,5 +56,7 @@ export function loadRoleClassifier(env: NodeJS.ProcessEnv = process.env): ((name
   // MAIL_CLASSIFY_ENDPOINT/MODEL; set MAIL_CLASSIFY_ENDPOINT=off (or "") to disable.
   const endpoint = env.MAIL_CLASSIFY_ENDPOINT ?? "http://127.0.0.1:4000/v1/chat/completions";
   if (!endpoint || endpoint === "off") return undefined;
-  return makeRoleClassifier({ endpoint, model: env.MAIL_CLASSIFY_MODEL ?? "local-chat", apiKey: env.MAIL_CLASSIFY_API_KEY });
+  // tier-2 classifies mailbox names at 18/18 on a labelled IT+EN set with the
+  // richer prompt; the gateway escalates up on failure. Override with MAIL_CLASSIFY_MODEL.
+  return makeRoleClassifier({ endpoint, model: env.MAIL_CLASSIFY_MODEL ?? "tier-2", apiKey: env.MAIL_CLASSIFY_API_KEY });
 }
