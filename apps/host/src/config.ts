@@ -56,6 +56,14 @@ export function loadConfig(): HostConfig {
     process.env.MAIL_MCP_ENTRY ??
     fileURLToPath(new URL("../../mail-mcp/src/index.ts", import.meta.url));
 
+  // Calendar + Contacts MCP servers run their TS entries directly via tsx.
+  const calendarMcpEntry =
+    process.env.CALENDAR_MCP_ENTRY ??
+    fileURLToPath(new URL("../../calendar-mcp/src/index.ts", import.meta.url));
+  const contactsMcpEntry =
+    process.env.CONTACTS_MCP_ENTRY ??
+    fileURLToPath(new URL("../../contacts-mcp/src/index.ts", import.meta.url));
+
   return {
     port: Number(process.env.HOST_PORT ?? 4317),
     model: process.env.HOST_MODEL,
@@ -65,6 +73,8 @@ export function loadConfig(): HostConfig {
     mcpServers: {
       "llm-wiki": { type: "stdio", command: process.execPath, args: [llmWikiMcpEntry] },
       mail: { type: "stdio", command: process.execPath, args: ["--import", "tsx", mailMcpEntry] },
+      calendar: { type: "stdio", command: process.execPath, args: ["--import", "tsx", calendarMcpEntry] },
+      contacts: { type: "stdio", command: process.execPath, args: ["--import", "tsx", contactsMcpEntry] },
     },
     disallowedTools: DISALLOWED_TOOLS,
   };
