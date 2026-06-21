@@ -9,6 +9,7 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
+    "@llm-wiki/applescript": "*",
     "@llm-wiki/embedding": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",

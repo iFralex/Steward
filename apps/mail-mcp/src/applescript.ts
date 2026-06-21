@@ -1,5 +1,8 @@
+import { esc } from "@llm-wiki/applescript";
 import type { MessageRef, SearchArgs, SendArgs, ReplyArgs } from "./types.ts";
 import { resolveMessageRef } from "./validate.ts";
+
+export { esc };
 
 /**
  * AppleScript builders (pure). User text is interpolated ONLY via `esc()`.
@@ -7,11 +10,6 @@ import { resolveMessageRef } from "./validate.ts";
  * RS (0x1e) control chars via AppleScript `ASCII character`, so `parse.ts`
  * can split on them reliably.
  */
-
-/** Escape a string for inclusion inside an AppleScript double-quoted literal. */
-export function esc(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
 
 const SEP = ["set US to (ASCII character 31)", "set RS to (ASCII character 30)"];
 
