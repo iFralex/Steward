@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import * as sqliteVec from "sqlite-vec";
+import { VectorStore } from "@llm-wiki/search";
 
 export type BodyState = "full" | "partial" | "none";
 
@@ -86,10 +86,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_trig USING fts5(
 
 export class Store {
   raw: Database.Database;
-  private vecLoaded = false;
+  private vec: VectorStore;
 
   constructor(db: Database.Database, opts: { readonly?: boolean } = {}) {
     this.raw = db;
+    this.vec = new VectorStore(this.raw, {
+      table: "vec_messages",
+      stateKey: "vec_dim",
+      getState: (k) => this.getState(k),
+      setState: (k, v) => this.setState(k, v),
+      onDimReset: () => this.raw.exec("DELETE FROM embed_state"),
+    });
     if (!opts.readonly) {
       db.pragma("journal_mode = WAL");
       db.exec(SCHEMA);
@@ -292,10 +299,7 @@ export class Store {
   upsertEmbedding(messageId: string, vector: number[], model: string, sourceHash: string): void {
     const r = this.raw.prepare("SELECT rowid FROM messages WHERE message_id=?").get(messageId) as { rowid: number } | undefined;
     if (!r) return;
-    const json = JSON.stringify(vector);
-    const rid = BigInt(r.rowid);
-    this.raw.prepare("DELETE FROM vec_messages WHERE rowid=?").run(rid);
-    this.raw.prepare("INSERT INTO vec_messages(rowid, embedding) VALUES (?, ?)").run(rid, json);
+    this.vec.upsert(r.rowid, vector);
     this.raw
       .prepare(`INSERT INTO embed_state(message_id, model, dim, source_hash, embedded_at) VALUES (?,?,?,?,?)
                 ON CONFLICT(message_id) DO UPDATE SET model=excluded.model, dim=excluded.dim,
@@ -332,31 +336,9 @@ export class Store {
     return (this.raw.prepare("SELECT COUNT(*) c FROM embed_state").get() as { c: number }).c;
   }
 
-  enableVectors(): boolean {
-    if (this.vecLoaded) return true;
-    try {
-      sqliteVec.load(this.raw);
-      this.vecLoaded = true;
-      return true;
-    } catch {
-      this.vecLoaded = false;
-      return false;
-    }
-  }
+  enableVectors(): boolean { return this.vec.enable(); }
 
-  ensureVecTable(dim: number): void {
-    if (!Number.isInteger(dim) || dim <= 0) throw new Error(`invalid embedding dimension: ${dim}`);
-    const cur = this.getState("vec_dim");
-    if (cur && Number(cur) !== dim) {
-      // Model/dim changed: existing vectors live in a different space and are
-      // incompatible. Drop them and clear embed_state so every message is
-      // re-embedded at the new dimension.
-      this.raw.exec("DROP TABLE IF EXISTS vec_messages");
-      this.raw.exec("DELETE FROM embed_state");
-    }
-    this.raw.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(embedding float[${dim}])`);
-    if (cur !== String(dim)) this.setState("vec_dim", String(dim));
-  }
+  ensureVecTable(dim: number): void { this.vec.ensureTable(dim); }
 
   upsertAccount(uuid: string, name: string, emails: string[]): void {
     this.raw.prepare(

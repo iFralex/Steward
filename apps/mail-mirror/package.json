@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@llm-wiki/embedding": "*",
+    "@llm-wiki/search": "*",
     "better-sqlite3": "^11.0.0",
     "chokidar": "^4.0.0",
     "mailparser": "^3.7.0",
