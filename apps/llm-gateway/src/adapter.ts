@@ -24,16 +24,36 @@ const denyAll: HookCallback = async (input) => {
   };
 };
 
+/**
+ * Gateway sub-* model aliases -> real Claude model IDs served on the subscription.
+ * litellm exposes `sub-<name>` which forwards `claude-<name>-sub` to this adapter.
+ */
+export const SUB_MODELS: Record<string, string> = {
+  "claude-opus-sub": "claude-opus-4-8",
+  "claude-sonnet-sub": "claude-sonnet-4-6",
+  "claude-haiku-sub": "claude-haiku-4-5",
+};
+
+/**
+ * Resolve the SDK model for an incoming alias. `SUB_MODEL` env pins/overrides
+ * everything; a known alias maps to its real id; an already-real id passes
+ * through; otherwise undefined -> the subscription default.
+ */
+export function resolveSubModel(model?: string): string | undefined {
+  if (process.env.SUB_MODEL) return process.env.SUB_MODEL;
+  if (model && SUB_MODELS[model]) return SUB_MODELS[model];
+  return model || undefined;
+}
+
 /** Wrap the real SDK query() headlessly (no tools, no inherited settings, single turn). */
 export const sdkRunQuery: RunQuery = ({ prompt, systemPrompt, model }) => {
+  const resolved = resolveSubModel(model);
   const options: Options = {
     settingSources: [],
     permissionMode: "default",
     hooks: { PreToolUse: [{ hooks: [denyAll] }] },
     ...(systemPrompt ? { systemPrompt } : {}),
-    ...((model && model !== "claude-opus-sub") || process.env.SUB_MODEL
-      ? { model: process.env.SUB_MODEL ?? model }
-      : {}),
+    ...(resolved ? { model: resolved } : {}),
   };
   return query({ prompt, options });
 };
@@ -52,7 +72,7 @@ export function createAdapterServer(deps: { runQuery: RunQuery }): Server {
     try {
       if (req.method === "GET" && req.url === "/v1/models") {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ object: "list", data: [{ id: "claude-opus-sub", object: "model" }] }));
+        res.end(JSON.stringify({ object: "list", data: Object.keys(SUB_MODELS).map((id) => ({ id, object: "model" })) }));
         return;
       }
       if (req.method === "POST" && req.url === "/v1/chat/completions") {

@@ -5,20 +5,25 @@ import { readFileSync } from "node:fs";
 
 const yaml = readFileSync(new URL("../litellm.config.yaml", import.meta.url), "utf8");
 
-test("config declares the required model-group names", () => {
-  for (const name of ["local-chat", "local-embed", "api-default", "api-alt1", "api-alt2"]) {
+test("config declares the capability ladder tier-1..tier-6 + local-embed", () => {
+  for (const name of ["tier-1", "tier-2", "tier-3", "tier-4", "tier-5", "tier-6", "local-embed"]) {
     assert.ok(new RegExp(`model_name:\\s*${name}\\b`).test(yaml), `missing model_name: ${name}`);
   }
 });
 
-test("api tier rotates keys and falls back across models", () => {
-  // at least two api-default deployments (key-pool rotation)
-  const apiDefaults = (yaml.match(/model_name:\s*api-default\b/g) ?? []).length;
-  assert.ok(apiDefaults >= 2, "expected >=2 api-default deployments for key rotation");
-  // a fallbacks mapping from api-default to the alt models
+test("each free tier lists several comparable models (intra-tier failover)", () => {
+  // tier-1/2/3 each have multiple deployments = comparable models to fail over across
+  for (const tier of ["tier-1", "tier-2", "tier-3"]) {
+    const n = (yaml.match(new RegExp(`model_name:\\s*${tier}\\b`, "g")) ?? []).length;
+    assert.ok(n >= 2, `expected >=2 comparable models in ${tier}, got ${n}`);
+  }
+});
+
+test("tiers cascade DOWN on exhaustion", () => {
   assert.match(yaml, /fallbacks:/);
-  assert.match(yaml, /api-default[\s\S]*api-alt1/);
-  assert.match(yaml, /api-default[\s\S]*api-alt2/);
+  // tier-6 falls back through the lower tiers; tier-2 falls back to tier-1
+  assert.match(yaml, /tier-6:\s*\[\s*"tier-5"[\s\S]*"tier-1"\s*\]/);
+  assert.match(yaml, /tier-2:\s*\[\s*"tier-1"\s*\]/);
 });
 
 test("api keys and retries come from config, not hardcoded secrets", () => {
@@ -27,7 +32,8 @@ test("api keys and retries come from config, not hardcoded secrets", () => {
   assert.match(yaml, /cooldown_time:/);
 });
 
-test("config registers the sub-* adapter tier", () => {
-  assert.match(yaml, /model_name:\s*sub-opus\b/);
+test("the top tiers route to the subscription adapter", () => {
+  // tier-4/5/6 are Claude-on-subscription via the :4001 adapter
+  assert.match(yaml, /model_name:\s*tier-6\b[\s\S]*?model:\s*openai\/claude-opus-sub/);
   assert.match(yaml, /api_base:\s*http:\/\/127\.0\.0\.1:4001\/v1/);
 });

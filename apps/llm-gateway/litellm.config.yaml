@@ -1,64 +1,109 @@
 # LiteLLM gateway. Run: litellm --config litellm.config.yaml --port 4000
-# Tiers: local-* (Ollama), api-* (OpenRouter free, with rotation), sub-* (Phase 2).
+#
+# Public namespace = a CAPABILITY LADDER, vendor-agnostic:
+#   tier-1 (weak local) ... tier-6 (strongest, Claude Opus on the subscription).
+# Callers pick a tier number; the real models live ONLY here.
+#
+# Within a tier: several COMPARABLE models as multiple deployments. The router
+# load-balances across them (simple-shuffle) and, on error/rate-limit, fails
+# over to another model in the same tier (num_retries + cooldown park the bad
+# one). Across tiers: on exhaustion a tier cascades DOWN to every lower tier
+# (tier-6 -> ... -> tier-1), so a request always lands on something.
+# Embeddings are a separate axis: `local-embed`.
+#
+# Swap/extend a tier by editing only its block here. Free OpenRouter models
+# rotate often; refresh from https://openrouter.ai/api/v1/models (pricing=0).
 model_list:
-  # --- local tier (Ollama) ---
-  - model_name: local-chat
+  # --- tier-1: weak/cheap, always-available local + tiny free fallbacks ---
+  - model_name: tier-1
     litellm_params:
-      model: ollama/llama3.2            # placeholder local chat model
+      model: ollama/llama3.2:1b
       api_base: http://127.0.0.1:11434
-  - model_name: local-embed
+  - model_name: tier-1
     litellm_params:
-      model: ollama/bge-m3             # embeddings (matches the mail/wiki dim)
-      api_base: http://127.0.0.1:11434
+      model: openrouter/meta-llama/llama-3.2-3b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY_1
+  - model_name: tier-1
+    litellm_params:
+      model: openrouter/nvidia/nemotron-nano-9b-v2:free
+      api_key: os.environ/OPENROUTER_API_KEY_1
 
-  # --- api tier (OpenRouter free) ---
-  # Key-pool rotation: one deployment per API key under the SAME model_name.
-  - model_name: api-default
+  # --- tier-2: mid free API (~20-31B) ---
+  - model_name: tier-2
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free   # placeholder
+      model: openrouter/google/gemma-4-31b-it:free
       api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: api-default
+  - model_name: tier-2
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free   # placeholder
-      api_key: os.environ/OPENROUTER_API_KEY_2
-  # Fallback models (different free models), each across the key pool.
-  - model_name: api-alt1
-    litellm_params:
-      model: openrouter/meta-llama/llama-3.3-70b-instruct:free    # placeholder
+      model: openrouter/openai/gpt-oss-20b:free
       api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: api-alt1
+  - model_name: tier-2
     litellm_params:
-      model: openrouter/meta-llama/llama-3.3-70b-instruct:free    # placeholder
-      api_key: os.environ/OPENROUTER_API_KEY_2
-  - model_name: api-alt2
-    litellm_params:
-      model: openrouter/google/gemma-3-27b-it:free               # placeholder
+      model: openrouter/google/gemma-4-26b-a4b-it:free
       api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: api-alt2
-    litellm_params:
-      model: openrouter/google/gemma-3-27b-it:free
-      api_key: os.environ/OPENROUTER_API_KEY_2
 
-  # --- sub tier (Claude on the subscription, via the Agent-SDK adapter) ---
-  # The adapter (apps/llm-gateway/src/adapter.ts) runs WITHOUT ANTHROPIC_API_KEY.
-  # Low volume only. api_key is ignored by the adapter (a placeholder satisfies LiteLLM).
-  - model_name: sub-opus
+  # --- tier-3: large free API (~70-550B) ---
+  - model_name: tier-3
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+      api_key: os.environ/OPENROUTER_API_KEY_1
+  - model_name: tier-3
+    litellm_params:
+      model: openrouter/openai/gpt-oss-120b:free
+      api_key: os.environ/OPENROUTER_API_KEY_1
+  - model_name: tier-3
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      api_key: os.environ/OPENROUTER_API_KEY_1
+  - model_name: tier-3
+    litellm_params:
+      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY_1
+
+  # --- tier-4/5/6: Claude on the subscription, via the Agent-SDK adapter ---
+  # The adapter (apps/llm-gateway/src/adapter.ts) runs WITHOUT ANTHROPIC_API_KEY
+  # and maps these aliases to real Claude ids. api_key is a placeholder LiteLLM needs.
+  - model_name: tier-4
+    litellm_params:
+      model: openai/claude-haiku-sub
+      api_base: http://127.0.0.1:4001/v1
+      api_key: "sub-adapter-ignored"
+  - model_name: tier-5
+    litellm_params:
+      model: openai/claude-sonnet-sub
+      api_base: http://127.0.0.1:4001/v1
+      api_key: "sub-adapter-ignored"
+  - model_name: tier-6
     litellm_params:
       model: openai/claude-opus-sub
       api_base: http://127.0.0.1:4001/v1
       api_key: "sub-adapter-ignored"
 
+  # --- embeddings (separate axis, not a capability tier) ---
+  - model_name: local-embed
+    litellm_params:
+      model: ollama/bge-m3
+      api_base: http://127.0.0.1:11434
+
 litellm_settings:
   num_retries: 3
-  request_timeout: 60
-  # Rotate across free models on failure (rate-limit / 5xx / timeout).
+  request_timeout: 120
+  # Cascade DOWN the ladder when a tier is exhausted.
   fallbacks:
-    - api-default: ["api-alt1", "api-alt2"]
+    - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2", "tier-1"]
+    - tier-5: ["tier-4", "tier-3", "tier-2", "tier-1"]
+    - tier-4: ["tier-3", "tier-2", "tier-1"]
+    - tier-3: ["tier-2", "tier-1"]
+    - tier-2: ["tier-1"]
   context_window_fallbacks:
-    - api-default: ["api-alt1", "api-alt2"]
+    - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2", "tier-1"]
+    - tier-5: ["tier-4", "tier-3", "tier-2", "tier-1"]
+    - tier-4: ["tier-3", "tier-2", "tier-1"]
+    - tier-3: ["tier-2", "tier-1"]
+    - tier-2: ["tier-1"]
 
 router_settings:
-  routing_strategy: simple-shuffle   # spread load across the key pool
+  routing_strategy: simple-shuffle   # spread load across the comparable models + key pool
   num_retries: 3
   retry_after: 5
   cooldown_time: 30                  # park a deployment that just failed

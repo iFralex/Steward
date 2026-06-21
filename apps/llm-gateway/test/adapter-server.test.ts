@@ -1,12 +1,25 @@
 // apps/llm-gateway/test/adapter-server.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertNoApiKey, createAdapterServer } from "../src/adapter.ts";
+import { assertNoApiKey, createAdapterServer, resolveSubModel, SUB_MODELS } from "../src/adapter.ts";
 import type { AddressInfo } from "node:net";
 
 async function* fake(): AsyncIterable<unknown> {
   yield { type: "assistant", message: { content: [{ type: "text", text: "pong" }] } };
 }
+
+test("resolveSubModel maps aliases to real Claude ids; SUB_MODEL overrides; default subscription model when unknown", () => {
+  const saved = process.env.SUB_MODEL;
+  delete process.env.SUB_MODEL;
+  assert.equal(resolveSubModel("claude-opus-sub"), "claude-opus-4-8");
+  assert.equal(resolveSubModel("claude-sonnet-sub"), "claude-sonnet-4-6");
+  assert.equal(resolveSubModel("claude-haiku-sub"), "claude-haiku-4-5");
+  assert.equal(resolveSubModel(undefined), undefined); // -> subscription default
+  process.env.SUB_MODEL = "claude-opus-4-8";
+  assert.equal(resolveSubModel("claude-sonnet-sub"), "claude-opus-4-8"); // env pins everything
+  if (saved === undefined) delete process.env.SUB_MODEL; else process.env.SUB_MODEL = saved;
+  assert.deepEqual(Object.keys(SUB_MODELS).sort(), ["claude-haiku-sub", "claude-opus-sub", "claude-sonnet-sub"]);
+});
 
 test("assertNoApiKey throws when ANTHROPIC_API_KEY is set", () => {
   assert.throws(() => assertNoApiKey({ ANTHROPIC_API_KEY: "sk-x" } as NodeJS.ProcessEnv), /ANTHROPIC_API_KEY/);
