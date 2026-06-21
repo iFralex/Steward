@@ -1,5 +1,6 @@
 import { extractJson } from "../../llm-gateway/src/extract-json.ts";
 import type { Chat } from "./llm.ts";
+import { cleanBody } from "./clean-body.ts";
 
 const CATEGORIES = ["commitment", "document", "personal-fact", "decision", "relationship"];
 const SYSTEM =
@@ -12,7 +13,7 @@ export async function classify(
   msg: { fromName: string; fromAddr: string; subject: string; bodyText: string },
   chat: Chat,
 ): Promise<{ promote: boolean; categories: string[] } | null> {
-  const user = `From: ${msg.fromName} <${msg.fromAddr}>\nSubject: ${msg.subject}\n\n${msg.bodyText.slice(0, 4000)}`;
+  const user = `From: ${msg.fromName} <${msg.fromAddr}>\nSubject: ${msg.subject}\n\n${cleanBody(msg.bodyText).slice(0, 4000)}`;
   try {
     const out = (await chat(SYSTEM, user)) as string;
     const parsed = extractJson(out) as { promote?: unknown; categories?: unknown };

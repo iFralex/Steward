@@ -1,6 +1,7 @@
 import { extractJson } from "../../llm-gateway/src/extract-json.ts";
 import type { DistilledNote } from "./note.ts";
 import type { Chat } from "./llm.ts";
+import { cleanBody } from "./clean-body.ts";
 
 const SYSTEM =
   `Distil an email into durable memory. Reply with ONLY JSON: ` +
@@ -16,7 +17,7 @@ export async function distill(
   msg: { fromName: string; fromAddr: string; subject: string; bodyText: string },
   chat: Chat,
 ): Promise<DistilledNote | null> {
-  const user = `From: ${msg.fromName} <${msg.fromAddr}>\nSubject: ${msg.subject}\n\n${msg.bodyText.slice(0, 8000)}`;
+  const user = `From: ${msg.fromName} <${msg.fromAddr}>\nSubject: ${msg.subject}\n\n${cleanBody(msg.bodyText).slice(0, 8000)}`;
   try {
     const out = (await chat(SYSTEM, user)) as string;
     const p = extractJson(out) as Record<string, unknown>;
