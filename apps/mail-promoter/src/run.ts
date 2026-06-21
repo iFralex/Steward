@@ -39,7 +39,7 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
     return "deferred";
   }
   if (!verdict) return "deferred"; // LLM unavailable / unparseable — retry next run, no state
-  const classifyModel = deps.classifyModel ?? "tier-3";
+  const classifyModel = deps.classifyModel ?? "tier-4";
   if (!verdict.promote) {
     deps.state.record({ messageId: msg.messageId, decision: "skipped", categories: verdict.categories, classifyModel, distillModel: null, wikiFilename: null, sourceHash: hash });
     return "skipped";
