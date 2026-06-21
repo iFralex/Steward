@@ -9,6 +9,7 @@
     "apps/mail-promoter",
     "apps/llm-gateway",
     "apps/calendar-mcp",
+    "apps/contacts-mcp",
     "packages/*"
   ]
 }
