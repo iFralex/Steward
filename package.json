@@ -8,6 +8,7 @@
     "apps/mail-mirror",
     "apps/mail-promoter",
     "apps/llm-gateway",
+    "apps/calendar-mcp",
     "packages/*"
   ]
 }
