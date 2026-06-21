@@ -19,11 +19,14 @@ test("each free tier lists several comparable models (intra-tier failover)", () 
   }
 });
 
-test("tiers cascade DOWN on exhaustion", () => {
+test("on failure a tier escalates UP then sweeps the rest, covering every tier", () => {
   assert.match(yaml, /fallbacks:/);
-  // tier-6 falls back through the lower tiers; tier-2 falls back to tier-1
-  assert.match(yaml, /tier-6:\s*\[\s*"tier-5"[\s\S]*"tier-1"\s*\]/);
-  assert.match(yaml, /tier-2:\s*\[\s*"tier-1"\s*\]/);
+  // tier-3 climbs to 4,5,6 then sweeps down to 2,1 (all five other tiers tried)
+  assert.match(yaml, /tier-3:\s*\["tier-4", "tier-5", "tier-6", "tier-2", "tier-1"\]/);
+  // even the top tier-6 falls back down through every lower tier
+  assert.match(yaml, /tier-6:\s*\["tier-5", "tier-4", "tier-3", "tier-2", "tier-1"\]/);
+  // a request never starts by escalating into a weaker tier: tier-1 only goes up
+  assert.match(yaml, /tier-1:\s*\["tier-2", "tier-3", "tier-4", "tier-5", "tier-6"\]/);
 });
 
 test("api keys and retries come from config, not hardcoded secrets", () => {

@@ -7,8 +7,9 @@
 # Within a tier: several COMPARABLE models as multiple deployments. The router
 # load-balances across them (simple-shuffle) and, on error/rate-limit, fails
 # over to another model in the same tier (num_retries + cooldown park the bad
-# one). Across tiers: on exhaustion a tier cascades DOWN to every lower tier
-# (tier-6 -> ... -> tier-1), so a request always lands on something.
+# one). Across tiers: on failure a tier ESCALATES UP to more capable, more
+# reliable tiers (tier-1 -> ... -> tier-6), so a flaky free tier never degrades
+# to a weaker (wrong) answer — it climbs to the subscription backstop.
 # Embeddings are a separate axis: `local-embed`.
 #
 # Swap/extend a tier by editing only its block here. Free OpenRouter models
@@ -88,19 +89,25 @@ model_list:
 litellm_settings:
   num_retries: 3
   request_timeout: 120
-  # Cascade DOWN the ladder when a tier is exhausted.
+  # On failure, ESCALATE UP first (toward the more capable, more reliable
+  # subscription tiers), then sweep the remaining lower tiers DOWN from the
+  # original — so a request eventually tries EVERY tier before giving up, never
+  # starting with a weaker (wrong-answer-prone) model. Order for tier-k:
+  # [k+1 .. 6] then [k-1 .. 1].
   fallbacks:
+    - tier-1: ["tier-2", "tier-3", "tier-4", "tier-5", "tier-6"]
+    - tier-2: ["tier-3", "tier-4", "tier-5", "tier-6", "tier-1"]
+    - tier-3: ["tier-4", "tier-5", "tier-6", "tier-2", "tier-1"]
+    - tier-4: ["tier-5", "tier-6", "tier-3", "tier-2", "tier-1"]
+    - tier-5: ["tier-6", "tier-4", "tier-3", "tier-2", "tier-1"]
     - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2", "tier-1"]
-    - tier-5: ["tier-4", "tier-3", "tier-2", "tier-1"]
-    - tier-4: ["tier-3", "tier-2", "tier-1"]
-    - tier-3: ["tier-2", "tier-1"]
-    - tier-2: ["tier-1"]
   context_window_fallbacks:
+    - tier-1: ["tier-2", "tier-3", "tier-4", "tier-5", "tier-6"]
+    - tier-2: ["tier-3", "tier-4", "tier-5", "tier-6", "tier-1"]
+    - tier-3: ["tier-4", "tier-5", "tier-6", "tier-2", "tier-1"]
+    - tier-4: ["tier-5", "tier-6", "tier-3", "tier-2", "tier-1"]
+    - tier-5: ["tier-6", "tier-4", "tier-3", "tier-2", "tier-1"]
     - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2", "tier-1"]
-    - tier-5: ["tier-4", "tier-3", "tier-2", "tier-1"]
-    - tier-4: ["tier-3", "tier-2", "tier-1"]
-    - tier-3: ["tier-2", "tier-1"]
-    - tier-2: ["tier-1"]
 
 router_settings:
   routing_strategy: simple-shuffle   # spread load across the comparable models + key pool
