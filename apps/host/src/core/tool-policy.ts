@@ -75,6 +75,15 @@ export const defaultPolicy: ToolPolicy = {
     "mcp__mail__list_mailboxes": "allow",
     "mcp__mail__search_messages": "allow",
     "mcp__mail__read_message": "allow",
+    "mcp__mail__get_thread": "allow",
     "mcp__mail__save_attachment": "allow",
+    // Calendar MCP — read-only (create/update/delete stay gated by default-deny).
+    "mcp__calendar__list_calendars": "allow",
+    "mcp__calendar__search_events": "allow",
+    "mcp__calendar__read_event": "allow",
+    // Contacts MCP — read-only (create/update stay gated by default-deny).
+    "mcp__contacts__search_contacts": "allow",
+    "mcp__contacts__read_contact": "allow",
+    "mcp__contacts__resolve_recipient": "allow",
   },
 };
