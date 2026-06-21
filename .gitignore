@@ -6,3 +6,8 @@ node_modules/
 
 # Host build outputs
 apps/host/dist/
+
+# Local secrets — never commit
+.env
+**/.env
+!.env.example
