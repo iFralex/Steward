@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { parseSearchArgs, parseCreateArgs } from "../src/args.ts";
+
+test("parseSearchArgs defaults the range and limit", () => {
+  const a = parseSearchArgs({ query: "dentist" });
+  assert.equal(a.query, "dentist");
+  assert.equal(a.limit, 20);
+  assert.ok(Date.parse(a.start) < Date.parse(a.end));
+});
+
+test("parseCreateArgs requires calendar/summary/start/end", () => {
+  assert.throws(() => parseCreateArgs({ summary: "x", start: "2026-06-25T10:00:00Z", end: "2026-06-25T11:00:00Z" }), /calendar/);
+});
+
+test("parseCreateArgs rejects end before start", () => {
+  assert.throws(() => parseCreateArgs({ calendar: "Casa", summary: "x", start: "2026-06-25T11:00:00Z", end: "2026-06-25T10:00:00Z" }), /after start/);
+});
