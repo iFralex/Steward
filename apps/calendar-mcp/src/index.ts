@@ -82,6 +82,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       default: throw new McpError(ErrorCode.MethodNotFound, `unknown tool ${req.params.name}`);
     }
   } catch (e) {
+    if (e instanceof McpError) throw e;
     throw new McpError(ErrorCode.InternalError, e instanceof Error ? e.message : String(e));
   }
 });
