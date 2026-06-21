@@ -4,6 +4,12 @@ import { cleanLabel } from "./labels.ts";
 import { dedupKey, uidFromKey, mergeContacts } from "./dedup.ts";
 import type { Contact } from "./types.ts";
 
+/** SQLite columns are dynamically typed; coerce any non-null value to a string. */
+function str(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  return typeof v === "string" ? v : String(v);
+}
+
 function sourceUuidOf(dbPath: string): string {
   // .../Sources/<uuid>/AddressBook-v22.abcddb  -> <uuid>; otherwise use the file path as a stable id
   const dir = basename(dirname(dbPath));
@@ -51,11 +57,11 @@ export class AddressBookStore {
           const uid = uidFromKey(key);
           const contact: Contact = {
             uid,
-            firstName: (p.first as string) ?? null,
-            lastName: (p.last as string) ?? null,
-            organization: (p.org as string) ?? null,
-            nickname: (p.nick as string) ?? null,
-            note: (p.note as string) ?? null,
+            firstName: str(p.first),
+            lastName: str(p.last),
+            organization: str(p.org),
+            nickname: str(p.nick),
+            note: str(p.note),
             emails, phones,
             sources: [sourceUuid],
           };

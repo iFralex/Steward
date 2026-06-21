@@ -45,6 +45,27 @@ test("dedupes the same person (same email) appearing in two sources, merging", (
   assert.equal(all[0].sources.length, 2);
 });
 
+test("coerces non-string column values (real stores put numbers in text cols)", () => {
+  const path = `/tmp/abk-num-${process.pid}-${Math.random()}.abcddb`;
+  const db = new Database(path);
+  db.exec(`
+    CREATE TABLE ZABCDRECORD(Z_PK INTEGER PRIMARY KEY, ZUNIQUEID TEXT, ZFIRSTNAME TEXT, ZLASTNAME TEXT, ZNICKNAME TEXT, ZORGANIZATION TEXT, ZNOTE TEXT);
+    CREATE TABLE ZABCDEMAILADDRESS(Z_PK INTEGER PRIMARY KEY, ZOWNER INTEGER, ZADDRESS TEXT, ZADDRESSNORMALIZED TEXT, ZLABEL TEXT);
+    CREATE TABLE ZABCDPHONENUMBER(Z_PK INTEGER PRIMARY KEY, ZOWNER INTEGER, ZFULLNUMBER TEXT, ZLABEL TEXT);
+  `);
+  db.prepare("INSERT INTO ZABCDRECORD(Z_PK,ZUNIQUEID,ZFIRSTNAME,ZORGANIZATION) VALUES (1,'U1','Eve',2024)").run();
+  db.prepare("INSERT INTO ZABCDRECORD(Z_PK,ZUNIQUEID,ZFIRSTNAME,ZORGANIZATION) VALUES (2,'U2','Eve',2025)").run();
+  db.prepare("INSERT INTO ZABCDEMAILADDRESS(Z_PK,ZOWNER,ZADDRESS,ZADDRESSNORMALIZED) VALUES (1,1,'eve@x.com','eve@x.com')").run();
+  db.prepare("INSERT INTO ZABCDEMAILADDRESS(Z_PK,ZOWNER,ZADDRESS,ZADDRESSNORMALIZED) VALUES (2,2,'eve@x.com','eve@x.com')").run();
+  db.close();
+  // same email -> merge path runs firstNonEmpty over the numeric organization without throwing
+  const store = AddressBookStore.load([path]);
+  const all = store.listContacts();
+  assert.equal(all.length, 1);
+  assert.equal(typeof all[0].organization, "string");
+  assert.equal(all[0].organization, "2024");
+});
+
 test("getContact resolves by uid", () => {
   const s1 = seedSource("e", [{ pk: 1, uid: "U1", first: "Dino", emails: ["dino@x.com"] }]);
   const store = AddressBookStore.load([s1]);
