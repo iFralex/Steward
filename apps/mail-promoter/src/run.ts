@@ -48,7 +48,7 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
   if (!distilled) return "deferred";
   const note = buildNote({ msg, accountLabel: deps.accountLabelOf(msg.account), distilled, categories: verdict.categories });
   await promote(note, deps.wiki);
-  deps.state.record({ messageId: msg.messageId, decision: "promoted", categories: verdict.categories, classifyModel, distillModel: deps.distillModel ?? "tier-6", wikiFilename: note.filename, sourceHash: hash });
+  deps.state.record({ messageId: msg.messageId, decision: "promoted", categories: verdict.categories, classifyModel, distillModel: deps.distillModel ?? "tier-5", wikiFilename: note.filename, sourceHash: hash });
   return "promoted";
 }
 
