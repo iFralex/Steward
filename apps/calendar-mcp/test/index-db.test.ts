@@ -8,6 +8,37 @@ function ev(uid: string, summary: string): CalEvent {
     end: "2026-06-25T11:00:00.000Z", allDay: false, calendar: "Casa", account: "iCloud", status: 1, url: null, lastModified: 1 };
 }
 
+function evf(uid: string, summary: string, account: string, start: string): CalEvent {
+  return { uid, summary, description: null, location: null, start, end: start,
+    allDay: false, calendar: "Casa", account, status: 1, url: null, lastModified: 1 };
+}
+
+test("allowedUids returns null for an empty filter and a set for an account filter", () => {
+  const db = IndexDb.open(":memory:");
+  db.upsertEvent(evf("U1", "a", "A", "2026-06-25T10:00:00.000Z"), "h1");
+  db.upsertEvent(evf("U2", "b", "B", "2026-06-25T10:00:00.000Z"), "h2");
+  assert.equal(db.allowedUids({}), null);
+  assert.deepEqual([...(db.allowedUids({ account: "A" }) ?? [])], ["U1"]);
+  db.close();
+});
+
+test("allowedUids filters by start-date range", () => {
+  const db = IndexDb.open(":memory:");
+  db.upsertEvent(evf("U1", "a", "A", "2026-01-01T00:00:00.000Z"), "h1");
+  db.upsertEvent(evf("U2", "b", "A", "2026-12-01T00:00:00.000Z"), "h2");
+  const set = db.allowedUids({ startISO: "2026-06-01T00:00:00.000Z", endISO: "2027-01-01T00:00:00.000Z" });
+  assert.deepEqual([...(set ?? [])], ["U2"]);
+  db.close();
+});
+
+test("ftsSearch respects an account filter", () => {
+  const db = IndexDb.open(":memory:");
+  db.upsertEvent(evf("U1", "alpha", "A", "2026-06-25T10:00:00.000Z"), "h1");
+  db.upsertEvent(evf("U2", "alpha", "B", "2026-06-25T10:00:00.000Z"), "h2");
+  assert.deepEqual(db.ftsSearch('"alpha"', 10, { account: "A" }), ["U1"]);
+  db.close();
+});
+
 test("upsert + FTS finds by summary token", () => {
   const db = IndexDb.open(":memory:");
   db.upsertEvent(ev("U1", "Dentist appointment"), "h1");

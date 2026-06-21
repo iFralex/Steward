@@ -2,6 +2,9 @@ import Database from "better-sqlite3";
 import { VectorStore } from "@llm-wiki/search";
 import type { CalEvent } from "./types.ts";
 
+/** Candidate-restricting filters, applied to the `events` mirror before ranking. */
+export interface EventFilter { account?: string; calendar?: string; startISO?: string; endISO?: string }
+
 export class IndexDb {
   readonly vectors: VectorStore;
   private constructor(private readonly raw: Database.Database) {
@@ -81,10 +84,30 @@ export class IndexDb {
       .run(uid, sourceHash, dim, model, Math.floor(Date.now() / 1000));
   }
 
-  ftsSearch(query: string, limit: number): string[] {
+  /** SQL fragment (" AND …") + params restricting the `events` mirror by filter. Empty when no fields set. */
+  private filterClause(f?: EventFilter): { sql: string; params: unknown[] } {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (f?.account) { clauses.push("e.account = ?"); params.push(f.account); }
+    if (f?.calendar) { clauses.push("e.calendar = ?"); params.push(f.calendar); }
+    if (f?.startISO) { clauses.push("e.start >= ?"); params.push(f.startISO); }
+    if (f?.endISO) { clauses.push("e.start <= ?"); params.push(f.endISO); }
+    return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", params };
+  }
+
+  /** The set of uids matching `filter`, or null when the filter restricts nothing. */
+  allowedUids(filter?: EventFilter): Set<string> | null {
+    const { sql, params } = this.filterClause(filter);
+    if (!sql) return null;
+    const rows = this.raw.prepare(`SELECT e.uid AS uid FROM events e WHERE 1=1${sql}`).all(...params) as { uid: string }[];
+    return new Set(rows.map((r) => r.uid));
+  }
+
+  ftsSearch(query: string, limit: number, filter?: EventFilter): string[] {
+    const { sql, params } = this.filterClause(filter);
     const rows = this.raw.prepare(
       `SELECT e.uid AS uid FROM events_fts f JOIN events e ON e.rowid = f.rowid
-       WHERE events_fts MATCH ? ORDER BY rank LIMIT ?`).all(query, limit) as { uid: string }[];
+       WHERE events_fts MATCH ?${sql} ORDER BY rank LIMIT ?`).all(query, ...params, limit) as { uid: string }[];
     return rows.map((r) => r.uid);
   }
 

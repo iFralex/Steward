@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { AppleStore } from "./apple-store.ts";
 import { IndexDb } from "./index-db.ts";
+import type { CalEvent } from "./types.ts";
 import { hybridSearch } from "./search.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
 import { embedText } from "@llm-wiki/search";
@@ -55,11 +56,20 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (!store) throw new Error("Apple Calendar store not found. Grant Full Disk Access.");
         const a = parseSearchArgs(raw);
         let uids: string[];
-        if (a.query && index) uids = await hybridSearch({ index, embedQuery }, a.query, a.limit);
-        else uids = store.eventsInRange({ startISO: a.start, endISO: a.end, account: a.account, calendar: a.calendar }).map((e) => e.uid);
-        const events = uids.map((u) => store.getEvent(u)).filter(Boolean)
-          .filter((e) => (!a.account || e!.account === a.account) && (!a.calendar || e!.calendar === a.calendar))
-          .slice(0, a.limit);
+        if (a.query && index) {
+          // Keyword/semantic search applies the date window only when the caller
+          // gave one explicitly — defaulting it would silently hurt recall.
+          const dateExplicit = typeof raw.start === "string" || typeof raw.end === "string";
+          uids = await hybridSearch({ index, embedQuery }, a.query, a.limit, {
+            account: a.account,
+            calendar: a.calendar,
+            ...(dateExplicit ? { startISO: a.start, endISO: a.end } : {}),
+          });
+        } else {
+          uids = store.eventsInRange({ startISO: a.start, endISO: a.end, account: a.account, calendar: a.calendar }).map((e) => e.uid);
+        }
+        // Both paths already applied the account/calendar/date filters; just resolve live detail.
+        const events = uids.map((u) => store.getEvent(u)).filter((e): e is CalEvent => !!e).slice(0, a.limit);
         return ok(events);
       }
       case "read_event": {
