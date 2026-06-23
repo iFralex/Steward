@@ -19,12 +19,10 @@ async function main(): Promise<void> {
   const wiki = new LlmWikiApiClient({ baseUrl: process.env.LLM_WIKI_API_BASE_URL });
   const deps: RunDeps = {
     store, state, wiki,
-    classifyChat: gatewayChat({ endpoint: cfg.llmEndpoint, model: cfg.classifyModel, apiKey: cfg.apiKey }),
-    distillChat: gatewayChat({ endpoint: cfg.llmEndpoint, model: cfg.distillModel, apiKey: cfg.apiKey }),
+    chat: gatewayChat({ endpoint: cfg.llmEndpoint, model: cfg.triageModel, apiKey: cfg.apiKey }),
     roleOf: (a, m) => store.roleForMailbox(a, m),
     accountLabelOf: (a) => (store.raw.prepare("SELECT emails FROM accounts WHERE uuid=?").get(a) as { emails: string } | undefined)?.emails ?? a,
-    classifyModel: cfg.classifyModel,
-    distillModel: cfg.distillModel,
+    model: cfg.triageModel,
   };
   if (cmd === "backfill") {
     const t = await runBatch(deps);
@@ -40,7 +38,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as { items: LabelledItem[] };
-    const modelsRaw = process.env.MAIL_PROMOTER_EVAL_MODELS ?? cfg.classifyModel;
+    const modelsRaw = process.env.MAIL_PROMOTER_EVAL_MODELS ?? cfg.triageModel;
     const models = modelsRaw.split(",").map((m) => m.trim()).filter(Boolean);
     for (const model of models) {
       const chat = gatewayChat({ endpoint: cfg.llmEndpoint, model, apiKey: cfg.apiKey });

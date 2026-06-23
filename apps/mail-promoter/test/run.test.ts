@@ -20,8 +20,7 @@ function deps(over: Partial<RunDeps> = {}): RunDeps {
   store.upsertMessage(row());
   return {
     store, state: PromoteState.open(":memory:"),
-    classifyChat: async () => '{"promote": true, "categories": ["commitment"]}',
-    distillChat: async () => '{"summary":"s","facts":[],"commitments":["inviare"],"people":["Anna"],"orgs":[]}',
+    chat: async () => '{"promote": true, "categories": ["commitment"], "note": {"summary":"s","facts":[],"commitments":["inviare"],"people":["Anna"],"orgs":[]}}',
     wiki: { addSources: async () => ({}) },
     roleOf: () => "inbox", accountLabelOf: () => "biz@x.com", ...over,
   };
@@ -36,7 +35,7 @@ test("processOne promotes a durable mail and records state", async () => {
 
 test("processOne filters a junk-role mail without calling the LLM", async () => {
   let called = false;
-  const d = deps({ roleOf: () => "junk", classifyChat: async () => { called = true; return "{}"; } });
+  const d = deps({ roleOf: () => "junk", chat: async () => { called = true; return "{}"; } });
   const r = await processOne(d, d.store.getMessage("m1")!);
   assert.equal(r, "filtered");
   assert.equal(called, false);
@@ -51,7 +50,7 @@ test("a previously-filtered mail is skipped on re-run (no re-evaluation)", async
 });
 
 test("processOne defers (no state) when the classifier is unavailable", async () => {
-  const d = deps({ classifyChat: async () => { throw new Error("down"); } });
+  const d = deps({ chat: async () => { throw new Error("down"); } });
   const r = await processOne(d, d.store.getMessage("m1")!);
   assert.equal(r, "deferred");
   assert.equal(d.state.get("m1"), undefined);

@@ -9,8 +9,10 @@ const mk = (id: string, label: "promote" | "skip", subject: string): LabelledIte
 
 test("evaluate computes precision/recall against labels", async () => {
   const items = [mk("1", "promote", "Certificati"), mk("2", "skip", "Hi"), mk("3", "promote", "Contratto")];
-  // model promotes anything whose subject is not "Hi"
-  const chat = async (_s: string, user: string) => (user.includes("Hi") ? '{"promote":false,"categories":[]}' : '{"promote":true,"categories":[]}');
+  // model promotes anything whose subject is not "Hi" (combined triage -> promote carries a note)
+  const note = '{"summary":"s","facts":[],"commitments":[],"people":[],"orgs":[]}';
+  const chat = async (_s: string, user: string) =>
+    user.includes("Hi") ? '{"promote":false,"categories":[],"note":null}' : `{"promote":true,"categories":[],"note":${note}}`;
   const r = await evaluate(items, chat);
   assert.equal(r.tp, 2); // 1 and 3 promoted correctly
   assert.equal(r.tn, 1); // 2 skipped correctly

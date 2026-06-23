@@ -1,6 +1,6 @@
 // apps/mail-promoter/src/eval.ts
 import { shouldConsider } from "./prefilter.ts";
-import { classify } from "./classify.ts";
+import { triage } from "./triage.ts";
 import type { Chat } from "./llm.ts";
 
 export type LabelledItem = {
@@ -17,7 +17,7 @@ export async function evaluate(items: LabelledItem[], chat: Chat): Promise<{ tp:
     if (!shouldConsider(it.msg, it.role)) {
       predict = false;
     } else {
-      const v = await classify(it.msg, chat);
+      const v = await triage(it.msg, chat);
       predict = v?.promote === true;
     }
     const actual = it.label === "promote";

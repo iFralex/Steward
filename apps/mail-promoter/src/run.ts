@@ -4,21 +4,18 @@ import type { PromoteState } from "./state.ts";
 import type { Chat } from "./llm.ts";
 import type { WikiPromoter } from "./wiki.ts";
 import { shouldConsider } from "./prefilter.ts";
-import { classify } from "./classify.ts";
-import { distill } from "./distill.ts";
+import { triage } from "./triage.ts";
 import { buildNote } from "./note.ts";
 import { promote } from "./wiki.ts";
 
 export interface RunDeps {
   store: Store;
   state: PromoteState;
-  classifyChat: Chat;
-  distillChat: Chat;
+  chat: Chat;
   wiki: WikiPromoter;
   roleOf: (account: string, mailbox: string) => string | undefined;
   accountLabelOf: (account: string) => string;
-  classifyModel?: string;
-  distillModel?: string;
+  model?: string;
 }
 
 export function sourceHash(msg: { subject: string; bodyText: string }): string {
@@ -32,23 +29,21 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
     deps.state.record({ messageId: msg.messageId, decision: "filtered", categories: [], classifyModel: "prefilter", distillModel: null, wikiFilename: null, sourceHash: hash });
     return "filtered";
   }
-  let verdict: { promote: boolean; categories: string[] } | null;
+  let result;
   try {
-    verdict = await classify(msg, deps.classifyChat);
+    result = await triage(msg, deps.chat);
   } catch {
     return "deferred";
   }
-  if (!verdict) return "deferred"; // LLM unavailable / unparseable — retry next run, no state
-  const classifyModel = deps.classifyModel ?? "tier-4";
-  if (!verdict.promote) {
-    deps.state.record({ messageId: msg.messageId, decision: "skipped", categories: verdict.categories, classifyModel, distillModel: null, wikiFilename: null, sourceHash: hash });
+  if (!result) return "deferred"; // LLM unavailable / unparseable / promote w/o note — retry next run, no state
+  const model = deps.model ?? "tier-5";
+  if (!result.promote) {
+    deps.state.record({ messageId: msg.messageId, decision: "skipped", categories: result.categories, classifyModel: model, distillModel: null, wikiFilename: null, sourceHash: hash });
     return "skipped";
   }
-  const distilled = await distill(msg, deps.distillChat);
-  if (!distilled) return "deferred";
-  const note = buildNote({ msg, accountLabel: deps.accountLabelOf(msg.account), distilled, categories: verdict.categories });
+  const note = buildNote({ msg, accountLabel: deps.accountLabelOf(msg.account), distilled: result.note!, categories: result.categories });
   await promote(note, deps.wiki);
-  deps.state.record({ messageId: msg.messageId, decision: "promoted", categories: verdict.categories, classifyModel, distillModel: deps.distillModel ?? "tier-5", wikiFilename: note.filename, sourceHash: hash });
+  deps.state.record({ messageId: msg.messageId, decision: "promoted", categories: result.categories, classifyModel: model, distillModel: model, wikiFilename: note.filename, sourceHash: hash });
   return "promoted";
 }
 
