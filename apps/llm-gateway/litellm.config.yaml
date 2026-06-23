@@ -58,25 +58,25 @@ model_list:
 litellm_settings:
   num_retries: 3
   request_timeout: 120
-  # On failure, ESCALATE UP first (toward the more capable, more reliable
-  # subscription tiers), then sweep the remaining lower tiers DOWN from the
-  # original — so a request eventually tries EVERY tier before giving up, never
-  # starting with a weaker (wrong-answer-prone) model. Order for tier-k:
-  # [k+1 .. 6] then [k-1 .. 1].
+  # On failure, ESCALATE/shuffle among the PAID DeepSeek tiers (2..6). tier-1 is
+  # the local llama-1b offline backstop and is deliberately NOT a fallback: it is
+  # too weak for any real task, so degrading to it would emit wrong answers
+  # instead of a clean error. With every paid tier on the same DeepSeek key, an
+  # exhausted-credits / outage condition makes ALL of 2..6 fail and surfaces a
+  # real error to the caller (the backfill then defers + resumes), rather than
+  # silently producing junk. Invoke tier-1 explicitly when you actually want it.
   fallbacks:
-    - tier-1: ["tier-2", "tier-3", "tier-4", "tier-5", "tier-6"]
-    - tier-2: ["tier-3", "tier-4", "tier-5", "tier-6", "tier-1"]
-    - tier-3: ["tier-4", "tier-5", "tier-6", "tier-2", "tier-1"]
-    - tier-4: ["tier-5", "tier-6", "tier-3", "tier-2", "tier-1"]
-    - tier-5: ["tier-6", "tier-4", "tier-3", "tier-2", "tier-1"]
-    - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2", "tier-1"]
+    - tier-2: ["tier-3", "tier-4", "tier-5", "tier-6"]
+    - tier-3: ["tier-4", "tier-5", "tier-6", "tier-2"]
+    - tier-4: ["tier-5", "tier-6", "tier-3", "tier-2"]
+    - tier-5: ["tier-6", "tier-4", "tier-3", "tier-2"]
+    - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2"]
   context_window_fallbacks:
-    - tier-1: ["tier-2", "tier-3", "tier-4", "tier-5", "tier-6"]
-    - tier-2: ["tier-3", "tier-4", "tier-5", "tier-6", "tier-1"]
-    - tier-3: ["tier-4", "tier-5", "tier-6", "tier-2", "tier-1"]
-    - tier-4: ["tier-5", "tier-6", "tier-3", "tier-2", "tier-1"]
-    - tier-5: ["tier-6", "tier-4", "tier-3", "tier-2", "tier-1"]
-    - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2", "tier-1"]
+    - tier-2: ["tier-3", "tier-4", "tier-5", "tier-6"]
+    - tier-3: ["tier-4", "tier-5", "tier-6", "tier-2"]
+    - tier-4: ["tier-5", "tier-6", "tier-3", "tier-2"]
+    - tier-5: ["tier-6", "tier-4", "tier-3", "tier-2"]
+    - tier-6: ["tier-5", "tier-4", "tier-3", "tier-2"]
 
 router_settings:
   routing_strategy: simple-shuffle   # spread load across the comparable models + key pool
