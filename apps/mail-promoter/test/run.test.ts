@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store } from "../../mail-mirror/src/store.ts";
 import { PromoteState } from "../src/state.ts";
-import { processOne, type RunDeps } from "../src/run.ts";
+import { processOne, runBatch, type RunDeps } from "../src/run.ts";
 
 function row(over = {}) {
   return {
@@ -54,4 +54,24 @@ test("processOne defers (no state) when the classifier is unavailable", async ()
   const r = await processOne(d, d.store.getMessage("m1")!);
   assert.equal(r, "deferred");
   assert.equal(d.state.get("m1"), undefined);
+});
+
+test("runBatch processes every message with concurrency > 1", async () => {
+  const d = deps();
+  for (let i = 2; i <= 20; i++) d.store.upsertMessage(row({ messageId: `m${i}` }));
+  let inFlight = 0, maxInFlight = 0;
+  const d2: RunDeps = {
+    ...d,
+    chat: async () => {
+      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return '{"promote": false, "categories": [], "note": null}';
+    },
+  };
+  const tally = await runBatch(d2, { concurrency: 5 });
+  assert.equal(tally.promoted + tally.skipped + tally.filtered + tally.deferred, 20);
+  assert.equal(tally.skipped, 20);
+  assert.ok(maxInFlight > 1, `expected concurrent calls, saw max ${maxInFlight}`);
+  assert.ok(maxInFlight <= 5, `concurrency cap exceeded: ${maxInFlight}`);
 });

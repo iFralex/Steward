@@ -36,7 +36,11 @@ async function main(): Promise<void> {
     model: cfg.triageModel,
   };
   if (cmd === "backfill") {
-    const t = await runBatch(deps);
+    // Usage: mail-promoter backfill [limit]   (concurrency via MAIL_PROMOTER_CONCURRENCY, default 10)
+    const limit = process.argv[3] ? Number(process.argv[3]) : undefined;
+    const concurrency = Number(process.env.MAIL_PROMOTER_CONCURRENCY ?? 10);
+    console.log(`promote backfill: limit=${limit ?? "all"} concurrency=${concurrency} model=${cfg.triageModel}`);
+    const t = await runBatch(deps, { limit, concurrency });
     console.log(`promote backfill: promoted ${t.promoted}, skipped ${t.skipped}, filtered ${t.filtered}, deferred ${t.deferred}`);
   } else if (cmd === "status") {
     const c = state.counts();

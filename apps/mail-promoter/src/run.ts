@@ -48,18 +48,32 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
   return "promoted";
 }
 
-export async function runBatch(deps: RunDeps, opts: { limit?: number } = {}): Promise<{ promoted: number; skipped: number; filtered: number; deferred: number }> {
+export async function runBatch(
+  deps: RunDeps,
+  opts: { limit?: number; concurrency?: number } = {},
+): Promise<{ promoted: number; skipped: number; filtered: number; deferred: number }> {
   const limit = opts.limit ?? 100000;
+  const concurrency = Math.max(1, opts.concurrency ?? 8);
   const ids = (deps.store.raw.prepare("SELECT message_id FROM messages WHERE deleted=0 ORDER BY date DESC LIMIT ?").all(limit) as { message_id: string }[]).map((r) => r.message_id);
   const tally = { promoted: 0, skipped: 0, filtered: 0, deferred: 0 };
-  for (const id of ids) {
-    const msg = deps.store.getMessage(id);
-    if (!msg) continue;
-    try {
-      tally[await processOne(deps, msg)]++;
-    } catch {
-      tally.deferred++; // wiki/other error — leave for retry
+  // Worker pool: the LLM/wiki calls in processOne are I/O-bound, so a handful of
+  // workers pulling from a shared cursor cuts a 55k-mail backfill from days to
+  // hours. SQLite (better-sqlite3) is synchronous, so state writes serialize
+  // naturally; the cursor index and tally updates run on JS's single thread.
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    for (;;) {
+      const i = cursor++;
+      if (i >= ids.length) return;
+      const msg = deps.store.getMessage(ids[i]);
+      if (!msg) continue;
+      try {
+        tally[await processOne(deps, msg)]++;
+      } catch {
+        tally.deferred++; // wiki/other error — leave for retry
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, () => worker()));
   return tally;
 }
