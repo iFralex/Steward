@@ -17,7 +17,7 @@ const SYSTEM =
   `requests/commitments, important documents, personal facts, decisions, relationships — ` +
   `vs noise (marketing, promotions, time-limited offers, notifications, one-off transactional, generic announcements). ` +
   `Reply with ONLY JSON: ` +
-  `{"promote": boolean, "categories": string[], "note": {"summary": string, "facts": string[], "commitments": string[], "people": string[], "orgs": string[]} | null}. ` +
+  `{"promote": boolean, "categories": string[], "note": {"summary": string, "facts": string[], "commitments": string[], "people": string[], "orgs": string[], "reviewBy": "YYYY-MM-DD" | null} | null}. ` +
   `Rules: ` +
   `(1) Do NOT promote promotional or time-limited content (discounts, sales, event invites, deadlines) — noise even if still valid. ` +
   `(2) Do NOT promote service/transactional notifications and reminders (confirmations, onboarding/funnel steps, ` +
@@ -34,6 +34,8 @@ const SYSTEM =
   `(5) categories ⊆ ${JSON.stringify(CATEGORIES)}. ` +
   `If promote is false, set note to null. If promote is true, fill note: summary 1-3 sentences; ` +
   `facts concrete durable facts; commitments requests/promises (who owes what); people/orgs named entities. ` +
+  `reviewBy: if the note involves a future deadline, a scheduled event, or an action to revisit, set it to the date to revisit ` +
+  `(the deadline/event date, or shortly before, as YYYY-MM-DD); use null when the knowledge is timeless or already resolved. ` +
   `Keep it faithful; do not invent.`;
 
 function isoDay(epochSeconds?: number): string {
@@ -83,10 +85,11 @@ export async function triage(
     if (!p.promote) return { promote: false, categories, note: null };
     const n = p.note as Record<string, unknown> | null | undefined;
     if (!n || typeof n.summary !== "string" || !n.summary.trim()) return null; // malformed promote -> retry
+    const reviewBy = typeof n.reviewBy === "string" && /^\d{4}-\d{2}-\d{2}$/.test(n.reviewBy) ? n.reviewBy : null;
     return {
       promote: true,
       categories,
-      note: { summary: n.summary, facts: strs(n.facts), commitments: strs(n.commitments), people: strs(n.people), orgs: strs(n.orgs) },
+      note: { summary: n.summary, facts: strs(n.facts), commitments: strs(n.commitments), people: strs(n.people), orgs: strs(n.orgs), reviewBy },
     };
   } catch {
     return null;

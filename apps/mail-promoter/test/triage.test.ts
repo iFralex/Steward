@@ -21,6 +21,13 @@ test("triage returns a skip verdict with a null note (no second call needed)", a
   assert.deepEqual(r, { promote: false, categories: [], note: null });
 });
 
+test("triage parses a valid reviewBy and nulls a malformed one", async () => {
+  const ok = async () => '{"promote":true,"categories":[],"note":{"summary":"s","facts":[],"commitments":[],"people":[],"orgs":[],"reviewBy":"2026-08-15"}}';
+  assert.equal((await triage(msg, ok))?.note?.reviewBy, "2026-08-15");
+  const bad = async () => '{"promote":true,"categories":[],"note":{"summary":"s","facts":[],"commitments":[],"people":[],"orgs":[],"reviewBy":"someday"}}';
+  assert.equal((await triage(msg, bad))?.note?.reviewBy, null);
+});
+
 test("triage drops out-of-allowlist categories", async () => {
   const chat = async () =>
     '{"promote": true, "categories": ["commitment", "spam", "urgent", "document"], "note": {"summary":"s","facts":[],"commitments":[],"people":[],"orgs":[]}}';

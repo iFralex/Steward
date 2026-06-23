@@ -5,6 +5,8 @@ export interface DistilledNote {
   commitments: string[];
   people: string[];
   orgs: string[];
+  /** When to revisit this note (YYYY-MM-DD) — a future deadline/event/action; null if timeless. */
+  reviewBy?: string | null;
 }
 
 export function slugForMessageId(messageId: string): string {
@@ -32,6 +34,7 @@ export function buildNote(args: {
     `source: message://${msg.messageId}`,
     ...(threadId != null ? [`thread: thread://${threadId}`] : []),
     ...(messageIds && messageIds.length > 1 ? [`messages: [${messageIds.join(", ")}]`] : []),
+    ...(distilled.reviewBy ? [`review_by: ${distilled.reviewBy}`] : []),
     `subject: ${msg.subject}`,
     `from: ${from}`,
     `date: ${new Date(msg.date * 1000).toISOString()}`,

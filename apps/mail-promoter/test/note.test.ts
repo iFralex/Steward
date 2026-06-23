@@ -23,4 +23,19 @@ test("note has frontmatter with the message:// link and the distilled body", () 
   assert.match(content, /Anna chiede i certificati/);
   assert.match(content, /- inviare certificati/);
   assert.doesNotMatch(content, /## Organizations/); // empty section omitted
+  assert.doesNotMatch(content, /review_by:/); // omitted when absent
+});
+
+test("note includes review_by and thread links when present", () => {
+  const { content } = buildNote({
+    msg,
+    accountLabel: "biz@x.com",
+    distilled: { ...distilled, reviewBy: "2026-08-15" },
+    categories: ["commitment"],
+    threadId: 42,
+    messageIds: ["a@x", "b@x"],
+  });
+  assert.match(content, /review_by: 2026-08-15/);
+  assert.match(content, /thread: thread:\/\/42/);
+  assert.match(content, /messages: \[a@x, b@x\]/);
 });
