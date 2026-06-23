@@ -42,6 +42,15 @@ async function main(): Promise<void> {
     console.log(`promote backfill: limit=${limit ?? "all"} concurrency=${concurrency} model=${cfg.triageModel}`);
     const t = await runBatch(deps, { limit, concurrency });
     console.log(`promote backfill: promoted ${t.promoted}, skipped ${t.skipped}, filtered ${t.filtered}, deferred ${t.deferred}`);
+    if (t.promoted > 0) {
+      console.log("rescan: indicizzazione finale di tutte le note in un'unica passata...");
+      try { await wiki.rescan("current"); console.log("rescan: completato"); }
+      catch (e) { console.error(`rescan finale fallito (rilancia 'mail-promoter rescan'): ${(e as Error).message}`); }
+    }
+  } else if (cmd === "rescan") {
+    console.log("rescan: indicizzazione di tutte le note nel progetto corrente...");
+    await wiki.rescan("current");
+    console.log("rescan: completato");
   } else if (cmd === "status") {
     const c = state.counts();
     console.log(`promoter state: ${stateDbPath()}`);
@@ -64,7 +73,7 @@ async function main(): Promise<void> {
     store.close();
     return;
   } else {
-    console.log("usage: mail-promoter <backfill|status|eval>");
+    console.log("usage: mail-promoter <backfill|rescan|status|eval>");
     process.exit(1);
   }
   state.close();

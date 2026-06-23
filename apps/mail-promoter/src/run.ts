@@ -68,7 +68,7 @@ export async function processThread(deps: RunDeps, threadId: number): Promise<"p
     threadId,
     messageIds: input.messageIds,
   });
-  await promote(note, deps.wiki);
+  await promote(note, deps.wiki, "current", false); // bulk: skip per-note rescan, rescan once at the end
   deps.state.record({ messageId: key, decision: "promoted", categories: result.categories, classifyModel: model, distillModel: model, wikiFilename: note.filename, sourceHash: hash });
   return "promoted";
 }
