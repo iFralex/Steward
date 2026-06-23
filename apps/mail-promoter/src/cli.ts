@@ -17,11 +17,22 @@ async function main(): Promise<void> {
   const store = Store.openReadonly(dbPath());
   const state = PromoteState.open(stateDbPath());
   const wiki = new LlmWikiApiClient({ baseUrl: process.env.LLM_WIKI_API_BASE_URL });
+  // The user's own email addresses across all mirrored accounts — lets triage
+  // judge whether the user is personally involved (vs a passive list subscriber).
+  const userAddrs = [
+    ...new Set(
+      (store.raw.prepare("SELECT emails FROM accounts").all() as { emails: string | null }[])
+        .flatMap((r) => (r.emails ?? "").split(/[,;\s]+/))
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
   const deps: RunDeps = {
     store, state, wiki,
     chat: gatewayChat({ endpoint: cfg.llmEndpoint, model: cfg.triageModel, apiKey: cfg.apiKey }),
     roleOf: (a, m) => store.roleForMailbox(a, m),
     accountLabelOf: (a) => (store.raw.prepare("SELECT emails FROM accounts WHERE uuid=?").get(a) as { emails: string } | undefined)?.emails ?? a,
+    userAddrs,
     model: cfg.triageModel,
   };
   if (cmd === "backfill") {

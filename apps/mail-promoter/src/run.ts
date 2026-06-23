@@ -15,6 +15,7 @@ export interface RunDeps {
   wiki: WikiPromoter;
   roleOf: (account: string, mailbox: string) => string | undefined;
   accountLabelOf: (account: string) => string;
+  userAddrs?: string[];
   model?: string;
 }
 
@@ -31,7 +32,7 @@ export async function processOne(deps: RunDeps, msg: MessageRow): Promise<"promo
   }
   let result;
   try {
-    result = await triage(msg, deps.chat);
+    result = await triage(msg, deps.chat, { userAddrs: deps.userAddrs });
   } catch {
     return "deferred";
   }

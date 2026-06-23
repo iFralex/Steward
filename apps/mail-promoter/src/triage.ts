@@ -20,7 +20,10 @@ const SYSTEM =
   `(1) Do NOT promote promotional or time-limited content (discounts, sales, event invites, deadlines) — noise even if still valid. ` +
   `(2) The header gives the email's Date and Today. Judge knowledge by whether it stays useful over time; ` +
   `record a request/commitment as a durable fact with WHO and WHEN — an old one is historical context, not a live task. ` +
-  `(3) Prefer knowledge about the user's own life, work, money, health, documents, and relationships over generic third-party trivia. ` +
+  `(3) PERSONAL INVOLVEMENT: the header may list "You" (the user's own email addresses) and the To/Cc recipients. ` +
+  `Promote only when the user is personally involved — they are the sender, a direct recipient, the message replies to the user's own question/request, ` +
+  `or it is clearly about the user's own life, work, money, health, documents, or relationships. ` +
+  `Treat mailing-list or forum threads where OTHER people discuss generic questions (the user is only a subscriber, not addressed) as noise — skip them. ` +
   `(4) categories ⊆ ${JSON.stringify(CATEGORIES)}. ` +
   `If promote is false, set note to null. If promote is true, fill note: summary 1-3 sentences; ` +
   `facts concrete durable facts; commitments requests/promises (who owes what); people/orgs named entities. ` +
@@ -47,11 +50,15 @@ export interface TriageResult {
  * note — a promote we cannot turn into a note is not actionable.
  */
 export async function triage(
-  msg: { fromName: string; fromAddr: string; subject: string; bodyText: string; date?: number },
+  msg: { fromName: string; fromAddr: string; subject: string; bodyText: string; date?: number; to?: string[]; cc?: string[] },
   chat: Chat,
+  opts: { userAddrs?: string[] } = {},
 ): Promise<TriageResult | null> {
+  const recipients = [...(msg.to ?? []), ...(msg.cc ?? [])].filter(Boolean).join(", ");
+  const youLine = opts.userAddrs?.length ? `You: ${opts.userAddrs.join(", ")}\n` : "";
+  const toLine = recipients ? `To/Cc: ${recipients}\n` : "";
   const user =
-    `From: ${msg.fromName} <${msg.fromAddr}>\nSubject: ${msg.subject}\n` +
+    `From: ${msg.fromName} <${msg.fromAddr}>\n${youLine}${toLine}Subject: ${msg.subject}\n` +
     `Date: ${isoDay(msg.date)}\nToday: ${isoDay(Math.floor(Date.now() / 1000))}\n\n` +
     `${cleanBody(msg.bodyText).slice(0, 8000)}`;
   try {
