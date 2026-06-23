@@ -11,6 +11,8 @@ const CATEGORIES = ["commitment", "document", "personal-fact", "decision", "rela
 // with one capable cheap model handling both, the second call is pure overhead.
 const SYSTEM =
   `You triage an email for the user's long-term PERSONAL memory IN ONE STEP. ` +
+  `The body may be a single email or an entire THREAD (several messages in chronological order); ` +
+  `in either case produce ONE note covering the whole conversation. ` +
   `Decide whether it holds DURABLE PERSONAL KNOWLEDGE worth keeping — the user's own ` +
   `requests/commitments, important documents, personal facts, decisions, relationships — ` +
   `vs noise (marketing, promotions, time-limited offers, notifications, one-off transactional, generic announcements). ` +
@@ -18,13 +20,18 @@ const SYSTEM =
   `{"promote": boolean, "categories": string[], "note": {"summary": string, "facts": string[], "commitments": string[], "people": string[], "orgs": string[]} | null}. ` +
   `Rules: ` +
   `(1) Do NOT promote promotional or time-limited content (discounts, sales, event invites, deadlines) — noise even if still valid. ` +
-  `(2) The header gives the email's Date and Today. Judge knowledge by whether it stays useful over time; ` +
-  `record a request/commitment as a durable fact with WHO and WHEN — an old one is historical context, not a live task. ` +
-  `(3) PERSONAL INVOLVEMENT: the header may list "You" (the user's own email addresses) and the To/Cc recipients. ` +
+  `(2) Do NOT promote service/transactional notifications and reminders (confirmations, onboarding/funnel steps, ` +
+  `"resume/complete your application", identity-verification prompts, status updates) UNLESS they carry a DURABLE fact ` +
+  `(an account/user code, IBAN, credentials, a real document/statement) OR they require an action or appointment still in the ` +
+  `FUTURE relative to Today (e.g. a call/meeting scheduled after Today) — keep those, and record the WHEN. ` +
+  `A reminder whose action is already past relative to Today is noise. ` +
+  `(3) The header gives the email's Date and Today. Judge knowledge by whether it stays useful over time; ` +
+  `record a request/commitment as a durable fact with WHO and WHEN — an old, already-resolved one is historical context, not a live task. ` +
+  `(4) PERSONAL INVOLVEMENT: the header may list "You" (the user's own email addresses) and the To/Cc recipients. ` +
   `Promote only when the user is personally involved — they are the sender, a direct recipient, the message replies to the user's own question/request, ` +
   `or it is clearly about the user's own life, work, money, health, documents, or relationships. ` +
   `Treat mailing-list or forum threads where OTHER people discuss generic questions (the user is only a subscriber, not addressed) as noise — skip them. ` +
-  `(4) categories ⊆ ${JSON.stringify(CATEGORIES)}. ` +
+  `(5) categories ⊆ ${JSON.stringify(CATEGORIES)}. ` +
   `If promote is false, set note to null. If promote is true, fill note: summary 1-3 sentences; ` +
   `facts concrete durable facts; commitments requests/promises (who owes what); people/orgs named entities. ` +
   `Keep it faithful; do not invent.`;
@@ -52,15 +59,20 @@ export interface TriageResult {
 export async function triage(
   msg: { fromName: string; fromAddr: string; subject: string; bodyText: string; date?: number; to?: string[]; cc?: string[] },
   chat: Chat,
-  opts: { userAddrs?: string[] } = {},
+  opts: { userAddrs?: string[]; isThread?: boolean } = {},
 ): Promise<TriageResult | null> {
   const recipients = [...(msg.to ?? []), ...(msg.cc ?? [])].filter(Boolean).join(", ");
   const youLine = opts.userAddrs?.length ? `You: ${opts.userAddrs.join(", ")}\n` : "";
   const toLine = recipients ? `To/Cc: ${recipients}\n` : "";
+  // For a thread, bodyText is already a rendered, per-message-cleaned transcript
+  // (cleaning it again would cut at quote markers and drop later messages); for a
+  // single email, clean it here. Threads get more room.
+  const body = opts.isThread ? msg.bodyText.slice(0, 14000) : cleanBody(msg.bodyText).slice(0, 8000);
+  const threadHint = opts.isThread ? "[EMAIL THREAD — messages below in chronological order]\n" : "";
   const user =
     `From: ${msg.fromName} <${msg.fromAddr}>\n${youLine}${toLine}Subject: ${msg.subject}\n` +
     `Date: ${isoDay(msg.date)}\nToday: ${isoDay(Math.floor(Date.now() / 1000))}\n\n` +
-    `${cleanBody(msg.bodyText).slice(0, 8000)}`;
+    `${threadHint}${body}`;
   try {
     const out = (await chat(SYSTEM, user)) as string;
     const p = extractJson(out) as { promote?: unknown; categories?: unknown; note?: unknown };

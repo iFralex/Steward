@@ -22,12 +22,16 @@ export function buildNote(args: {
   accountLabel: string;
   distilled: DistilledNote;
   categories: string[];
+  threadId?: number;
+  messageIds?: string[];
 }): { filename: string; content: string } {
-  const { msg, accountLabel, distilled, categories } = args;
+  const { msg, accountLabel, distilled, categories, threadId, messageIds } = args;
   const from = msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr;
   const fm = [
     "---",
     `source: message://${msg.messageId}`,
+    ...(threadId != null ? [`thread: thread://${threadId}`] : []),
+    ...(messageIds && messageIds.length > 1 ? [`messages: [${messageIds.join(", ")}]`] : []),
     `subject: ${msg.subject}`,
     `from: ${from}`,
     `date: ${new Date(msg.date * 1000).toISOString()}`,
