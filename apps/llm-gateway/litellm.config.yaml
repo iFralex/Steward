@@ -1,84 +1,53 @@
 # LiteLLM gateway. Run: litellm --config litellm.config.yaml --port 4000
 #
 # Public namespace = a CAPABILITY LADDER, vendor-agnostic:
-#   tier-1 (weak local) ... tier-6 (strongest, Claude Opus on the subscription).
+#   tier-1 (weak local) ... tier-6 (strongest paid).
 # Callers pick a tier number; the real models live ONLY here.
 #
-# Within a tier: several COMPARABLE models as multiple deployments. The router
-# load-balances across them (simple-shuffle) and, on error/rate-limit, fails
-# over to another model in the same tier (num_retries + cooldown park the bad
-# one). Across tiers: on failure a tier ESCALATES UP to more capable, more
-# reliable tiers (tier-1 -> ... -> tier-6), so a flaky free tier never degrades
-# to a weaker (wrong) answer — it climbs to the subscription backstop.
-# Embeddings are a separate axis: `local-embed`.
+# Workhorse: DeepSeek V4 Flash (paid, ~$0.14/$0.28 per 1M in/out, prompt caching).
+# Empirically it handles every mail task RELIABLY and cheaply — role-classify
+# 18/18, and the combined triage (classify+distil in one call) makes faithful,
+# specific notes with zero hallucination at ~$0.00016/call. The previous free
+# OpenRouter tiers were unreliable (rate-limits + mismatches) and the Claude
+# subscription tiers are retired here in favour of this cheap paid API.
 #
-# Swap/extend a tier by editing only its block here. Free OpenRouter models
-# rotate often; refresh from https://openrouter.ai/api/v1/models (pricing=0).
+# Across tiers: on failure a tier ESCALATES UP to a stronger/more reliable tier
+# (tier-1 -> ... -> tier-6), then sweeps the lower tiers, so a request tries
+# every rung before giving up. Embeddings are a separate axis: `local-embed`.
+#
+# Swap/extend a tier by editing only its block here. DeepSeek model ids live at
+# https://api.deepseek.com; LiteLLM routes `deepseek/*` there via DEEPSEEK_API_KEY.
 model_list:
-  # --- tier-1: weak/cheap, always-available local + tiny free fallbacks ---
+  # --- tier-1: weak/cheap, always-available local (offline backstop) ---
   - model_name: tier-1
     litellm_params:
       model: ollama/llama3.2:1b
       api_base: http://127.0.0.1:11434
-  - model_name: tier-1
-    litellm_params:
-      model: openrouter/meta-llama/llama-3.2-3b-instruct:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: tier-1
-    litellm_params:
-      model: openrouter/nvidia/nemotron-nano-9b-v2:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
 
-  # --- tier-2: mid free API (~20-31B) ---
+  # --- tier-2..5: DeepSeek V4 Flash — the reliable cheap workhorse ---
+  # (Mail-promoter triage defaults to tier-5; role-classify uses tier-2.)
   - model_name: tier-2
     litellm_params:
-      model: openrouter/google/gemma-4-31b-it:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: tier-2
-    litellm_params:
-      model: openrouter/openai/gpt-oss-20b:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: tier-2
-    litellm_params:
-      model: openrouter/google/gemma-4-26b-a4b-it:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-
-  # --- tier-3: large free API (~70-550B) ---
+      model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
   - model_name: tier-3
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: tier-3
-    litellm_params:
-      model: openrouter/openai/gpt-oss-120b:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: tier-3
-    litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-  - model_name: tier-3
-    litellm_params:
-      model: openrouter/meta-llama/llama-3.3-70b-instruct:free
-      api_key: os.environ/OPENROUTER_API_KEY_1
-
-  # --- tier-4/5/6: Claude on the subscription, via the Agent-SDK adapter ---
-  # The adapter (apps/llm-gateway/src/adapter.ts) runs WITHOUT ANTHROPIC_API_KEY
-  # and maps these aliases to real Claude ids. api_key is a placeholder LiteLLM needs.
+      model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
   - model_name: tier-4
     litellm_params:
-      model: openai/claude-haiku-sub
-      api_base: http://127.0.0.1:4001/v1
-      api_key: "sub-adapter-ignored"
+      model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
   - model_name: tier-5
     litellm_params:
-      model: openai/claude-sonnet-sub
-      api_base: http://127.0.0.1:4001/v1
-      api_key: "sub-adapter-ignored"
+      model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # --- tier-6: DeepSeek V4 Pro — top rung for the hardest cases / escalation ---
   - model_name: tier-6
     litellm_params:
-      model: openai/claude-opus-sub
-      api_base: http://127.0.0.1:4001/v1
-      api_key: "sub-adapter-ignored"
+      model: deepseek/deepseek-v4-pro
+      api_key: os.environ/DEEPSEEK_API_KEY
 
   # --- embeddings (separate axis, not a capability tier) ---
   - model_name: local-embed

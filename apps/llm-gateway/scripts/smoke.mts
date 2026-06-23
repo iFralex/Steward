@@ -1,5 +1,5 @@
 // apps/llm-gateway/scripts/smoke.mts
-// Live smoke of the running gateway. Needs LiteLLM up + Ollama up + OpenRouter keys.
+// Live smoke of the running gateway. Needs LiteLLM up + Ollama up + DEEPSEEK_API_KEY.
 // Run: node --import tsx scripts/smoke.mts
 import { extractJson } from "../src/extract-json.ts";
 
@@ -23,7 +23,7 @@ async function chat(): Promise<void> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model: "api-default",
+      model: "tier-2",
       messages: [{ role: "user", content: 'Reply with ONLY this JSON: {"ok": true}' }],
     }),
   });
@@ -31,10 +31,10 @@ async function chat(): Promise<void> {
   const text = data.choices?.[0]?.message?.content ?? "";
   try {
     const parsed = extractJson(text) as { ok?: boolean };
-    if (res.ok && parsed.ok === true) console.log("[api-default] OK — JSON round-trip via OpenRouter");
-    else { console.error(`[api-default] FAIL — status ${res.status}, body: ${text.slice(0, 120)}`); failed = true; }
+    if (res.ok && parsed.ok === true) console.log("[tier-2] OK — JSON round-trip");
+    else { console.error(`[tier-2] FAIL — status ${res.status}, body: ${text.slice(0, 120)}`); failed = true; }
   } catch (e) {
-    console.error(`[api-default] FAIL — could not extract JSON: ${(e as Error).message}; body: ${text.slice(0, 120)}`);
+    console.error(`[tier-2] FAIL — could not extract JSON: ${(e as Error).message}; body: ${text.slice(0, 120)}`);
     failed = true;
   }
 }
