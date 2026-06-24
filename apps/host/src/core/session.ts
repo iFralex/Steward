@@ -12,11 +12,11 @@ export type Emit = (event: ServerEvent) => void;
 export class Session {
   readonly id = randomUUID();
   /**
-   * The Agent SDK session id of the last turn, used to `resume` the
-   * conversation on the next turn so the agent keeps its memory across
-   * messages (each turn is otherwise a fresh `query()`).
+   * The live Pi runtime for this connection (built lazily on the first turn).
+   * Reused across turns so conversation memory is inherent. `pi.close()` tears
+   * down the agent session and its MCP clients.
    */
-  lastSessionId?: string;
+  pi?: { prompt(text: string): Promise<void>; followUp(text: string): Promise<void>; subscribe(l: (e: any) => void): () => void; close(): Promise<void> };
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
 
   constructor(

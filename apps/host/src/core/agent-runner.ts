@@ -1,60 +1,79 @@
 /**
- * Agent runner — wraps the Claude Agent SDK `query()` for one turn,
- * wiring the permission gate (deterministic tool approval) and the MCP
- * servers, and translating the SDK message stream into channel events.
- *
- * We reuse the SDK's agent loop; we do not hand-roll it.
+ * Pi-based agent runner. One live AgentSession per host Session, reused across
+ * turns (memory is inherent). Tools = the MCP servers bridged in and
+ * gate-wrapped; model = the gateway tier. Pi events map to channel events.
  */
-import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
+import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { buildMcpBridge, type McpBridge } from "./mcp-bridge.ts";
+import { gateToolDefinition } from "./permission-gate.ts";
+import { registerGatewayModel } from "./pi-provider.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 
-/** Run a single user turn through the agent, emitting channel events. */
-export async function runTurn(
-  config: HostConfig,
-  session: Session,
-  emit: Emit,
-  prompt: string,
-): Promise<void> {
-  // TODO(host-pi-migration Task 4): this Agent-SDK runner is being replaced by the Pi runner; gate moved to gateToolDefinition (permission-gate.ts).
+export interface PiRuntime {
+  session: AgentSession;
+  bridge: McpBridge;
+  close(): Promise<void>;
+}
+
+/** Build the Pi runtime (provider + bridge + gate-wrapped tools + session). */
+export async function buildPiRuntime(config: HostConfig, hostSession: Session): Promise<PiRuntime> {
+  const { modelRegistry, model } = registerGatewayModel(config.gateway);
+  const bridge = await buildMcpBridge(config.mcpServers);
+
+  let piSession: AgentSession;
+  const tools = bridge.tools.map((def) =>
+    gateToolDefinition(def, config.policy, hostSession.requestApproval, () => piSession),
+  );
+
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: process.cwd(),
+    agentDir: process.cwd(),
+    systemPrompt: config.systemPrompt,
+    noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true, noExtensions: true,
+  });
+  await resourceLoader.reload();
+
+  const created = await createAgentSession({
+    model, modelRegistry, resourceLoader,
+    sessionManager: SessionManager.inMemory(),
+    noTools: "builtin",
+    customTools: tools,
+  });
+  piSession = created.session;
+
+  return {
+    session: piSession,
+    bridge,
+    close: async () => { piSession.dispose(); await bridge.close(); },
+  };
+}
+
+/** Run one user turn through the agent, emitting channel events. */
+export async function runTurn(config: HostConfig, session: Session, emit: Emit, prompt: string): Promise<void> {
+  if (!session.pi) {
+    const runtime = await buildPiRuntime(config, session);
+    const unsub = runtime.session.subscribe((e: any) => {
+      if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
+        if (e.assistantMessageEvent.delta) emit({ type: "assistant_token", sessionId: session.id, text: e.assistantMessageEvent.delta });
+      } else if (e.type === "tool_execution_start") {
+        emit({ type: "tool_call", sessionId: session.id, tool: e.toolName, input: {} });
+      }
+    });
+    session.pi = {
+      prompt: (t) => runtime.session.prompt(t),
+      followUp: (t) => runtime.session.followUp(t),
+      subscribe: runtime.session.subscribe.bind(runtime.session),
+      close: async () => { unsub(); await runtime.close(); },
+    };
+  }
 
   emit({ type: "status", sessionId: session.id, state: "running" });
   try {
-    const options: Options = {
-      model: config.model,
-      systemPrompt: config.systemPrompt,
-      mcpServers: config.mcpServers,
-      // Hide account connectors (Gmail/Google) the SDK exposes from the login;
-      // the policy's deny-prefixes are the deterministic backstop.
-      disallowedTools: config.disallowedTools,
-      // Isolation: do NOT inherit the user's Claude Code settings/permissions.
-      settingSources: [],
-      permissionMode: "default",
-      // Keep conversation memory across turns by resuming the prior session.
-      ...(session.lastSessionId ? { resume: session.lastSessionId } : {}),
-    };
-
-    for await (const message of query({ prompt, options })) {
-      if ("session_id" in message && typeof message.session_id === "string") {
-        session.lastSessionId = message.session_id;
-      }
-      if (message.type === "assistant") {
-        for (const block of message.message.content) {
-          if (block.type === "text") {
-            if (block.text) emit({ type: "assistant_token", sessionId: session.id, text: block.text });
-          } else if (block.type === "tool_use") {
-            emit({ type: "tool_call", sessionId: session.id, tool: block.name, input: block.input });
-          }
-        }
-      }
-    }
+    await session.pi.prompt(prompt);
     emit({ type: "assistant_done", sessionId: session.id });
   } catch (err) {
-    emit({
-      type: "error",
-      sessionId: session.id,
-      message: err instanceof Error ? err.message : String(err),
-    });
+    emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
   } finally {
     emit({ type: "status", sessionId: session.id, state: "idle" });
   }
