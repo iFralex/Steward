@@ -31,7 +31,7 @@ const DEFAULT_SYSTEM_PROMPT = [
 export function loadConfig(): HostConfig {
   const llmWikiMcpEntry =
     process.env.LLM_WIKI_MCP_ENTRY ??
-    fileURLToPath(new URL("../../llm-wiki/mcp-server/dist/index.js", import.meta.url));
+    fileURLToPath(new URL("../../llm-wiki/mcp-server/dist/src/index.js", import.meta.url));
   const mailMcpEntry =
     process.env.MAIL_MCP_ENTRY ?? fileURLToPath(new URL("../../mail-mcp/src/index.ts", import.meta.url));
   const calendarMcpEntry =

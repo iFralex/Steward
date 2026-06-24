@@ -24,23 +24,36 @@ export async function buildMcpBridge(specs: Record<string, McpServerSpec>): Prom
   for (const [server, spec] of Object.entries(specs)) {
     const transport = new StdioClientTransport({ command: spec.command, args: spec.args });
     const client = new Client({ name: `host-${server}`, version: "0.0.0" });
-    await client.connect(transport);
-    clients.push(client);
-
-    const { tools: mcpTools } = await client.listTools();
-    for (const t of mcpTools) {
-      const bareName = t.name;
-      tools.push({
-        name: `mcp__${server}__${bareName}`,
-        label: bareName,
-        description: t.description ?? bareName,
-        parameters: (t.inputSchema ?? { type: "object", properties: {} }) as any,
-        prepareArguments: (a: unknown) => a as any,
-        execute: async (_id: string, params: any) => {
-          const res: any = await client.callTool({ name: bareName, arguments: params ?? {} });
-          return { content: res.content ?? [{ type: "text", text: "" }], details: {} };
-        },
-      } as ToolDefinition);
+    // A connector that dies must not take down the whole host: swallow async
+    // transport errors and skip a server that fails to start, keeping the rest.
+    client.onerror = (err) => console.warn(`[mcp-bridge] ${server}: ${err?.message ?? err}`);
+    try {
+      await client.connect(transport);
+      const { tools: mcpTools } = await client.listTools();
+      clients.push(client);
+      for (const t of mcpTools) {
+        const bareName = t.name;
+        tools.push({
+          name: `mcp__${server}__${bareName}`,
+          label: bareName,
+          description: t.description ?? bareName,
+          parameters: (t.inputSchema ?? { type: "object", properties: {} }) as any,
+          prepareArguments: (a: unknown) => a as any,
+          execute: async (_id: string, params: any) => {
+            const res: any = await client.callTool({ name: bareName, arguments: params ?? {} });
+            return { content: res.content ?? [{ type: "text", text: "" }], details: {} };
+          },
+        } as ToolDefinition);
+      }
+    } catch (err) {
+      console.warn(
+        `[mcp-bridge] skipping server "${server}" (${err instanceof Error ? err.message : String(err)})`,
+      );
+      try {
+        await client.close();
+      } catch {
+        /* already gone */
+      }
     }
   }
 
