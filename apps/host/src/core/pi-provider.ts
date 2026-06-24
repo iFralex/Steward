@@ -22,7 +22,7 @@ export function registerGatewayModel(cfg: GatewayConfig): { modelRegistry: Model
     name: "LLM Gateway",
     baseUrl: cfg.baseUrl,
     apiKey: cfg.apiKey,
-    api: "openai-completions" as never,
+    api: "openai-completions",
     models: [{
       id: cfg.tier,
       name: cfg.tier,
