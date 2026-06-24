@@ -36,13 +36,13 @@ export function gateToolDefinition(
 ): ToolDefinition {
   return {
     ...def,
-    execute: async (id: string, params: unknown) => {
+    execute: async (id: string, params: unknown, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => {
       const decision = decideTool(policy, def.name);
       if (decision === "deny") {
         return blocked(`Tool ${def.name} is disabled. Use Apple Mail (mail tools) for email.`);
       }
       if (decision === "allow") {
-        return def.execute(id, params as never);
+        return def.execute(id, params as never, signal as never, onUpdate as never, ctx as never);
       }
       // gate → ask the user
       const outcome = await requestApproval({ tool: def.name, input: toRecord(params) });
@@ -54,7 +54,7 @@ export function gateToolDefinition(
       if (outcome.note?.trim()) {
         await getSession().followUp(`User note: ${outcome.note.trim()}`);
       }
-      return def.execute(id, args as never);
+      return def.execute(id, args as never, signal as never, onUpdate as never, ctx as never);
     },
   };
 }

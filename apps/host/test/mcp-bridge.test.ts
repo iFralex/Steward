@@ -11,7 +11,7 @@ test("bridges MCP tools with mcp__<server>__<tool> names and routes calls", asyn
     const names = bridge.tools.map((t) => t.name);
     assert.ok(names.includes("mcp__echo__echo"), `got ${names.join(",")}`);
     const tool = bridge.tools.find((t) => t.name === "mcp__echo__echo")!;
-    const res: any = await tool.execute("call-1", { msg: "hi" });
+    const res: any = await tool.execute("call-1", { msg: "hi" }, undefined, undefined, {} as any);
     assert.match(res.content[0].text, /hi/);
   } finally {
     await bridge.close();

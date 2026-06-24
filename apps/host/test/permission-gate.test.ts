@@ -18,7 +18,7 @@ const denyAll: RequestApproval = async () => ({ decision: "deny", note: "nope" }
 test("allow tool runs without approval", async () => {
   const calls: any[] = [];
   const t = gateToolDefinition(fakeTool("read", calls), policy, denyAll, noFollowUp);
-  const res: any = await t.execute("1", { a: 1 });
+  const res: any = await t.execute("1", { a: 1 }, undefined, undefined, {} as any);
   assert.equal(res.content[0].text, "RAN");
   assert.deepEqual(calls, [{ a: 1 }]);
 });
@@ -26,7 +26,7 @@ test("allow tool runs without approval", async () => {
 test("deny tool never runs", async () => {
   const calls: any[] = [];
   const t = gateToolDefinition(fakeTool("banned", calls), policy, denyAll, noFollowUp);
-  const res: any = await t.execute("1", {});
+  const res: any = await t.execute("1", {}, undefined, undefined, {} as any);
   assert.match(res.content[0].text, /disabled/);
   assert.equal(calls.length, 0);
 });
@@ -34,7 +34,7 @@ test("deny tool never runs", async () => {
 test("gated tool blocked on user deny, with note", async () => {
   const calls: any[] = [];
   const t = gateToolDefinition(fakeTool("send", calls), policy, denyAll, noFollowUp);
-  const res: any = await t.execute("1", {});
+  const res: any = await t.execute("1", {}, undefined, undefined, {} as any);
   assert.match(res.content[0].text, /NOT DONE/);
   assert.match(res.content[0].text, /nope/);
   assert.equal(calls.length, 0);
@@ -45,7 +45,7 @@ test("gated tool runs on approval; note delivered as follow-up; edited args used
   const followUps: string[] = [];
   const approve: RequestApproval = async () => ({ decision: "allow", note: "ok cc boss", editedInput: { a: 2 } });
   const t = gateToolDefinition(fakeTool("send", calls), policy, approve, () => ({ followUp: async (x) => { followUps.push(x); } }));
-  const res: any = await t.execute("1", { a: 1 });
+  const res: any = await t.execute("1", { a: 1 }, undefined, undefined, {} as any);
   assert.equal(res.content[0].text, "RAN");
   assert.deepEqual(calls, [{ a: 2 }]);
   assert.deepEqual(followUps, ["User note: ok cc boss"]);
