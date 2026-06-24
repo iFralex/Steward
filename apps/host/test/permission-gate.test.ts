@@ -1,61 +1,52 @@
-import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { HookInput, PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
-import { createPreToolUseGate, type ApprovalRequest } from "../src/core/permission-gate.ts";
+import assert from "node:assert/strict";
+import { gateToolDefinition, type RequestApproval } from "../src/core/permission-gate.ts";
 import type { ToolPolicy } from "../src/core/tool-policy.ts";
 
-const policy: ToolPolicy = { default: "gate", rules: { WebSearch: "allow" } };
-const hookOpts = { signal: new AbortController().signal };
+const policy: ToolPolicy = { default: "gate", rules: { read: "allow", banned: "deny" } };
 
-function input(toolName: string, toolInput: unknown): HookInput {
+function fakeTool(name: string, calls: any[]) {
   return {
-    hook_event_name: "PreToolUse",
-    tool_name: toolName,
-    tool_input: toolInput,
-    tool_use_id: "t1",
-  } as unknown as PreToolUseHookInput;
+    name, label: name, description: name,
+    parameters: { type: "object", properties: {} } as any,
+    execute: async (_id: string, params: any) => { calls.push(params); return { content: [{ type: "text", text: "RAN" }], details: {} }; },
+  } as any;
 }
+const noFollowUp = () => ({ followUp: async () => {} });
+const denyAll: RequestApproval = async () => ({ decision: "deny", note: "nope" });
 
-interface HookOut {
-  hookSpecificOutput?: {
-    permissionDecision?: string;
-    permissionDecisionReason?: string;
-    additionalContext?: string;
-  };
-}
-
-test("allow-listed tool is allowed without asking", async () => {
-  let asked = false;
-  const gate = createPreToolUseGate(policy, async () => {
-    asked = true;
-    return { decision: "allow" };
-  });
-  const out = (await gate(input("WebSearch", { q: "hi" }), "t1", hookOpts)) as HookOut;
-  assert.equal(out.hookSpecificOutput?.permissionDecision, "allow");
-  assert.equal(asked, false);
+test("allow tool runs without approval", async () => {
+  const calls: any[] = [];
+  const t = gateToolDefinition(fakeTool("read", calls), policy, denyAll, noFollowUp);
+  const res: any = await t.execute("1", { a: 1 });
+  assert.equal(res.content[0].text, "RAN");
+  assert.deepEqual(calls, [{ a: 1 }]);
 });
 
-test("gated tool asks, and is allowed on user allow", async () => {
-  const seen: ApprovalRequest[] = [];
-  const gate = createPreToolUseGate(policy, async (req) => {
-    seen.push(req);
-    return { decision: "allow" };
-  });
-  const out = (await gate(input("Bash", { command: "ls" }), "t1", hookOpts)) as HookOut;
-  assert.equal(out.hookSpecificOutput?.permissionDecision, "allow");
-  assert.deepEqual(seen, [{ tool: "Bash", input: { command: "ls" } }]);
+test("deny tool never runs", async () => {
+  const calls: any[] = [];
+  const t = gateToolDefinition(fakeTool("banned", calls), policy, denyAll, noFollowUp);
+  const res: any = await t.execute("1", {});
+  assert.match(res.content[0].text, /disabled/);
+  assert.equal(calls.length, 0);
 });
 
-test("user note on allow reaches the model as additional context", async () => {
-  const gate = createPreToolUseGate(policy, async () => ({ decision: "allow", note: "use prod" }));
-  const out = (await gate(input("Bash", {}), "t1", hookOpts)) as HookOut;
-  assert.equal(out.hookSpecificOutput?.permissionDecision, "allow");
-  assert.match(out.hookSpecificOutput?.additionalContext ?? "", /use prod/);
+test("gated tool blocked on user deny, with note", async () => {
+  const calls: any[] = [];
+  const t = gateToolDefinition(fakeTool("send", calls), policy, denyAll, noFollowUp);
+  const res: any = await t.execute("1", {});
+  assert.match(res.content[0].text, /NOT DONE/);
+  assert.match(res.content[0].text, /nope/);
+  assert.equal(calls.length, 0);
 });
 
-test("gated tool is denied (with note) on user deny", async () => {
-  const gate = createPreToolUseGate(policy, async () => ({ decision: "deny", note: "wrong recipient" }));
-  const out = (await gate(input("send_email", {}), "t1", hookOpts)) as HookOut;
-  assert.equal(out.hookSpecificOutput?.permissionDecision, "deny");
-  assert.match(out.hookSpecificOutput?.permissionDecisionReason ?? "", /wrong recipient/);
+test("gated tool runs on approval; note delivered as follow-up; edited args used", async () => {
+  const calls: any[] = [];
+  const followUps: string[] = [];
+  const approve: RequestApproval = async () => ({ decision: "allow", note: "ok cc boss", editedInput: { a: 2 } });
+  const t = gateToolDefinition(fakeTool("send", calls), policy, approve, () => ({ followUp: async (x) => { followUps.push(x); } }));
+  const res: any = await t.execute("1", { a: 1 });
+  assert.equal(res.content[0].text, "RAN");
+  assert.deepEqual(calls, [{ a: 2 }]);
+  assert.deepEqual(followUps, ["User note: ok cc boss"]);
 });

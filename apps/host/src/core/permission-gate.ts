@@ -1,16 +1,10 @@
 /**
- * Permission gate — the deterministic enforcement point, implemented as a
- * Claude Agent SDK **PreToolUse hook**. The hook fires before EVERY tool
- * execution (unlike `canUseTool`, which the SDK's `default` permission
- * mode only consults for operations it itself deems "dangerous" — so a
- * "safe" Bash command would otherwise run un-gated). The hook returns a
- * `permissionDecision` of `allow` / `deny`, which the SDK honours,
- * independent of the model's output or the SDK's own heuristics.
- *
- * The user interaction is injected as `requestApproval` so the gate stays
- * pure and testable.
+ * Deterministic tool gate, enforced by wrapping a tool's execute. Runs
+ * decideTool before any side effect: deny → blocked result (tool never runs);
+ * gate → await the user's approval; allow → run. Independent of model output.
+ * requestApproval is injected so the wrapper stays pure/testable.
  */
-import type { HookCallback, HookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ApprovalDecision } from "@llm-wiki/protocol";
 import { decideTool, type ToolPolicy } from "./tool-policy.ts";
 
@@ -21,67 +15,54 @@ export interface ApprovalRequest {
 
 export interface ApprovalOutcome {
   decision: ApprovalDecision;
-  /** Optional note from the user; surfaced to the agent either way. */
+  /** Optional user note; surfaced to the model on deny, or as a follow-up on allow. */
   note?: string;
+  /** Optional corrected args (approve-with-edit); replaces the call's input. */
+  editedInput?: Record<string, unknown>;
 }
 
 export type RequestApproval = (req: ApprovalRequest) => Promise<ApprovalOutcome>;
 
-/**
- * Build the PreToolUse hook. `allow` tools proceed immediately; `gate`
- * tools block on `requestApproval` and only proceed on an explicit user
- * allow. The user's note reaches the agent as additional context (allow)
- * or as the denial reason (deny).
- */
-export function createPreToolUseGate(
-  policy: ToolPolicy,
-  requestApproval: RequestApproval,
-): HookCallback {
-  return async (input): Promise<HookJSONOutput> => {
-    if (input.hook_event_name !== "PreToolUse") return {};
-
-    const toolName = input.tool_name;
-    const decision = decideTool(policy, toolName);
-    if (decision === "allow") {
-      return allow();
-    }
-    if (decision === "deny") {
-      // Hard deny — never prompt the user. Steer the agent back to Apple Mail.
-      return {
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "deny",
-          permissionDecisionReason: `Tool ${toolName} is disabled. Use Apple Mail (mcp__mail__*) for email.`,
-        },
-      };
-    }
-
-    const outcome = await requestApproval({ tool: toolName, input: toRecord(input.tool_input) });
-    if (outcome.decision === "allow") {
-      return allow(outcome.note);
-    }
-    return {
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: outcome.note?.trim() || `Denied by user: ${toolName}`,
-      },
-    };
-  };
+/** Minimal view of the live Pi session the gate needs (for allow-notes). */
+export interface FollowUpSink {
+  followUp(text: string): Promise<void>;
 }
 
-function allow(note?: string): HookJSONOutput {
+export function gateToolDefinition(
+  def: ToolDefinition,
+  policy: ToolPolicy,
+  requestApproval: RequestApproval,
+  getSession: () => FollowUpSink,
+): ToolDefinition {
   return {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow",
-      ...(note?.trim() ? { additionalContext: `User note: ${note.trim()}` } : {}),
+    ...def,
+    execute: async (id: string, params: unknown) => {
+      const decision = decideTool(policy, def.name);
+      if (decision === "deny") {
+        return blocked(`Tool ${def.name} is disabled. Use Apple Mail (mail tools) for email.`);
+      }
+      if (decision === "allow") {
+        return def.execute(id, params as never);
+      }
+      // gate → ask the user
+      const outcome = await requestApproval({ tool: def.name, input: toRecord(params) });
+      if (outcome.decision !== "allow") {
+        const why = outcome.note?.trim() ? `: ${outcome.note.trim()}` : "";
+        return blocked(`NOT DONE — denied by user${why}. Do not retry; propose an alternative.`);
+      }
+      const args = outcome.editedInput ?? (params as Record<string, unknown>);
+      if (outcome.note?.trim()) {
+        await getSession().followUp(`User note: ${outcome.note.trim()}`);
+      }
+      return def.execute(id, args as never);
     },
   };
 }
 
+function blocked(text: string) {
+  return { content: [{ type: "text" as const, text }], details: {} };
+}
+
 function toRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
