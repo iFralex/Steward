@@ -34,7 +34,11 @@ export function startServer(config: HostConfig): WebSocketServer {
           void runTurn(config, session, emit, msg.text);
           break;
         case "approval_decision":
-          session.resolveApproval(msg.requestId, { decision: msg.decision, note: msg.note });
+          session.resolveApproval(msg.requestId, {
+            decision: msg.decision,
+            note: msg.note,
+            editedInput: msg.editedInput,
+          });
           break;
       }
     });

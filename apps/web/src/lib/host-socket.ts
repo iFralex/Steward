@@ -33,7 +33,12 @@ export interface HostSocket {
   messages: ChatMessage[];
   approvals: PendingApproval[];
   sendMessage: (text: string) => void;
-  respondApproval: (requestId: string, decision: ApprovalDecision, note?: string) => void;
+  respondApproval: (
+    requestId: string,
+    decision: ApprovalDecision,
+    note?: string,
+    editedInput?: Record<string, unknown>,
+  ) => void;
 }
 
 export function useHostSocket(url: string): HostSocket {
@@ -109,9 +114,21 @@ export function useHostSocket(url: string): HostSocket {
   );
 
   const respondApproval = useCallback(
-    (requestId: string, decision: ApprovalDecision, note?: string) => {
+    (
+      requestId: string,
+      decision: ApprovalDecision,
+      note?: string,
+      editedInput?: Record<string, unknown>,
+    ) => {
       setApprovals((prev) => prev.filter((a) => a.requestId !== requestId));
-      send({ type: "approval_decision", sessionId: sessionRef.current, requestId, decision, note });
+      send({
+        type: "approval_decision",
+        sessionId: sessionRef.current,
+        requestId,
+        decision,
+        note,
+        editedInput,
+      });
     },
     [send],
   );

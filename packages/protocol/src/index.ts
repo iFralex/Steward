@@ -18,6 +18,12 @@ export type ClientEvent =
       decision: ApprovalDecision;
       /** Optional note shown to the agent when denying (why / what to do instead). */
       note?: string;
+      /**
+       * Optional corrected tool arguments (approve-with-edit): when the user
+       * approves but tweaks the payload, the tool runs with this instead of the
+       * originally-requested input. Ignored on deny.
+       */
+      editedInput?: Record<string, unknown>;
     };
 
 /** Messages the core sends OUT to a channel. */

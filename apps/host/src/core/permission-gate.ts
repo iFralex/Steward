@@ -50,9 +50,8 @@ export function gateToolDefinition(
         const why = outcome.note?.trim() ? `: ${outcome.note.trim()}` : "";
         return blocked(`NOT DONE — denied by user${why}. Do not retry; propose an alternative.`);
       }
-      // Forward-looking: the approval protocol/UI does not yet supply
-      // editedInput (deferred — see spec §4.2), so today it is honored if
-      // present but is always undefined in practice.
+      // Approve-with-edit: the approval card may return corrected arguments
+      // (carried by approval_decision.editedInput); run the tool with those.
       const args = outcome.editedInput ?? (params as Record<string, unknown>);
       if (outcome.note?.trim()) {
         await getSession().followUp(`User note: ${outcome.note.trim()}`);
