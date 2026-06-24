@@ -29,7 +29,7 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
   const resourceLoader = new DefaultResourceLoader({
     cwd: process.cwd(),
     agentDir: process.cwd(),
-    systemPrompt: config.systemPrompt,
+    systemPromptOverride: () => config.systemPrompt,
     noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true, noExtensions: true,
   });
   await resourceLoader.reload();
