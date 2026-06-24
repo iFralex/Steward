@@ -1,6 +1,8 @@
 #!/usr/bin/env -S node --import tsx
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Store } from "../../mail-mirror/src/store.ts";
 import { dbPath } from "../../mail-mirror/src/paths.ts";
 import { LlmWikiApiClient } from "../../llm-wiki/mcp-server/src/api-client.ts";
@@ -9,14 +11,25 @@ import { stateDbPath } from "./paths.ts";
 import { loadConfig } from "./config.ts";
 import { gatewayChat } from "./llm.ts";
 import { runBatch, type RunDeps } from "./run.ts";
+import { makeFsWikiPromoter } from "./wiki.ts";
 import { evaluate, type LabelledItem } from "./eval.ts";
+
+/** The wiki project's sources dir — from env, else the desktop app's last-opened project. */
+function resolveSourcesDir(): string {
+  if (process.env.MAIL_PROMOTER_WIKI_SOURCES_DIR) return process.env.MAIL_PROMOTER_WIKI_SOURCES_DIR;
+  const stateFile = join(homedir(), "Library/Application Support/com.llmwiki.app/app-state.json");
+  const st = JSON.parse(readFileSync(stateFile, "utf8")) as { lastProject?: { path?: string }; currentProject?: { path?: string } };
+  const p = st.lastProject?.path ?? st.currentProject?.path;
+  if (!p) throw new Error("Cannot resolve the wiki project path; set MAIL_PROMOTER_WIKI_SOURCES_DIR");
+  return join(p, "raw", "sources");
+}
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
   const cfg = loadConfig();
   const store = Store.openReadonly(dbPath());
   const state = PromoteState.open(stateDbPath());
-  const wiki = new LlmWikiApiClient({ baseUrl: process.env.LLM_WIKI_API_BASE_URL });
+  const apiClient = new LlmWikiApiClient({ baseUrl: process.env.LLM_WIKI_API_BASE_URL });
   // The user's own email addresses across all mirrored accounts — lets triage
   // judge whether the user is personally involved (vs a passive list subscriber).
   const userAddrs = [
@@ -28,7 +41,7 @@ async function main(): Promise<void> {
     ),
   ];
   const deps: RunDeps = {
-    store, state, wiki,
+    store, state, wiki: apiClient,
     chat: gatewayChat({ endpoint: cfg.llmEndpoint, model: cfg.triageModel, apiKey: cfg.apiKey }),
     roleOf: (a, m) => store.roleForMailbox(a, m),
     accountLabelOf: (a) => (store.raw.prepare("SELECT emails FROM accounts WHERE uuid=?").get(a) as { emails: string } | undefined)?.emails ?? a,
@@ -39,17 +52,22 @@ async function main(): Promise<void> {
     // Usage: mail-promoter backfill [limit]   (concurrency via MAIL_PROMOTER_CONCURRENCY, default 10)
     const limit = process.argv[3] ? Number(process.argv[3]) : undefined;
     const concurrency = Number(process.env.MAIL_PROMOTER_CONCURRENCY ?? 10);
+    // Write notes straight to the project's sources dir on disk — the app need not
+    // be running during the backfill. Indexing is a single rescan afterwards.
+    const sourcesDir = resolveSourcesDir();
+    deps.wiki = makeFsWikiPromoter(sourcesDir);
     console.log(`promote backfill: limit=${limit ?? "all"} concurrency=${concurrency} model=${cfg.triageModel}`);
+    console.log(`promote backfill: writing notes to ${sourcesDir} (app can be closed)`);
     const t = await runBatch(deps, { limit, concurrency });
     console.log(`promote backfill: promoted ${t.promoted}, skipped ${t.skipped}, filtered ${t.filtered}, deferred ${t.deferred}`);
     if (t.promoted > 0) {
-      console.log("rescan: indicizzazione finale di tutte le note in un'unica passata...");
-      try { await wiki.rescan("current"); console.log("rescan: completato"); }
-      catch (e) { console.error(`rescan finale fallito (rilancia 'mail-promoter rescan'): ${(e as Error).message}`); }
+      console.log("rescan: open LLM Wiki, then run 'mail-promoter rescan' to index all notes in one pass.");
+      try { await apiClient.rescan("current"); console.log("rescan: completato"); }
+      catch { console.log("rescan: app non in esecuzione — riapri LLM Wiki e lancia 'mail-promoter rescan'."); }
     }
   } else if (cmd === "rescan") {
     console.log("rescan: indicizzazione di tutte le note nel progetto corrente...");
-    await wiki.rescan("current");
+    await apiClient.rescan("current");
     console.log("rescan: completato");
   } else if (cmd === "status") {
     const c = state.counts();
