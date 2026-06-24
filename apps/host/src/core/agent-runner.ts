@@ -59,6 +59,7 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
 export async function runTurn(config: HostConfig, session: Session, emit: Emit, prompt: string): Promise<void> {
   if (!session.pi) {
     const runtime = await buildPiRuntime(config, session);
+    if (session.closed) { await runtime.close(); return; }
     const unsub = runtime.session.subscribe((e: any) => {
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
         if (e.assistantMessageEvent.delta) emit({ type: "assistant_token", sessionId: session.id, text: e.assistantMessageEvent.delta });

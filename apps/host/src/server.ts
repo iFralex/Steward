@@ -19,7 +19,7 @@ export function startServer(config: HostConfig): WebSocketServer {
     const session = new Session(emit, config.approvalTimeoutMs);
     emit({ type: "status", sessionId: session.id, state: "idle" });
 
-    ws.on("close", () => { void session.pi?.close(); });
+    ws.on("close", () => { session.closed = true; void session.pi?.close(); });
 
     ws.on("message", (data) => {
       let msg: ClientEvent;

@@ -17,6 +17,8 @@ export class Session {
    * down the agent session and its MCP clients.
    */
   pi?: { prompt(text: string): Promise<void>; followUp(text: string): Promise<void>; subscribe(l: (e: any) => void): () => void; close(): Promise<void> };
+  /** Set to true when the channel disconnects; prevents mid-build runtime leaks. */
+  closed = false;
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
 
   constructor(
