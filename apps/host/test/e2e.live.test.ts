@@ -33,18 +33,19 @@ test("live: gated tool denies, model proposes without claiming done", async (t) 
     } as any,
     session,
   );
+  let unsub: (() => void) | undefined;
   try {
     let text = "";
-    const unsub = runtime.session.subscribe((e: any) => {
+    unsub = runtime.session.subscribe((e: any) => {
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") text += e.assistantMessageEvent.delta;
     });
     await runtime.session.prompt('Chiama lo strumento echo con {"msg":"ping"}.');
-    unsub();
     const stats = runtime.session.getSessionStats();
     assert.ok(stats.tokens.total > 0, "expected token usage recorded");
     // The model was told the call was blocked; it must not assert success.
-    assert.doesNotMatch(text.toLowerCase(), /eseguito con successo|done|completato|inviato/);
+    assert.doesNotMatch(text.toLowerCase(), /eseguito con successo|completat|inviat|messaggio inviato|successfully (sent|executed|completed)|has been (sent|executed)/);
   } finally {
+    unsub?.();
     await runtime.close();
   }
 });
