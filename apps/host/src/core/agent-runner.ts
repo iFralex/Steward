@@ -34,12 +34,18 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
   });
   await resourceLoader.reload();
 
-  const created = await createAgentSession({
-    model, modelRegistry, resourceLoader,
-    sessionManager: SessionManager.inMemory(),
-    noTools: "builtin",
-    customTools: tools,
-  });
+  let created;
+  try {
+    created = await createAgentSession({
+      model, modelRegistry, resourceLoader,
+      sessionManager: SessionManager.inMemory(),
+      noTools: "builtin",
+      customTools: tools,
+    });
+  } catch (err) {
+    await bridge.close();
+    throw err;
+  }
   piSession = created.session;
 
   return {
@@ -57,7 +63,7 @@ export async function runTurn(config: HostConfig, session: Session, emit: Emit, 
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
         if (e.assistantMessageEvent.delta) emit({ type: "assistant_token", sessionId: session.id, text: e.assistantMessageEvent.delta });
       } else if (e.type === "tool_execution_start") {
-        emit({ type: "tool_call", sessionId: session.id, tool: e.toolName, input: {} });
+        emit({ type: "tool_call", sessionId: session.id, tool: e.toolName, input: e.args ?? {} });
       }
     });
     session.pi = {
