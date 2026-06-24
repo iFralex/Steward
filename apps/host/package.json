@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.179",
+    "@earendil-works/pi-coding-agent": "^0.80.2",
     "@llm-wiki/protocol": "*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ws": "^8.18.0",
     "zod": "^4.0.0"
   },
