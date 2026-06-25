@@ -43,7 +43,15 @@ export async function readDb(
     try {
       const out = await runScoped(readScript({ id: ref.id, messageId }));
       const detail = parseDetail(out);
-      if (detail.body && !detail.body.startsWith("[body unavailable")) {
+      // Only adopt the live body if it's actually richer than what the mirror
+      // has. Some mails (e.g. a ticket whose content is in PDF attachments) have
+      // an empty plain-text `content` live — don't let that clobber a good
+      // partial body the mirror already extracted.
+      if (
+        detail.body &&
+        !detail.body.startsWith("[body unavailable") &&
+        detail.body.trim().length > body.trim().length
+      ) {
         body = detail.body;
         bodyState = "full";
       }

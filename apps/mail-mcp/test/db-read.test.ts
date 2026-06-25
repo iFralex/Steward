@@ -67,6 +67,17 @@ test("readDb falls back to the partial mirror body when the live read fails", as
   s.close();
 });
 
+test("readDb keeps the richer mirror body when the live read is emptier (PDF-only ticket)", async () => {
+  const s = Store.open(":memory:");
+  const r: MessageRow = { ...row("rich@x", "none"), bodyState: "partial", bodyText: "A".repeat(4000) };
+  s.upsertMessage(r);
+  // Live content is basically empty (the real content is in PDF attachments).
+  const d = await readDb(s, { messageId: "rich@x" }, async () => liveOut("   "));
+  assert.equal(d.body.length, 4000, "must keep the richer mirror partial, not the empty live body");
+  assert.equal(d.bodyState, "partial");
+  s.close();
+});
+
 test("readDb keeps the partial body when the live read reports it unavailable", async () => {
   const s = Store.open(":memory:");
   const r: MessageRow = { ...row("u@x", "none"), bodyState: "partial", bodyText: "PARTIAL" };
