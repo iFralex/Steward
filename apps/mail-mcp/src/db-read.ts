@@ -1,6 +1,6 @@
 import type { Store } from "../../mail-mirror/src/store.ts";
 import { parseDetail } from "./parse.ts";
-import { scopedReadScript } from "./applescript.ts";
+import { readScript } from "./applescript.ts";
 import { runOsa } from "./osascript.ts";
 
 export interface MailDetail {
@@ -33,13 +33,15 @@ export async function readDb(
   let body = row.bodyText;
   let bodyState = row.bodyState;
   if (row.bodyState !== "full") {
-    // Try to complete the body with a live AppleScript read. If that fails
-    // (e.g. Gmail "Tutti i messaggi"/All Mail scoping, or the message isn't
-    // addressable live), fall back to the partial body already in the mirror
-    // instead of failing the whole read — a partial body is far more useful to
-    // the caller than "Message not found".
+    // Complete the body with a live read. Use the GLOBAL finder (readScript),
+    // which prefers Mail's indexed numeric `id` (`whose id is`, ~5s across every
+    // mailbox) and falls back to a global `whose message id is` scan. The old
+    // mailbox-scoped path matched the folder by name and failed on Gmail's
+    // "Tutti i messaggi"/All Mail (wrong name + unindexed scan → timeout).
+    // If the live read still fails, keep the mirror's partial body rather than
+    // failing the whole read — a partial body beats "Message not found".
     try {
-      const out = await runScoped(scopedReadScript(row.account, row.mailbox, messageId));
+      const out = await runScoped(readScript({ id: ref.id, messageId }));
       const detail = parseDetail(out);
       if (detail.body && !detail.body.startsWith("[body unavailable")) {
         body = detail.body;

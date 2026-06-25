@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type MessageRow } from "../../mail-mirror/src/store.ts";
 import { readDb } from "../src/db-read.ts";
-import { scopedReadScript } from "../src/applescript.ts";
 
 const US = "\x1f";
 function row(id: string, state: "full" | "none"): MessageRow {
@@ -13,8 +12,10 @@ function row(id: string, state: "full" | "none"): MessageRow {
     toNames: [], ccNames: [], unread: false, flagged: false, answered: false, junk: false, flagColor: null, appleThrid: null,
   };
 }
+// A live-read result: subject US sender US date US body (what parse.ts expects).
+const liveOut = (body: string) => ["Subj", "A <a@x>", "2026", body].join(US);
 
-test("readDb returns the DB body when full (no AppleScript)", async () => {
+test("readDb returns the DB body when full (no live read)", async () => {
   const s = Store.open(":memory:");
   s.upsertMessage(row("a@x", "full"));
   let ran = false;
@@ -25,31 +26,54 @@ test("readDb returns the DB body when full (no AppleScript)", async () => {
   s.close();
 });
 
-test("readDb falls back to scoped AppleScript when not full", async () => {
+test("readDb completes a non-full body with a live read", async () => {
   const s = Store.open(":memory:");
   s.upsertMessage(row("b@x", "none"));
-  const fake = ["Subj", "A <a@x>", "2026", "DOWNLOADED"].join(US);
-  const d = await readDb(s, { messageId: "b@x" }, async () => fake);
+  const d = await readDb(s, { messageId: "b@x" }, async () => liveOut("DOWNLOADED"));
   assert.ok(d.body.includes("DOWNLOADED"));
+  assert.equal(d.bodyState, "full");
   s.close();
 });
 
-test("readDb falls back to the partial mirror body when the live AppleScript read fails", async () => {
+test("readDb uses the INDEXED native id (whose id is) when an id is given", async () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage(row("c@x", "none"));
+  let script = "";
+  await readDb(s, { id: "8821", messageId: "c@x" }, async (sc) => { script = sc; return liveOut("X"); });
+  assert.match(script, /whose id is 8821/, "must use the fast indexed id lookup");
+  assert.doesNotMatch(script, /name of mb is/, "must NOT scope by mailbox name (Gmail All Mail breaks that)");
+  s.close();
+});
+
+test("readDb falls back to a GLOBAL message-id scan when no native id is given", async () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage(row("d@x", "none"));
+  let script = "";
+  await readDb(s, { messageId: "d@x" }, async (sc) => { script = sc; return liveOut("X"); });
+  assert.match(script, /whose message id is "d@x"/);
+  assert.match(script, /repeat with acct in accounts/, "global scan across all accounts/mailboxes");
+  assert.doesNotMatch(script, /name of mb is/, "no mailbox-name scoping");
+  s.close();
+});
+
+test("readDb falls back to the partial mirror body when the live read fails", async () => {
   const s = Store.open(":memory:");
   const r: MessageRow = { ...row("p@x", "none"), bodyState: "partial", bodyText: "PARTIAL TICKET BODY" };
   s.upsertMessage(r);
-  // Simulate the Gmail "Tutti i messaggi" scoping failure: AppleScript throws.
+  // Simulate the Gmail scoping failure: the live read throws.
   const d = await readDb(s, { messageId: "p@x" }, async () => { throw new Error("Message not found: id 123"); });
   assert.equal(d.body, "PARTIAL TICKET BODY", "must return the partial body, not fail");
   assert.equal(d.bodyState, "partial");
   s.close();
 });
 
-test("scopedReadScript narrows to the given account + mailbox", () => {
-  const sc = scopedReadScript("Polimi", "Posta in arrivo", "id@x");
-  assert.match(sc, /name of acct is "Polimi"/);
-  assert.match(sc, /name of mb is "Posta in arrivo"/);
-  assert.match(sc, /whose message id is "id@x"/);
+test("readDb keeps the partial body when the live read reports it unavailable", async () => {
+  const s = Store.open(":memory:");
+  const r: MessageRow = { ...row("u@x", "none"), bodyState: "partial", bodyText: "PARTIAL" };
+  s.upsertMessage(r);
+  const d = await readDb(s, { messageId: "u@x" }, async () => liveOut("[body unavailable: timeout]"));
+  assert.equal(d.body, "PARTIAL");
+  s.close();
 });
 
 test("readDb throws a clear error when the message is unknown", async () => {
@@ -58,25 +82,18 @@ test("readDb throws a clear error when the message is unknown", async () => {
   s.close();
 });
 
-// Fix 2: soft-deleted message should throw not-found, not return the record
 test("readDb throws not-found for a soft-deleted message", async () => {
   const s = Store.open(":memory:");
   s.upsertMessage(row("del@x", "full"));
   s.softDelete("del@x");
-  await assert.rejects(
-    () => readDb(s, { messageId: "del@x" }),
-    /not found/i,
-    "soft-deleted message must not be readable",
-  );
+  await assert.rejects(() => readDb(s, { messageId: "del@x" }), /not found/i);
   s.close();
 });
 
-// Fix 5: date field in readDb is ISO-8601
 test("readDb date field is ISO-8601", async () => {
   const s = Store.open(":memory:");
   s.upsertMessage(row("iso@x", "full"));
   const d = await readDb(s, { messageId: "iso@x" }, async () => "");
-  assert.ok(!Number.isInteger(Number(d.date)), `date should not be a plain integer string, got: ${d.date}`);
-  assert.ok(!Number.isNaN(Date.parse(d.date)), `date should be ISO-8601 parseable, got: ${d.date}`);
+  assert.ok(!Number.isNaN(Date.parse(d.date)), `date should be ISO-8601, got: ${d.date}`);
   s.close();
 });

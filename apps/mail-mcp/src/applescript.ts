@@ -197,39 +197,6 @@ export function readScript(ref: MessageRef): string {
   ].join("\n");
 }
 
-export function scopedReadScript(account: string, mailbox: string, messageId: string): string {
-  return [
-    "set US to (ASCII character 31)",
-    'tell application "Mail"',
-    "  set theMsg to missing value",
-    "  repeat with acct in accounts",
-    `    if name of acct is "${esc(account)}" then`,
-    "      repeat with mb in mailboxes of acct",
-    `        if name of mb is "${esc(mailbox)}" then`,
-    "          try",
-    `            set theMsg to (first message of mb whose message id is "${esc(messageId)}")`,
-    "          end try",
-    "          exit repeat",
-    "        end if",
-    "      end repeat",
-    "      exit repeat",
-    "    end if",
-    "  end repeat",
-    `  if theMsg is missing value then error "Message not found: ${esc(messageId)}"`,
-    '  set theBody to ""',
-    "  with timeout of 600 seconds",
-    "    try",
-    "      set theBody to (content of theMsg)",
-    "    on error errMsg",
-    '      set theBody to ("[body unavailable: " & errMsg & "]")',
-    "    end try",
-    "  end timeout",
-    "  set out to (subject of theMsg) & US & (sender of theMsg) & US & ((date received of theMsg) as string) & US & theBody",
-    "end tell",
-    "return out",
-  ].join("\n");
-}
-
 export function saveAttachmentScript(ref: MessageRef, attachment: string | number, destPath: string): string {
   const sel = typeof attachment === "number"
     ? `mail attachment ${attachment} of theMsg`
