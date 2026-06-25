@@ -5,19 +5,18 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Validate a message locator and report which lookup path to use.
- * A native numeric `id` (digits only) is preferred — it maps to the
- * indexed, fast `whose id is` predicate. Otherwise an RFC `messageId`
- * is used with the slow `whose message id is` path.
+ * A native numeric `id` (digits only) maps to the indexed, fast `whose id is`
+ * predicate. A non-numeric `id` is treated as an RFC Message-ID — the DB-backed
+ * search returns the Message-ID in the `id` field (Mail's numeric id is volatile
+ * and not stored), so accept it and use the `whose message id is` path instead
+ * of rejecting it.
  */
 export function resolveMessageRef(ref: MessageRef): { byId: true; id: string } | { byId: false; messageId: string } {
   const id = ref.id != null ? String(ref.id).trim() : "";
-  if (id) {
-    if (!/^\d+$/.test(id)) throw new Error(`invalid message id (must be Mail's numeric id): ${id}`);
-    return { byId: true, id };
-  }
-  const messageId = ref.messageId != null ? String(ref.messageId).trim() : "";
+  if (id && /^\d+$/.test(id)) return { byId: true, id };
+  const messageId = (ref.messageId != null ? String(ref.messageId).trim() : "") || id;
   if (messageId) return { byId: false, messageId };
-  throw new Error("a message id is required (pass the `id` from a search result)");
+  throw new Error("a message id is required (pass the `id` or `messageId` from a search result)");
 }
 
 export function isEmail(s: string): boolean {

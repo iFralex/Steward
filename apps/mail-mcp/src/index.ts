@@ -91,8 +91,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Mail native `id` from a search result (preferred, fast)" },
-          messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
+          id: { type: "string", description: "the message's `id` from a search result — pass it back as-is" },
+          messageId: { type: "string", description: "RFC Message-ID — alternative to `id`" },
         },
         additionalProperties: false,
       },
@@ -103,8 +103,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Mail native `id` from a search result (preferred, fast)" },
-          messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
+          id: { type: "string", description: "the message's `id` from a search result — pass it back as-is" },
+          messageId: { type: "string", description: "RFC Message-ID — alternative to `id`" },
           attachment: { type: ["string", "number"], description: "attachment name or 1-based index" },
           destDir: { type: "string", description: "absolute dir; defaults to a temp dir" },
         },
@@ -139,8 +139,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Mail native `id` from a search result (preferred, fast)" },
-          messageId: { type: "string", description: "RFC Message-ID (slow fallback if no `id`)" },
+          id: { type: "string", description: "the message's `id` from a search result — pass it back as-is" },
+          messageId: { type: "string", description: "RFC Message-ID — alternative to `id`" },
           body: { type: "string" },
           attachments: STRINGS("absolute file paths to attach"),
           replyAll: { type: "boolean" },

@@ -33,6 +33,8 @@ function toEpochSeconds(s?: string): number | undefined {
 
 /** Reading a message body waits on a server download — allow longer. */
 const READ_TIMEOUT_MS = 90_000;
+/** Sending/replying goes through Mail + the mail server (Exchange round-trip) — allow longer. */
+const WRITE_TIMEOUT_MS = 120_000;
 
 export interface MailDeps {
   store: Store;
@@ -110,12 +112,12 @@ export class Mail {
     assertEmails(args.to, "to");
     if (args.cc?.length) assertEmails(args.cc, "cc");
     if (args.bcc?.length) assertEmails(args.bcc, "bcc");
-    await this.run(sendScript(args));
+    await this.run(sendScript(args), WRITE_TIMEOUT_MS);
     return { sent: true };
   }
 
   async reply(args: ReplyArgs): Promise<{ sent: true }> {
-    await this.run(replyScript(args));
+    await this.run(replyScript(args), WRITE_TIMEOUT_MS);
     return { sent: true };
   }
 

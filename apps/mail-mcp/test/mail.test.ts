@@ -29,6 +29,15 @@ test("send validates recipients then runs the send script", async () => {
   assert.ok(/\bsend\b/.test(ran));
 });
 
+test("reply/send use a long write timeout (Exchange round-trip)", async () => {
+  let replyTimeout: number | undefined, sendTimeout: number | undefined;
+  const mail = new Mail({ store: emptyStore(), runner: async (_s, t) => { replyTimeout = sendTimeout = t; return "sent"; } });
+  await mail.reply({ messageId: "m@x", body: "ok" });
+  assert.ok(replyTimeout && replyTimeout >= 120_000, `reply timeout too short: ${replyTimeout}`);
+  await mail.send({ to: ["a@b.co"], subject: "x", body: "y" });
+  assert.ok(sendTimeout && sendTimeout >= 120_000, `send timeout too short: ${sendTimeout}`);
+});
+
 test("send rejects an invalid `from` address without running anything", async () => {
   let ran = false;
   const mail = new Mail({
