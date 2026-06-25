@@ -1,5 +1,6 @@
 import type { Store } from "../../mail-mirror/src/store.ts";
 import type { MessageSummary } from "./types.ts";
+import { mailUrl } from "./mail-url.ts";
 import { buildFilterSql, type DbFilters } from "./filters.ts";
 import { rrf } from "./rrf.ts";
 import { resolveScope } from "./scope.ts";
@@ -135,6 +136,7 @@ export async function searchDb(
     grouped.push({
       id,
       messageId: m.message_id,
+      mailUrl: mailUrl(m.message_id),
       subject: m.subject ?? "",
       from: m.from_name ? `${m.from_name} <${m.from_addr}>` : (m.from_addr ?? ""),
       date: new Date(m.date * 1000).toISOString(),

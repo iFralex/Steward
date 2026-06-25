@@ -23,6 +23,7 @@ test("readDb returns the DB body when full (no live read)", async () => {
   assert.equal(d.body, "FULL BODY");
   assert.equal(d.bodyState, "full");
   assert.equal(ran, false);
+  assert.equal(d.mailUrl, "message://%3Ca@x%3E", "exposes a clickable Apple Mail link");
   s.close();
 });
 

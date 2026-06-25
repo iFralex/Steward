@@ -1,5 +1,6 @@
 import type { Store } from "../../mail-mirror/src/store.ts";
 import type { MessageSummary } from "./types.ts";
+import { mailUrl } from "./mail-url.ts";
 
 export function getThread(store: Store, ref: { threadId?: number; id?: string; messageId?: string }): MessageSummary[] {
   let threadId = ref.threadId;
@@ -16,6 +17,7 @@ export function getThread(store: Store, ref: { threadId?: number; id?: string; m
   return rows.map((m) => ({
     id: m.message_id,
     messageId: m.message_id,
+    mailUrl: mailUrl(m.message_id),
     subject: m.subject ?? "",
     from: m.from_name ? `${m.from_name} <${m.from_addr}>` : (m.from_addr ?? ""),
     date: new Date(m.date * 1000).toISOString(),

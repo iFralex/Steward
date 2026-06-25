@@ -1,6 +1,7 @@
 import type { Store } from "../../mail-mirror/src/store.ts";
 import { parseDetail } from "./parse.ts";
 import { readScript } from "./applescript.ts";
+import { mailUrl } from "./mail-url.ts";
 import { runOsa } from "./osascript.ts";
 
 export interface MailDetail {
@@ -10,6 +11,8 @@ export interface MailDetail {
   body: string;
   attachments: { name: string; index: number }[];
   bodyState: string;
+  /** Apple Mail deep link — clicking it opens the message in Mail.app. */
+  mailUrl: string;
 }
 
 export async function readDb(
@@ -66,5 +69,6 @@ export async function readDb(
     body,
     attachments,
     bodyState,
+    mailUrl: mailUrl(messageId),
   };
 }

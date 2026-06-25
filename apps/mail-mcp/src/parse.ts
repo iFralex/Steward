@@ -1,4 +1,5 @@
 import type { Mailbox, MessageSummary } from "./types.ts";
+import { mailUrl } from "./mail-url.ts";
 
 const US = "\x1f";
 const RS = "\x1e";
@@ -15,6 +16,7 @@ export function parseSummaries(out: string): MessageSummary[] {
   return records(out).map(([id, messageId, subject, from, date, mailbox, account, snippet]) => ({
     id: id ?? "",
     messageId: messageId ?? "",
+    mailUrl: mailUrl(messageId ?? ""),
     subject: subject ?? "",
     from: from ?? "",
     date: date ?? "",

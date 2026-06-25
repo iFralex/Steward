@@ -13,6 +13,8 @@ export interface MessageSummary {
   account: string;
   snippet: string;
   threadId?: number;
+  /** Apple Mail deep link — clicking it opens the message in Mail.app. */
+  mailUrl: string;
 }
 
 /**
