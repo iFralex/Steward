@@ -15,6 +15,16 @@ function optString(raw: Raw, field: string): string | undefined {
   return v;
 }
 
+/** An optional array of alert offsets in minutes before the event (non-negative). */
+function optMinutesArray(raw: Raw, field: string): number[] | undefined {
+  const v = raw[field];
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v) || !v.every((x) => typeof x === "number" && Number.isFinite(x) && x >= 0)) {
+    throw new Error(`"${field}" must be an array of non-negative numbers (minutes before the event)`);
+  }
+  return v as number[];
+}
+
 function validIso(raw: Raw, field: string, required: boolean): string | undefined {
   const v = optString(raw, field);
   if (v === undefined) { if (required) throw new Error(`"${field}" is required (ISO date)`); return undefined; }
@@ -44,6 +54,7 @@ export function parseCreateArgs(raw: Raw): CreateArgs {
     description: optString(raw, "description"),
     url: optString(raw, "url"),
     recurrence: optString(raw, "recurrence"),
+    alarms: optMinutesArray(raw, "alarms"),
   };
 }
 
@@ -57,5 +68,6 @@ export function parseUpdateArgs(raw: Raw): UpdateArgs {
     description: optString(raw, "description"),
     url: optString(raw, "url"),
     recurrence: optString(raw, "recurrence"),
+    alarms: optMinutesArray(raw, "alarms"),
   };
 }

@@ -32,11 +32,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     { name: "read_event", description: "Read one event by uid.", inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
     { name: "create_event", description: "Create a calendar event.", inputSchema: { type: "object", properties: {
       calendar: { type: "string" }, summary: { type: "string" }, start: { type: "string" }, end: { type: "string" },
-      allDay: { type: "boolean" }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" } },
+      allDay: { type: "boolean" }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
+      alarms: { type: "array", items: { type: "number" }, description: "alerts in minutes before the event, e.g. [15, 1440] = 15 min + 1 day before" } },
       required: ["calendar", "summary", "start", "end"], additionalProperties: false } },
     { name: "update_event", description: "Update fields of an event by uid.", inputSchema: { type: "object", properties: {
       uid: { type: "string" }, summary: { type: "string" }, start: { type: "string" }, end: { type: "string" },
-      location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" } },
+      location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
+      alarms: { type: "array", items: { type: "number" }, description: "replaces the event's alerts; minutes before start; [] clears all" } },
       required: ["uid"], additionalProperties: false } },
     { name: "delete_event", description: "Delete an event by uid.", inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
   ],

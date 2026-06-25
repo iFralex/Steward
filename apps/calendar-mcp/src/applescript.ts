@@ -3,10 +3,22 @@ import { esc, runOsa, type OsaExec } from "@llm-wiki/applescript";
 export interface CreateArgs {
   calendar: string; summary: string; start: string; end: string;
   allDay?: boolean; location?: string; description?: string; url?: string; recurrence?: string;
+  /** Display alerts as minutes BEFORE the event start (e.g. [15, 1440] = 15 min + 1 day before). */
+  alarms?: number[];
 }
 export interface UpdateArgs {
   uid: string; summary?: string; start?: string; end?: string;
   location?: string; description?: string; url?: string; recurrence?: string;
+  /** Replaces the event's alerts; minutes BEFORE start. Pass [] to clear all alerts. */
+  alarms?: number[];
+}
+
+/** AppleScript lines that add display alarms to `target` (minutes before start → negative trigger interval). */
+function alarmLines(target: string, alarms: number[] | undefined, indent: string): string[] {
+  if (!alarms) return [];
+  return alarms.map(
+    (m) => `${indent}make new display alarm at end of display alarms of ${target} with properties {trigger interval:-${Math.round(m)}}`,
+  );
 }
 
 export function mapCalendarError(stderr: string): string {
@@ -50,6 +62,7 @@ export function buildCreate(a: CreateArgs): string {
   ];
   if (a.url) lines.push(`    set url of e to "${esc(a.url)}"`);
   if (a.recurrence) lines.push(`    set recurrence of e to "${esc(a.recurrence)}"`);
+  lines.push(...alarmLines("e", a.alarms, "    "));
   lines.push("    set theUID to uid of e", "  end tell", "  return theUID", "end tell");
   return lines.join("\n");
 }
@@ -81,6 +94,11 @@ export function buildUpdate(a: UpdateArgs): string {
   if (a.description) lines.push(`  set description of theEvent to "${esc(a.description)}"`);
   if (a.url) lines.push(`  set url of theEvent to "${esc(a.url)}"`);
   if (a.recurrence) lines.push(`  set recurrence of theEvent to "${esc(a.recurrence)}"`);
+  // Alerts: replace the existing set (an empty array clears them all).
+  if (a.alarms) {
+    lines.push("  delete (every display alarm of theEvent)");
+    lines.push(...alarmLines("theEvent", a.alarms, "  "));
+  }
 
   lines.push('  return "ok"', "end tell");
   return lines.join("\n");
