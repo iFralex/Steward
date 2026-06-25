@@ -15,6 +15,10 @@ const entry = fileURLToPath(new URL("./src/index.ts", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const agentsDir = join(homedir(), "Library", "LaunchAgents");
 const plistPath = join(agentsDir, `${LABEL}.plist`);
+const nodeDir = node.replace(/\/[^/]+$/, "");
+// launchd starts with a near-empty environment; give the daemon (and the CLIs
+// it spawns) a usable PATH and HOME so node/tsx resolve.
+const pathEnv = `${nodeDir}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
 
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -28,6 +32,11 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
     <string>${entry}</string>
   </array>
   <key>WorkingDirectory</key><string>${repoRoot}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>${pathEnv}</string>
+    <key>HOME</key><string>${homedir()}</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>/tmp/llmwiki-scheduler.log</string>

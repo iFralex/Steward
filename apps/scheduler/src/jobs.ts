@@ -11,10 +11,13 @@ import type { Job } from "./scheduler.ts";
 const NODE = process.execPath;
 const cli = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 const mins = (env: string, def: number) => Math.max(1, Number(process.env[env] ?? def)) * 60_000;
+// Run the CLIs from the repo root so `--import tsx` resolves (under launchd the
+// daemon's cwd is `/`, where tsx isn't on the module path).
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 /** Run an existing CLI command as a job. */
 const runCli = (entry: string, args: string[], timeoutMs: number) => () =>
-  exec(NODE, ["--import", "tsx", entry, ...args], { timeoutMs });
+  exec(NODE, ["--import", "tsx", entry, ...args], { timeoutMs, cwd: REPO_ROOT });
 
 const MAIL_MIRROR = cli("../../mail-mirror/src/cli.ts");
 const MAIL_PROMOTER = cli("../../mail-promoter/src/cli.ts");
