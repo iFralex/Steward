@@ -24,6 +24,17 @@ export type ClientEvent =
        * originally-requested input. Ignored on deny.
        */
       editedInput?: Record<string, unknown>;
+    }
+  | {
+      /**
+       * The user's answer to a `question_request`: the labels they selected.
+       * Single-select → exactly one; multi-select → zero or more. An empty
+       * array (or no reply → timeout) means "no choice".
+       */
+      type: "question_response";
+      sessionId: string;
+      requestId: string;
+      selected: string[];
     };
 
 /** Messages the core sends OUT to a channel. */
@@ -48,6 +59,20 @@ export type ServerEvent =
       requestId: string;
       tool: string;
       input: unknown;
+    }
+  | {
+      /**
+       * The agent is asking the user to pick among predefined options (the
+       * `ask_user` tool). The channel renders `options` as a single- or
+       * multi-select and replies with a `question_response` carrying this
+       * `requestId`. This is a plain question, not a tool approval.
+       */
+      type: "question_request";
+      sessionId: string;
+      requestId: string;
+      question: string;
+      options: string[];
+      multiSelect: boolean;
     }
   | { type: "tool_result"; sessionId: string; tool: string; ok: boolean; summary?: string }
   | { type: "status"; sessionId: string; state: SessionState }

@@ -6,6 +6,7 @@
 import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { buildMcpBridge, type McpBridge } from "./mcp-bridge.ts";
 import { gateToolDefinition } from "./permission-gate.ts";
+import { buildAskUserTool } from "./ask-user-tool.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
@@ -22,9 +23,13 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
   const bridge = await buildMcpBridge(config.mcpServers);
 
   let piSession: AgentSession;
-  const tools = bridge.tools.map((def) =>
-    gateToolDefinition(def, config.policy, hostSession.requestApproval, () => piSession),
-  );
+  const tools = [
+    ...bridge.tools.map((def) =>
+      gateToolDefinition(def, config.policy, hostSession.requestApproval, () => piSession),
+    ),
+    // Host-native question tool — not bridged, not gated.
+    buildAskUserTool(hostSession.askQuestion),
+  ];
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: process.cwd(),

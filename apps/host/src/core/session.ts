@@ -20,6 +20,7 @@ export class Session {
   /** Set to true when the channel disconnects; prevents mid-build runtime leaks. */
   closed = false;
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
+  private readonly pendingQuestions = new Map<string, (selected: string[]) => void>();
 
   constructor(
     private readonly emit: Emit,
@@ -61,6 +62,43 @@ export class Session {
     if (!resolver) return false;
     this.pending.delete(requestId);
     resolver(outcome);
+    return true;
+  }
+
+  /**
+   * The `ask_user` tool calls this: emit a `question_request` to the channel
+   * and resolve with the labels the user selected (via `question_response`),
+   * or `[]` on timeout. Mirrors `requestApproval` but for a plain question.
+   */
+  readonly askQuestion = (q: { question: string; options: string[]; multiSelect: boolean }): Promise<string[]> => {
+    const requestId = randomUUID();
+    return new Promise<string[]>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingQuestions.delete(requestId)) resolve([]);
+      }, this.approvalTimeoutMs);
+
+      this.pendingQuestions.set(requestId, (selected) => {
+        clearTimeout(timer);
+        resolve(selected);
+      });
+
+      this.emit({
+        type: "question_request",
+        sessionId: this.id,
+        requestId,
+        question: q.question,
+        options: q.options,
+        multiSelect: q.multiSelect,
+      });
+    });
+  };
+
+  /** Deliver a channel answer to a waiting question. Returns false if unknown. */
+  resolveQuestion(requestId: string, selected: string[]): boolean {
+    const resolver = this.pendingQuestions.get(requestId);
+    if (!resolver) return false;
+    this.pendingQuestions.delete(requestId);
+    resolver(selected);
     return true;
   }
 }

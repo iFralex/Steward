@@ -40,6 +40,9 @@ export function startServer(config: HostConfig): WebSocketServer {
             editedInput: msg.editedInput,
           });
           break;
+        case "question_response":
+          session.resolveQuestion(msg.requestId, msg.selected);
+          break;
       }
     });
   });
