@@ -34,6 +34,17 @@ test("readDb falls back to scoped AppleScript when not full", async () => {
   s.close();
 });
 
+test("readDb falls back to the partial mirror body when the live AppleScript read fails", async () => {
+  const s = Store.open(":memory:");
+  const r: MessageRow = { ...row("p@x", "none"), bodyState: "partial", bodyText: "PARTIAL TICKET BODY" };
+  s.upsertMessage(r);
+  // Simulate the Gmail "Tutti i messaggi" scoping failure: AppleScript throws.
+  const d = await readDb(s, { messageId: "p@x" }, async () => { throw new Error("Message not found: id 123"); });
+  assert.equal(d.body, "PARTIAL TICKET BODY", "must return the partial body, not fail");
+  assert.equal(d.bodyState, "partial");
+  s.close();
+});
+
 test("scopedReadScript narrows to the given account + mailbox", () => {
   const sc = scopedReadScript("Polimi", "Posta in arrivo", "id@x");
   assert.match(sc, /name of acct is "Polimi"/);

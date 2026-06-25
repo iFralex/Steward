@@ -33,11 +33,20 @@ export async function readDb(
   let body = row.bodyText;
   let bodyState = row.bodyState;
   if (row.bodyState !== "full") {
-    const out = await runScoped(scopedReadScript(row.account, row.mailbox, messageId));
-    const detail = parseDetail(out);
-    if (detail.body && !detail.body.startsWith("[body unavailable")) {
-      body = detail.body;
-      bodyState = "full";
+    // Try to complete the body with a live AppleScript read. If that fails
+    // (e.g. Gmail "Tutti i messaggi"/All Mail scoping, or the message isn't
+    // addressable live), fall back to the partial body already in the mirror
+    // instead of failing the whole read — a partial body is far more useful to
+    // the caller than "Message not found".
+    try {
+      const out = await runScoped(scopedReadScript(row.account, row.mailbox, messageId));
+      const detail = parseDetail(out);
+      if (detail.body && !detail.body.startsWith("[body unavailable")) {
+        body = detail.body;
+        bodyState = "full";
+      }
+    } catch {
+      // keep the mirror's partial body + bodyState
     }
   }
   return {
