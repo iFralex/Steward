@@ -16,6 +16,18 @@ test("record stores a promotion and get returns the decision + hash", () => {
   const s = PromoteState.open(":memory:");
   s.record({ messageId: "m2", decision: "promoted", categories: ["commitment"], classifyModel: "local-chat", distillModel: "sub-opus", wikiFilename: "mail-m2.md", sourceHash: "hh" });
   assert.deepEqual(s.get("m2"), { decision: "promoted", sourceHash: "hh" });
+  assert.equal(s.getRecord("m2")?.wikiFilename, "mail-m2.md");
+  s.close();
+});
+
+test("promotedThreadRecords and updateWikiFilename preserve the promotion", () => {
+  const s = PromoteState.open(":memory:");
+  s.record({ messageId: "thread:9", decision: "promoted", categories: ["decision"], classifyModel: "tier-5", distillModel: "tier-5", wikiFilename: "mail-old.md", sourceHash: "h" });
+  s.record({ messageId: "thread:10", decision: "skipped", categories: [], classifyModel: "tier-5", distillModel: null, wikiFilename: null, sourceHash: "h2" });
+  assert.deepEqual(s.promotedThreadRecords().map((r) => r.messageId), ["thread:9"]);
+  s.updateWikiFilename("thread:9", "mail-thread-9.md");
+  assert.equal(s.getRecord("thread:9")?.wikiFilename, "mail-thread-9.md");
+  assert.equal(s.getRecord("thread:9")?.sourceHash, "h");
   s.close();
 });
 

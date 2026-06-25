@@ -52,7 +52,10 @@ export async function embedBackfill(
       const text = sourceTextFor(row);
       const hash = sourceHash(text);
       const state = deps.store.embedStateFor(row.messageId);
-      if (state && state.sourceHash === hash) continue; // unchanged — skip
+      if (state && state.sourceHash === hash) {
+        deps.store.markEmbeddingCurrent(row.messageId);
+        continue;
+      }
       pending.push({ messageId: row.messageId, text, hash });
     }
 
@@ -60,11 +63,24 @@ export async function embedBackfill(
     // Process in chunks of EMBED_BATCH.
     for (let start = 0; start < pending.length; start += EMBED_BATCH) {
       const chunk = pending.slice(start, start + EMBED_BATCH);
-      const vectors = await deps.embedBatch(chunk.map((c) => c.text));
+      let vectors = await deps.embedBatch(chunk.map((c) => c.text));
 
-      // If every vector in this chunk is null the endpoint is down — stop early.
+      // One provider-rejected input can poison a whole batch. Retry each item
+      // separately so healthy messages still progress; consider the endpoint
+      // unavailable only when both the batch and every single retry fail.
       if (vectors.every((v) => v === null)) {
-        return { embedded, unavailable: true };
+        vectors = [];
+        for (const item of chunk) {
+          vectors.push(await deps.embed(item.text));
+        }
+        if (vectors.every((v) => v === null)) {
+          return { embedded, unavailable: true };
+        }
+      } else {
+        // Retry only the failed members of an otherwise successful batch.
+        for (let i = 0; i < vectors.length; i++) {
+          if (vectors[i] === null) vectors[i] = await deps.embed(chunk[i].text);
+        }
       }
 
       for (let i = 0; i < chunk.length; i++) {

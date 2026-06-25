@@ -69,7 +69,7 @@ export async function triage(
   // For a thread, bodyText is already a rendered, per-message-cleaned transcript
   // (cleaning it again would cut at quote markers and drop later messages); for a
   // single email, clean it here. Threads get more room.
-  const body = opts.isThread ? msg.bodyText.slice(0, 14000) : cleanBody(msg.bodyText).slice(0, 8000);
+  const body = opts.isThread ? msg.bodyText : cleanBody(msg.bodyText).slice(0, 8000);
   const threadHint = opts.isThread ? "[EMAIL THREAD — messages below in chronological order]\n" : "";
   const user =
     `From: ${msg.fromName} <${msg.fromAddr}>\n${youLine}${toLine}Subject: ${msg.subject}\n` +

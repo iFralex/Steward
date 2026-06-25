@@ -54,6 +54,27 @@ test("empty endpoint returns null vector with no error (wiki parity)", async () 
   assert.equal(r.error, undefined);
 });
 
+test("replaces lone UTF-16 surrogates before sending one text", async () => {
+  let sentInput = "";
+  const deps: EmbeddingDeps = {
+    fetch: async (_url, init) => {
+      sentInput = JSON.parse(init.body).input;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({ data: [{ embedding: [1, 2, 3] }] }),
+        text: async () => "",
+      };
+    },
+  };
+
+  const r = await fetchEmbedding("valid \ud83d\ude03 broken \ud83d", cfg, deps);
+
+  assert.equal(sentInput, "valid 😃 broken �");
+  assert.deepEqual(r.vector, [1, 2, 3]);
+});
+
 test("onRetry callback is called once with auto-halve message on 413 then success", async () => {
   const messages: string[] = [];
   const baseDeps = depsReturning([

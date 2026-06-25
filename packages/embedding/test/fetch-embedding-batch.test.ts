@@ -124,3 +124,30 @@ test("no endpoint returns all-null without fetching", async () => {
   assert.ok(r.vectors.every((v) => v === null));
   assert.equal(called, false);
 });
+
+test("replaces lone UTF-16 surrogates before sending a batch", async () => {
+  let sentInput: string[] = [];
+  const deps: EmbeddingDeps = {
+    fetch: async (_url, init) => {
+      sentInput = JSON.parse(init.body).input;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          data: sentInput.map((_, index) => ({ index, embedding: [index + 1] })),
+        }),
+        text: async () => "",
+      };
+    },
+  };
+
+  const r = await fetchEmbeddingBatch(
+    ["valid \ud83d\ude03", "broken high \ud83d", "broken low \udc00"],
+    cfg,
+    deps,
+  );
+
+  assert.deepEqual(sentInput, ["valid 😃", "broken high �", "broken low �"]);
+  assert.deepEqual(r.vectors, [[1], [2], [3]]);
+});

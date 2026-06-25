@@ -33,6 +33,7 @@ export function threadHash(messages: { subject: string; bodyText: string }[]): s
  */
 export async function processThread(deps: RunDeps, threadId: number): Promise<"promoted" | "skipped" | "filtered" | "deferred"> {
   const key = `thread:${threadId}`;
+  const previous = deps.state.getRecord(key);
   const input = buildThreadInput(deps.store, threadId);
   if (!input) return "skipped";
   const hash = threadHash(input.messages);
@@ -56,6 +57,21 @@ export async function processThread(deps: RunDeps, threadId: number): Promise<"p
   if (!result) return "deferred"; // LLM unavailable / unparseable / promote w/o note — retry next run, no state
   const model = deps.model ?? "tier-5";
   if (!result.promote) {
+    // A later message may make the current exchange non-promotable without
+    // invalidating durable knowledge already captured. Keep the canonical note
+    // and advance its hash so the unchanged thread is not retried forever.
+    if (previous?.decision === "promoted" && previous.wikiFilename) {
+      deps.state.record({
+        messageId: key,
+        decision: "promoted",
+        categories: previous.categories,
+        classifyModel: model,
+        distillModel: previous.distillModel,
+        wikiFilename: previous.wikiFilename,
+        sourceHash: hash,
+      });
+      return "skipped";
+    }
     deps.state.record({ messageId: key, decision: "skipped", categories: result.categories, classifyModel: model, distillModel: null, wikiFilename: null, sourceHash: hash });
     return "skipped";
   }
@@ -68,7 +84,7 @@ export async function processThread(deps: RunDeps, threadId: number): Promise<"p
     threadId,
     messageIds: input.messageIds,
   });
-  await promote(note, deps.wiki, "current", false); // bulk: skip per-note rescan, rescan once at the end
+  await promote(note, deps.wiki, "current", false, previous?.wikiFilename); // bulk: skip per-note rescan, rescan once at the end
   deps.state.record({ messageId: key, decision: "promoted", categories: result.categories, classifyModel: model, distillModel: model, wikiFilename: note.filename, sourceHash: hash });
   return "promoted";
 }

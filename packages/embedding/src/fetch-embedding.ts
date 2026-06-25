@@ -17,6 +17,32 @@ export interface EmbeddingBatchResult {
   error?: string;
 }
 
+/**
+ * JSON permits escaped lone UTF-16 surrogates, but downstream Python clients
+ * cannot encode them as UTF-8. Preserve valid pairs and replace malformed
+ * code units before sending text to an embedding provider.
+ */
+function toWellFormedText(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += text[i] + text[i + 1];
+        i++;
+      } else {
+        out += "\ufffd";
+      }
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      out += "\ufffd";
+    } else {
+      out += text[i];
+    }
+  }
+  return out;
+}
+
 export async function fetchEmbedding(
   text: string,
   cfg: EmbeddingConfig,
@@ -51,7 +77,7 @@ export async function fetchEmbedding(
   }
 
   const httpFetch = deps.fetch
-  let current = text
+  let current = toWellFormedText(text)
   let attempts = 0
   while (attempts <= maxRetries) {
     attempts++
@@ -181,12 +207,13 @@ export async function fetchEmbeddingBatch(
   }
 
   const allNull = (): (number[] | null)[] => texts.map(() => null);
+  const safeTexts = texts.map(toWellFormedText);
 
   try {
     const resp = await deps.fetch(endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: cfg.model, input: texts }),
+      body: JSON.stringify({ model: cfg.model, input: safeTexts }),
     });
 
     if (resp.ok) {

@@ -1,7 +1,7 @@
 // apps/mail-promoter/test/note.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildNote, slugForMessageId } from "../src/note.ts";
+import { buildNote, filenameForThread, slugForMessageId } from "../src/note.ts";
 
 const msg = { messageId: "abc@mail.example", fromName: "Anna", fromAddr: "anna@x.com", subject: "Detrazione", date: 1750000000, account: "ACC" };
 const distilled = { summary: "Anna chiede i certificati per la detrazione.", facts: ["scadenza 30 giugno"], commitments: ["inviare certificati"], people: ["Anna"], orgs: [] };
@@ -27,7 +27,7 @@ test("note has frontmatter with the message:// link and the distilled body", () 
 });
 
 test("note includes review_by and thread links when present", () => {
-  const { content } = buildNote({
+  const { filename, content } = buildNote({
     msg,
     accountLabel: "biz@x.com",
     distilled: { ...distilled, reviewBy: "2026-08-15" },
@@ -35,6 +35,8 @@ test("note includes review_by and thread links when present", () => {
     threadId: 42,
     messageIds: ["a@x", "b@x"],
   });
+  assert.equal(filename, "mail-thread-42.md");
+  assert.equal(filenameForThread(42), filename);
   assert.match(content, /review_by: 2026-08-15/);
   assert.match(content, /thread: thread:\/\/42/);
   assert.match(content, /messages: \[a@x, b@x\]/);

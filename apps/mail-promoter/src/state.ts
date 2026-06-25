@@ -22,6 +22,17 @@ export interface PromoteRecord {
   sourceHash: string;
 }
 
+export interface StoredPromoteRecord {
+  messageId: string;
+  decision: PromoteRecord["decision"];
+  categories: string[];
+  classifyModel: string;
+  distillModel: string | null;
+  wikiFilename: string | null;
+  sourceHash: string;
+  promotedAt: number;
+}
+
 export class PromoteState {
   private constructor(private db: Database.Database) {}
 
@@ -40,6 +51,47 @@ export class PromoteState {
   get(messageId: string): { decision: string; sourceHash: string } | undefined {
     const r = this.db.prepare("SELECT decision, source_hash FROM promote_state WHERE message_id=?").get(messageId) as { decision: string; source_hash: string } | undefined;
     return r ? { decision: r.decision, sourceHash: r.source_hash } : undefined;
+  }
+
+  getRecord(messageId: string): StoredPromoteRecord | undefined {
+    const r = this.db.prepare(
+      `SELECT message_id, decision, categories, classify_model, distill_model,
+              wiki_filename, source_hash, promoted_at
+       FROM promote_state WHERE message_id=?`,
+    ).get(messageId) as {
+      message_id: string; decision: PromoteRecord["decision"]; categories: string | null;
+      classify_model: string | null; distill_model: string | null; wiki_filename: string | null;
+      source_hash: string; promoted_at: number | null;
+    } | undefined;
+    if (!r) return undefined;
+    let categories: string[] = [];
+    try {
+      const parsed = JSON.parse(r.categories ?? "[]");
+      if (Array.isArray(parsed)) categories = parsed.filter((v): v is string => typeof v === "string");
+    } catch { /* keep empty */ }
+    return {
+      messageId: r.message_id,
+      decision: r.decision,
+      categories,
+      classifyModel: r.classify_model ?? "",
+      distillModel: r.distill_model,
+      wikiFilename: r.wiki_filename,
+      sourceHash: r.source_hash,
+      promotedAt: r.promoted_at ?? 0,
+    };
+  }
+
+  promotedThreadRecords(): StoredPromoteRecord[] {
+    const ids = this.db.prepare(
+      `SELECT message_id FROM promote_state
+       WHERE decision='promoted' AND message_id LIKE 'thread:%'
+       ORDER BY CAST(substr(message_id, 8) AS INTEGER)`,
+    ).all() as { message_id: string }[];
+    return ids.map((r) => this.getRecord(r.message_id)).filter((r): r is StoredPromoteRecord => !!r);
+  }
+
+  updateWikiFilename(messageId: string, filename: string): void {
+    this.db.prepare("UPDATE promote_state SET wiki_filename=? WHERE message_id=?").run(filename, messageId);
   }
 
   record(r: PromoteRecord): void {

@@ -47,6 +47,41 @@ test("processThread collapses a multi-message thread into ONE triage call + one 
   assert.equal(promoted.length, 1, "one note for the whole thread");
 });
 
+test("changed promoted thread overwrites canonical note and removes legacy filename", async () => {
+  const d = deps();
+  d.state.record({
+    messageId: "thread:1", decision: "promoted", categories: ["commitment"],
+    classifyModel: "tier-5", distillModel: "tier-5",
+    wikiFilename: "mail-legacy.md", sourceHash: "old",
+  });
+  const added: { filename: string }[] = [];
+  const removed: string[] = [];
+  d.wiki = {
+    addSources: async (_p, sources) => { added.push(...sources); return {}; },
+    removeSource: async (_p, filename) => { removed.push(filename); return {}; },
+  };
+
+  assert.equal(await processThread(d, 1), "promoted");
+  assert.equal(added[0].filename, "mail-thread-1.md");
+  assert.deepEqual(removed, ["mail-legacy.md"]);
+  assert.equal(d.state.getRecord("thread:1")?.wikiFilename, "mail-thread-1.md");
+});
+
+test("non-promotable update keeps an existing durable thread note", async () => {
+  const d = deps({ chat: async () => '{"promote": false, "categories": [], "note": null}' });
+  d.state.record({
+    messageId: "thread:1", decision: "promoted", categories: ["decision"],
+    classifyModel: "tier-5", distillModel: "tier-5",
+    wikiFilename: "mail-thread-1.md", sourceHash: "old",
+  });
+
+  assert.equal(await processThread(d, 1), "skipped");
+  const saved = d.state.getRecord("thread:1");
+  assert.equal(saved?.decision, "promoted");
+  assert.equal(saved?.wikiFilename, "mail-thread-1.md");
+  assert.equal(d.state.needsProcessing("thread:1", saved!.sourceHash), false);
+});
+
 test("processThread filters a junk-role thread without calling the LLM", async () => {
   let called = false;
   const d = deps({ roleOf: () => "junk", chat: async () => { called = true; return "{}"; } });

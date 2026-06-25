@@ -15,6 +15,8 @@ export interface ThreadInput {
   bodyText: string; // rendered, per-message-cleaned transcript (chronological)
 }
 
+const THREAD_TRANSCRIPT_MAX_CHARS = 14_000;
+
 /**
  * Assemble one thread into a single triage input: every non-deleted message in
  * chronological order, each body cleaned individually (cleaning the whole
@@ -32,13 +34,30 @@ export function buildThreadInput(store: Store, threadId: number): ThreadInput | 
   const primary = messages[messages.length - 1];
   const to = [...new Set(messages.flatMap((m) => m.to))].filter(Boolean);
   const cc = [...new Set(messages.flatMap((m) => m.cc))].filter(Boolean);
-  const bodyText = messages
-    .map((m) => {
+  const rendered = messages.map((m) => {
       const who = m.fromName ? `${m.fromName} <${m.fromAddr}>` : m.fromAddr;
       const when = new Date(m.date * 1000).toISOString().slice(0, 10);
       return `--- From: ${who} — ${when} ---\n${cleanBody(m.bodyText).slice(0, 4000)}`;
-    })
-    .join("\n\n");
+    });
+  const selected: string[] = [];
+  let used = 0;
+  for (let i = rendered.length - 1; i >= 0; i--) {
+    const separator = selected.length ? 2 : 0;
+    const remaining = THREAD_TRANSCRIPT_MAX_CHARS - used - separator;
+    if (remaining <= 0) break;
+    const segment = rendered[i];
+    if (segment.length <= remaining) {
+      selected.unshift(segment);
+      used += segment.length + separator;
+    } else if (selected.length === 0) {
+      selected.unshift(segment.slice(-remaining));
+      used += remaining;
+    } else {
+      break;
+    }
+  }
+  const omitted = rendered.length - selected.length;
+  const bodyText = `${omitted > 0 ? `[${omitted} earlier message(s) omitted to preserve the newest context]\n\n` : ""}${selected.join("\n\n")}`;
 
   return {
     threadId,

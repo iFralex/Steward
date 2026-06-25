@@ -307,6 +307,17 @@ export class Store {
       .run(messageId, model, vector.length, sourceHash, Math.floor(Date.now() / 1000));
   }
 
+  markEmbeddingCurrent(messageId: string): void {
+    this.raw.prepare(
+      `UPDATE embed_state
+       SET embedded_at = MAX(embedded_at, COALESCE(
+         (SELECT updated_at FROM messages WHERE message_id=?),
+         CAST(strftime('%s','now') AS INTEGER)
+       ))
+       WHERE message_id=?`,
+    ).run(messageId, messageId);
+  }
+
   knn(queryVector: number[], k: number): { messageId: string; distance: number }[] {
     const rows = this.raw
       .prepare(`SELECT m.message_id as messageId, v.distance as distance

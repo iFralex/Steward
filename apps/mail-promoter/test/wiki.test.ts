@@ -1,7 +1,7 @@
 // apps/mail-promoter/test/wiki.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promote, makeFsWikiPromoter } from "../src/wiki.ts";
@@ -26,4 +26,15 @@ test("makeFsWikiPromoter writes the note straight to the sources dir", async () 
   await fs.addSources("current", [{ filename: "mail-x.md", content: "ciao" }]);
   assert.ok(existsSync(join(dir, "mail-x.md")));
   assert.equal(readFileSync(join(dir, "mail-x.md"), "utf8"), "ciao");
+});
+
+test("filesystem promotion atomically replaces canonical note and removes old filename", async () => {
+  const dir = join(mkdtempSync(join(tmpdir(), "promoter-")), "raw", "sources");
+  const fs = makeFsWikiPromoter(dir);
+  writeFileSync(join(dir, "mail-old.md"), "old");
+
+  await promote({ filename: "mail-thread-7.md", content: "new" }, fs, "current", false, "mail-old.md");
+
+  assert.equal(readFileSync(join(dir, "mail-thread-7.md"), "utf8"), "new");
+  assert.equal(existsSync(join(dir, "mail-old.md")), false);
 });

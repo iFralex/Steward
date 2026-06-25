@@ -13,9 +13,10 @@ import { gatewayChat } from "./llm.ts";
 import { runBatch, type RunDeps } from "./run.ts";
 import { makeFsWikiPromoter } from "./wiki.ts";
 import { evaluate, type LabelledItem } from "./eval.ts";
+import { migratePromotedThreadNotes } from "./migrate-thread-notes.ts";
 
 /** The wiki project's sources dir — from env, else the desktop app's last-opened project. */
-function resolveSourcesDir(): string {
+export function resolveSourcesDir(): string {
   if (process.env.MAIL_PROMOTER_WIKI_SOURCES_DIR) return process.env.MAIL_PROMOTER_WIKI_SOURCES_DIR;
   const stateFile = join(homedir(), "Library/Application Support/com.llmwiki.app/app-state.json");
   const st = JSON.parse(readFileSync(stateFile, "utf8")) as { lastProject?: { path?: string }; currentProject?: { path?: string } };
@@ -69,6 +70,17 @@ async function main(): Promise<void> {
     console.log("rescan: indicizzazione di tutte le note nel progetto corrente...");
     await apiClient.rescan("current");
     console.log("rescan: completato");
+  } else if (cmd === "migrate-thread-notes") {
+    const sourcesDir = resolveSourcesDir();
+    const r = migratePromotedThreadNotes(state, sourcesDir);
+    console.log(`thread-note migration: ${sourcesDir}`);
+    console.log(`  migrated: ${r.migrated}`);
+    console.log(`  already canonical: ${r.alreadyCanonical}`);
+    console.log(`  state recovered: ${r.recoveredState}`);
+    console.log(`  missing: ${r.missing}`);
+    console.log(`  conflicts: ${r.conflicts}`);
+    console.log(`  duplicate notes removed: ${r.duplicateNotesRemoved}`);
+    console.log(`  canonical notes replaced by newer copy: ${r.canonicalNotesReplaced}`);
   } else if (cmd === "status") {
     const c = state.counts();
     console.log(`promoter state: ${stateDbPath()}`);
@@ -91,7 +103,7 @@ async function main(): Promise<void> {
     store.close();
     return;
   } else {
-    console.log("usage: mail-promoter <backfill|rescan|status|eval>");
+    console.log("usage: mail-promoter <backfill|rescan|migrate-thread-notes|status|eval>");
     process.exit(1);
   }
   state.close();

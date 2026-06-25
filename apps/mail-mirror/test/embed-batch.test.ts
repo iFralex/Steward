@@ -75,6 +75,7 @@ test("batched backfill skips messages whose source hash is unchanged", async () 
   assert.equal(res.unavailable, false);
   // Should have been called with only "b@x"'s text (one item).
   assert.equal(batchTexts.length, 1);
+  assert.equal(s.messagesNeedingEmbedding(10).some((m) => m.messageId === "a@x"), false);
   s.close();
 });
 
@@ -94,18 +95,46 @@ test("all-null batch chunk stops with unavailable:true and writes no state", asy
   s.close();
 });
 
+test("all-null batch isolates one poisoning input with single retries", async () => {
+  const s = Store.open(":memory:");
+  s.enableVectors();
+  s.upsertMessage(row("a@x", "Hello", "good body", 1000));
+  s.upsertMessage(row("bad@x", "Bad", "poison body", 2000));
+  s.upsertMessage(row("c@x", "Later", "good body", 3000));
+
+  const deps: EmbedDeps = {
+    store: s,
+    model: "mod",
+    embedBatch: async () => [null, null, null],
+    embed: async (text) => text.includes("poison body") ? null : [1, 0],
+  };
+
+  const res = await embedBackfill(deps, { limit: 10 });
+
+  assert.equal(res.unavailable, false);
+  assert.equal(res.embedded, 2);
+  assert.equal(s.embedStateFor("bad@x"), undefined);
+  assert.equal(s.embeddedCount(), 2);
+  s.close();
+});
+
 test("partial-null batch: non-null vectors are saved, null ones are skipped", async () => {
   const s = Store.open(":memory:");
   s.enableVectors();
   s.upsertMessage(row("a@x", "Hello", "world", 1000));
   s.upsertMessage(row("b@x", "Bye",   "world", 2000));
 
-  // First vector ok, second null (partial failure — not all-null, so not unavailable).
-  const deps = batchDeps(s, [[[1, 0], null]]);
+  // First vector succeeds in batch; second succeeds on its single retry.
+  const deps: EmbedDeps = {
+    store: s,
+    model: "mod",
+    embedBatch: async () => [[1, 0], null],
+    embed: async () => [0, 1],
+  };
   const res = await embedBackfill(deps, { limit: 10 });
 
-  assert.equal(res.embedded, 1);
+  assert.equal(res.embedded, 2);
   assert.equal(res.unavailable, false);
-  assert.equal(s.embeddedCount(), 1);
+  assert.equal(s.embeddedCount(), 2);
   s.close();
 });

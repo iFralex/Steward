@@ -14,6 +14,11 @@ export function slugForMessageId(messageId: string): string {
   return s.slice(0, 80) || "msg";
 }
 
+export function filenameForThread(threadId: number): string {
+  if (!Number.isSafeInteger(threadId) || threadId <= 0) throw new Error(`Invalid thread id: ${threadId}`);
+  return `mail-thread-${threadId}.md`;
+}
+
 function section(title: string, items: string[]): string {
   if (!items.length) return "";
   return `\n## ${title}\n${items.map((i) => `- ${i}`).join("\n")}\n`;
@@ -49,5 +54,8 @@ export function buildNote(args: {
     section("Commitments", distilled.commitments) +
     section("People", distilled.people) +
     section("Organizations", distilled.orgs);
-  return { filename: `mail-${slugForMessageId(msg.messageId)}.md`, content: fm + body };
+  return {
+    filename: threadId != null ? filenameForThread(threadId) : `mail-${slugForMessageId(msg.messageId)}.md`,
+    content: fm + body,
+  };
 }
