@@ -8,8 +8,8 @@
     "start": "node --import tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
-    "install-agent": "node --import tsx install.mts",
-    "uninstall-agent": "node --import tsx uninstall.mts"
+    "build-app": "node --import tsx build-app.mts",
+    "add-login-item": "node --import tsx add-login-item.mts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
