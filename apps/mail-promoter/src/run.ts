@@ -8,6 +8,7 @@ import { triage } from "./triage.ts";
 import { buildThreadInput } from "./thread-input.ts";
 import { buildNote } from "./note.ts";
 import { promote } from "./wiki.ts";
+import type { PromotedAttachment } from "./attachments.ts";
 
 export interface RunDeps {
   store: Store;
@@ -18,6 +19,7 @@ export interface RunDeps {
   accountLabelOf: (account: string) => string;
   userAddrs?: string[];
   model?: string;
+  syncAttachments?: (threadId: number) => PromotedAttachment[];
 }
 
 /** Hash of the whole thread — a new/edited message in the thread changes it, triggering re-processing. */
@@ -76,6 +78,7 @@ export async function processThread(deps: RunDeps, threadId: number): Promise<"p
     return "skipped";
   }
   const primary = input.primary;
+  const attachments = deps.syncAttachments?.(threadId) ?? [];
   const note = buildNote({
     msg: primary,
     accountLabel: deps.accountLabelOf(primary.account),
@@ -83,6 +86,7 @@ export async function processThread(deps: RunDeps, threadId: number): Promise<"p
     categories: result.categories,
     threadId,
     messageIds: input.messageIds,
+    attachments,
   });
   await promote(note, deps.wiki, "current", false, previous?.wikiFilename); // bulk: skip per-note rescan, rescan once at the end
   deps.state.record({ messageId: key, decision: "promoted", categories: result.categories, classifyModel: model, distillModel: model, wikiFilename: note.filename, sourceHash: hash });

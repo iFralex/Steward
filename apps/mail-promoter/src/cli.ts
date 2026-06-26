@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../../mail-mirror/src/store.ts";
-import { dbPath } from "../../mail-mirror/src/paths.ts";
+import { blobsDir, dbPath } from "../../mail-mirror/src/paths.ts";
 import { LlmWikiApiClient } from "../../llm-wiki/mcp-server/src/api-client.ts";
 import { PromoteState } from "./state.ts";
 import { stateDbPath } from "./paths.ts";
@@ -14,6 +14,8 @@ import { runBatch, type RunDeps } from "./run.ts";
 import { makeFsWikiPromoter } from "./wiki.ts";
 import { evaluate, type LabelledItem } from "./eval.ts";
 import { migratePromotedThreadNotes } from "./migrate-thread-notes.ts";
+import { syncThreadAttachments } from "./attachments.ts";
+import { syncPromotedThreadAttachments } from "./sync-promoted-attachments.ts";
 
 /** The wiki project's sources dir — from env, else the desktop app's last-opened project. */
 export function resolveSourcesDir(): string {
@@ -57,6 +59,14 @@ async function main(): Promise<void> {
     // be running during the backfill. Indexing is a single rescan afterwards.
     const sourcesDir = resolveSourcesDir();
     deps.wiki = makeFsWikiPromoter(sourcesDir);
+    const maxAttachmentBytes = Number(process.env.MAIL_PROMOTER_ATTACHMENT_MAX_MB ?? 100) * 1024 * 1024;
+    deps.syncAttachments = (threadId) => syncThreadAttachments({
+      store,
+      threadId,
+      blobRoot: blobsDir(),
+      sourcesDir,
+      maxBytes: maxAttachmentBytes,
+    }).attachments;
     console.log(`promote backfill: limit=${limit ?? "all"} concurrency=${concurrency} model=${cfg.triageModel}`);
     console.log(`promote backfill: writing notes to ${sourcesDir} (app can be closed)`);
     const t = await runBatch(deps, { limit, concurrency });
@@ -81,6 +91,24 @@ async function main(): Promise<void> {
     console.log(`  conflicts: ${r.conflicts}`);
     console.log(`  duplicate notes removed: ${r.duplicateNotesRemoved}`);
     console.log(`  canonical notes replaced by newer copy: ${r.canonicalNotesReplaced}`);
+  } else if (cmd === "sync-attachments") {
+    const sourcesDir = resolveSourcesDir();
+    const maxBytes = Number(process.env.MAIL_PROMOTER_ATTACHMENT_MAX_MB ?? 100) * 1024 * 1024;
+    const r = syncPromotedThreadAttachments({
+      store,
+      state,
+      blobRoot: blobsDir(),
+      sourcesDir,
+      maxBytes,
+    });
+    console.log(`attachment sync: ${sourcesDir}`);
+    console.log(`  promoted threads checked: ${r.threads}`);
+    console.log(`  notes updated: ${r.notesUpdated}`);
+    console.log(`  attachments linked: ${r.attachmentsLinked}`);
+    console.log(`  blobs copied: ${r.blobsCopied}`);
+    console.log(`  blobs already present: ${r.blobsAlreadyPresent}`);
+    console.log(`  skipped unsupported/missing/oversize: ${r.skippedAttachments}`);
+    console.log(`  missing notes: ${r.missingNotes}`);
   } else if (cmd === "status") {
     const c = state.counts();
     console.log(`promoter state: ${stateDbPath()}`);
@@ -103,7 +131,7 @@ async function main(): Promise<void> {
     store.close();
     return;
   } else {
-    console.log("usage: mail-promoter <backfill|rescan|migrate-thread-notes|status|eval>");
+    console.log("usage: mail-promoter <backfill|rescan|migrate-thread-notes|sync-attachments|status|eval>");
     process.exit(1);
   }
   state.close();

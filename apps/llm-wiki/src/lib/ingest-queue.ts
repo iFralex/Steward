@@ -42,6 +42,9 @@ let processedSinceDrain = false
 // Abort controller for the review-sweep LLM call so switching projects
 // cancels a long-running judgment instead of burning tokens.
 let sweepAbortController: AbortController | null = null
+let restoreInFlight:
+  | { projectId: string; projectPath: string; promise: Promise<void> }
+  | null = null
 
 function resetQueueAccounting(): void {
   completedSinceIdle = 0
@@ -136,6 +139,10 @@ function upsertQueuedIngestTask(
 
   if (pendingRerun) {
     return pendingRerun.id
+  }
+  if (processingTask) {
+    processingTask.folderContext = folderContext || processingTask.folderContext
+    return processingTask.id
   }
 
   const task: IngestTask = {
@@ -442,6 +449,42 @@ export async function restoreQueue(
   projectPath: string,
 ): Promise<void> {
   const pp = normalizePath(projectPath)
+  if (
+    restoreInFlight &&
+    restoreInFlight.projectId === projectId &&
+    restoreInFlight.projectPath === pp
+  ) {
+    return restoreInFlight.promise
+  }
+
+  restoreInFlight = {
+    projectId,
+    projectPath: pp,
+    promise: restoreQueueImpl(projectId, pp).finally(() => {
+      if (
+        restoreInFlight?.projectId === projectId &&
+        restoreInFlight.projectPath === pp
+      ) {
+        restoreInFlight = null
+      }
+    }),
+  }
+  return restoreInFlight.promise
+}
+
+async function restoreQueueImpl(
+  projectId: string,
+  projectPath: string,
+): Promise<void> {
+  const pp = normalizePath(projectPath)
+
+  // React StrictMode intentionally remounts effects in development. If the
+  // same project is already active and a runner is live, a second restore must
+  // not clear in-memory state or reset the processing lock.
+  if (currentProjectId === projectId && currentProjectPath === pp && processing) {
+    return
+  }
+
   // Defensive: reset in-memory state (should already be empty via
   // pauseQueue, but clearing again costs nothing).
   queue = []
@@ -528,6 +571,11 @@ async function processNext(projectId: string): Promise<void> {
     return
   }
 
+  // Acquire the runner lock before the first await. Otherwise two restore /
+  // enqueue calls in the same tick can both observe processing=false and start
+  // separate tasks, which leaves multiple queue entries in "processing".
+  processing = true
+
   // Look up the project's current filesystem path from the registry —
   // it may have moved since the task was enqueued. If the project isn't
   // in the registry (was deleted or never registered), mark as failed.
@@ -535,20 +583,26 @@ async function processNext(projectId: string): Promise<void> {
   const pp = registryPath ? normalizePath(registryPath) : ""
 
   // Check we're still active after the registry await.
-  if (currentProjectId !== projectId) return
+  if (currentProjectId !== projectId) {
+    processing = false
+    return
+  }
 
   if (!pp) {
     next.status = "failed"
     next.error = "Project not found in registry (was it deleted?)"
     await saveQueue(currentProjectPath)
+    processing = false
     processNext(projectId)
     return
   }
 
-  processing = true
   next.status = "processing"
   await saveQueue(pp)
-  if (currentProjectId !== projectId) return
+  if (currentProjectId !== projectId) {
+    processing = false
+    return
+  }
 
   const llmConfig = useWikiStore.getState().llmConfig
 

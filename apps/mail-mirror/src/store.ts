@@ -31,6 +31,16 @@ export interface MessageRow {
   appleThrid: number | null;
 }
 
+export interface AttachmentRow {
+  messageId: string;
+  filename: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  blobPath: string;
+  downloaded: boolean;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS messages (
   message_id TEXT PRIMARY KEY, account TEXT NOT NULL, mailbox TEXT,
@@ -210,6 +220,27 @@ export class Store {
     this.raw.prepare("DELETE FROM attachments WHERE message_id=?").run(messageId);
     const ins = this.raw.prepare("INSERT INTO attachments (message_id, filename, mime, size, sha256, blob_path, downloaded) VALUES (?,?,?,?,?,?,?)");
     for (const a of atts) ins.run(messageId, a.filename, a.mime, a.size, a.sha256, a.relPath, a.downloaded ? 1 : 0);
+  }
+
+  attachmentsForThread(threadId: number): AttachmentRow[] {
+    return (this.raw.prepare(
+      `SELECT a.message_id, a.filename, a.mime, a.size, a.sha256, a.blob_path, a.downloaded
+       FROM attachments a
+       JOIN messages m ON m.message_id=a.message_id
+       WHERE m.thread_id=? AND m.deleted=0
+       ORDER BY m.date ASC, a.id ASC`,
+    ).all(threadId) as {
+      message_id: string; filename: string | null; mime: string | null; size: number | null;
+      sha256: string; blob_path: string | null; downloaded: number;
+    }[]).map((r) => ({
+      messageId: r.message_id,
+      filename: r.filename ?? "attachment",
+      mime: r.mime ?? "application/octet-stream",
+      size: r.size ?? 0,
+      sha256: r.sha256,
+      blobPath: r.blob_path ?? "",
+      downloaded: !!r.downloaded,
+    }));
   }
 
   setThreadId(messageId: string, threadId: number): void {
