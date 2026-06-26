@@ -43,7 +43,9 @@ Rules:
 - For sender identity or recipient ambiguity, use contacts tools when useful.
 - For project/document/personal-memory context, use LLM Wiki tools when useful.
 - For thread ambiguity, use mail thread/message tools when useful.
-- Do not call write tools. Do not include unavailable tools. Maximum 4 calls.`;
+- If previous observations reveal new facts that need validation, request additional read tools.
+- Do not repeat calls already present in previous observations.
+- Do not call write tools. Do not include unavailable tools. Maximum 4 calls total.`;
 
 export async function collectReadToolContext(args: {
   chat: Chat;
@@ -53,19 +55,35 @@ export async function collectReadToolContext(args: {
   maxCalls?: number;
 }): Promise<{ requested: ReadToolCall[]; observations: ReadToolObservation[] }> {
   if (!args.execute) return { requested: [], observations: [] };
-  const raw = await args.chat(TOOL_CONTEXT_SYSTEM, JSON.stringify({
-    message: args.message,
-    analyzed: args.analyzed,
-  }, null, 2));
-  const parsed = jsonFromLlm<Record<string, unknown>>(raw);
-  const requested = normalizeToolCalls(parsed?.toolCalls, args.maxCalls ?? 4);
+  const requested: ReadToolCall[] = [];
   const observations: ReadToolObservation[] = [];
-  for (const call of requested) {
-    try {
-      const result = await args.execute(call.tool, call.input);
-      observations.push({ ...call, ok: true, result: compactResult(result) });
-    } catch (err) {
-      observations.push({ ...call, ok: false, error: err instanceof Error ? err.message : String(err) });
+  const maxCalls = args.maxCalls ?? 4;
+  const seen = new Set<string>();
+
+  for (let round = 0; round < 3 && requested.length < maxCalls; round++) {
+    const raw = await args.chat(TOOL_CONTEXT_SYSTEM, JSON.stringify({
+      message: args.message,
+      analyzed: args.analyzed,
+      previousObservations: observations,
+      remainingCalls: maxCalls - requested.length,
+    }, null, 2));
+    const parsed = jsonFromLlm<Record<string, unknown>>(raw);
+    const nextCalls = normalizeToolCalls(parsed?.toolCalls, maxCalls - requested.length)
+      .filter((call) => {
+        const key = callKey(call);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    if (!nextCalls.length) break;
+    requested.push(...nextCalls);
+    for (const call of nextCalls) {
+      try {
+        const result = await args.execute(call.tool, call.input);
+        observations.push({ ...call, ok: true, result: compactResult(result) });
+      } catch (err) {
+        observations.push({ ...call, ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
     }
   }
   return { requested, observations };
@@ -92,6 +110,16 @@ function normalizeToolCalls(value: unknown, maxCalls: number): ReadToolCall[] {
   return out;
 }
 
+function callKey(call: ReadToolCall): string {
+  return `${call.tool}:${stableJson(call.input)}`;
+}
+
+function stableJson(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return JSON.stringify(value);
+  const obj = value as Record<string, unknown>;
+  return JSON.stringify(Object.keys(obj).sort().map((k) => [k, obj[k]]));
+}
+
 function compactResult(value: unknown): unknown {
   const seen = new WeakSet<object>();
   const json = JSON.stringify(value, (_key, v) => {
@@ -108,4 +136,3 @@ function compactResult(value: unknown): unknown {
     return `${json.slice(0, 6000)}…`;
   }
 }
-

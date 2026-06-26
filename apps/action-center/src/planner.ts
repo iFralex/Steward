@@ -3,7 +3,7 @@ import type { Chat } from "./llm.ts";
 import { jsonFromLlm } from "./llm.ts";
 import type { ActionKind, ActionPriority, ContextSnapshot, ProposedAction } from "./types.ts";
 import { lookupCalendarContext, lookupContactContext, lookupWikiContext, type CalendarContext } from "./context.ts";
-import { collectReadToolContext, type ReadToolExecutor } from "./tool-context.ts";
+import { collectReadToolContext, isAllowedReadTool, type ReadToolExecutor } from "./tool-context.ts";
 
 export interface PlanningMessage {
   messageId: string;
@@ -75,6 +75,7 @@ Available read tools for later chat refinement:
 Rules:
 - Include multiple realistic alternatives when useful.
 - Read-only tool observations, if present in contextSnapshot.toolContext, have already been executed. Do not propose read-only steps merely to gather that same data; use those observations to produce validated write actions or explain uncertainty.
+- Proposed action steps must be executable user actions only. Do not include read-only tools in proposedActions.
 - If requested slot is available, include an accept+create-calendar option.
 - If requested slot is busy, include a decline/propose-alternative option.
 - Calendar alarms must be numbers: minutes before event start, e.g. [15], not objects.
@@ -255,6 +256,7 @@ function normalizeProposedActions(value: unknown, analyzed?: AnalyzedMail): Prop
           if (!s || typeof s !== "object") return null;
           const step = s as Record<string, unknown>;
           if (typeof step.tool !== "string" || !step.tool.startsWith("mcp__")) return null;
+          if (isAllowedReadTool(step.tool)) return null;
           const input = normalizeToolInput(
             step.tool,
             step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input as Record<string, unknown> : {},

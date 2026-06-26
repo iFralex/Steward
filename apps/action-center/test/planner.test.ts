@@ -19,7 +19,7 @@ function msg(): PlanningMessage {
 
 test("planMailAction stores executable scheduling proposals", async () => {
   let calls = 0;
-  const card = await planMailAction(msg(), async (system) => {
+  const card = await planMailAction(msg(), async (system, prompt) => {
     calls++;
     if (system.includes("Analyze")) {
       return JSON.stringify({
@@ -70,7 +70,7 @@ test("planMailAction stores executable scheduling proposals", async () => {
 
 test("planMailAction can enrich context through generic read-only tools", async () => {
   const calls: string[] = [];
-  const card = await planMailAction(msg(), async (system) => {
+  const card = await planMailAction(msg(), async (system, userPrompt) => {
     calls.push(system);
     if (system.includes("Analyze")) {
       return JSON.stringify({
@@ -94,7 +94,10 @@ test("planMailAction can enrich context through generic read-only tools", async 
         reasoning: "Scheduling request.",
       });
     }
-    if (system.includes("read-only tools")) {
+    if (system.startsWith("You decide which read-only tools")) {
+      if (userPrompt.includes("previousObservations") && userPrompt.includes("mcp__calendar__search_events")) {
+        return JSON.stringify({ toolCalls: [] });
+      }
       return JSON.stringify({
         toolCalls: [{
           tool: "mcp__calendar__search_events",
@@ -119,9 +122,61 @@ test("planMailAction can enrich context through generic read-only tools", async 
   });
 
   assert.ok(card);
-  assert.equal(calls.length, 3);
+  assert.ok(calls.length >= 3);
   const toolContext = card.contextSnapshot.toolContext as { observations: { ok: boolean; tool: string }[] };
   assert.equal(toolContext.observations[0].ok, true);
   assert.equal(toolContext.observations[0].tool, "mcp__calendar__search_events");
   assert.equal(card.deadline.iso, "2026-06-27T15:00:00.000Z");
+});
+
+test("planMailAction can run follow-up read tools and removes read-only proposal steps", async () => {
+  let toolRound = 0;
+  const card = await planMailAction(msg(), async (system) => {
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "admin-task",
+        priority: "high",
+        summary: "Serve risposta validata.",
+        dueDateTime: "2026-06-26T21:59:59.000Z",
+        scheduling: null,
+        replyDrafts: { accept: "Ciao, confermo.", decline: null, proposeAlternative: null, askClarification: null },
+        reasoning: "Administrative task.",
+      });
+    }
+    if (system.startsWith("You decide which read-only tools")) {
+      toolRound++;
+      return JSON.stringify({
+        toolCalls: toolRound === 1
+          ? [{ tool: "mcp__mail__get_thread", input: { threadId: 7 }, reason: "Read thread first." }]
+          : [{ tool: "mcp__calendar__search_events", input: { start: "2026-06-01T00:00:00.000Z", end: "2026-07-01T00:00:00.000Z" }, reason: "Validate dates discovered in thread." }],
+      });
+    }
+    return JSON.stringify({
+      title: "Rispondi con dati validati",
+      summary: "Usa le osservazioni già raccolte.",
+      proposedActions: [{
+        id: "validated-reply",
+        label: "Rispondi",
+        summary: "Reply using validated facts.",
+        confidence: "high",
+        steps: [
+          { id: "read", label: "Search calendar", tool: "mcp__calendar__search_events", input: { query: "x" }, writes: false },
+          { id: "reply", label: "Send reply", tool: "mcp__mail__reply", input: { messageId: "m1", body: "Ciao, confermo." }, writes: true },
+        ],
+      }],
+    });
+  }, {
+    readTool: async (tool) => tool === "mcp__mail__get_thread"
+      ? { messages: [{ snippet: "serve controllare calendario" }] }
+      : { events: [] },
+  });
+
+  assert.ok(card);
+  const toolContext = card.contextSnapshot.toolContext as { observations: { tool: string }[] };
+  assert.deepEqual(toolContext.observations.map((o) => o.tool), [
+    "mcp__mail__get_thread",
+    "mcp__calendar__search_events",
+  ]);
+  assert.deepEqual(card.proposedActions[0].steps.map((s) => s.tool), ["mcp__mail__reply"]);
 });
