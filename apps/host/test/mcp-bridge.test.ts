@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { buildMcpBridge } from "../src/core/mcp-bridge.ts";
+import { buildMcpBridge } from "@llm-wiki/mcp-bridge";
 
 const echo = fileURLToPath(new URL("./fixtures/echo-mcp-server.mts", import.meta.url));
 
@@ -13,6 +13,8 @@ test("bridges MCP tools with mcp__<server>__<tool> names and routes calls", asyn
     const tool = bridge.tools.find((t) => t.name === "mcp__echo__echo")!;
     const res: any = await tool.execute("call-1", { msg: "hi" }, undefined, undefined, {} as any);
     assert.match(res.content[0].text, /hi/);
+    const direct: any = await bridge.callTool("mcp__echo__echo", { msg: "direct" });
+    assert.match(direct[0].text, /direct/);
   } finally {
     await bridge.close();
   }

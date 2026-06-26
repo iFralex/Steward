@@ -32,6 +32,7 @@ export interface ContextSnapshot {
   calendar?: Record<string, unknown>;
   contacts?: Record<string, unknown>;
   wiki?: Record<string, unknown>;
+  toolContext?: Record<string, unknown>;
   reasoning?: string;
 }
 

@@ -39,3 +39,58 @@ test("upsert inserts, updates active items, and preserves done items", () => {
   assert.equal(s.counts().done, 1);
   s.close();
 });
+
+test("mail thread source key migrates old message-keyed active rows", () => {
+  const s = ActionStore.open(":memory:");
+  s.upsert({
+    sourceKey: "mail:m1",
+    sourceKind: "mail",
+    kind: "reply-needed",
+    title: "Old",
+    summary: "Old message-keyed row",
+    payload: { messageId: "m1", threadId: 42, date: 100 },
+  });
+
+  const updated = s.upsert({
+    sourceKey: "mail:thread:42",
+    sourceKind: "mail",
+    kind: "reply-needed",
+    title: "New",
+    summary: "Updated thread row",
+    payload: { messageId: "m2", threadId: 42, date: 200 },
+  });
+
+  assert.equal(updated.updated, true);
+  const all = s.list({ includeDone: true });
+  assert.equal(all.length, 1);
+  assert.equal(all[0].sourceKey, "mail:thread:42");
+  assert.equal(all[0].payload.messageId, "m2");
+  s.close();
+});
+
+test("newer mail in handled thread reopens the action", () => {
+  const s = ActionStore.open(":memory:");
+  const inserted = s.upsert({
+    sourceKey: "mail:thread:7",
+    sourceKind: "mail",
+    kind: "reply-needed",
+    title: "Thread",
+    summary: "Handled",
+    payload: { messageId: "m1", threadId: 7, date: 100 },
+  });
+  s.mark(inserted.id, "done");
+
+  const updated = s.upsert({
+    sourceKey: "mail:thread:7",
+    sourceKind: "mail",
+    kind: "reply-needed",
+    title: "Thread",
+    summary: "New message",
+    payload: { messageId: "m2", threadId: 7, date: 200 },
+  });
+
+  assert.equal(updated.updated, true);
+  assert.equal(s.counts().new, 1);
+  assert.equal(s.list()[0].summary, "New message");
+  s.close();
+});

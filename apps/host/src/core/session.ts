@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { ServerEvent } from "@llm-wiki/protocol";
+import type { McpBridge } from "@llm-wiki/mcp-bridge";
 import type { ApprovalOutcome, ApprovalRequest, RequestApproval } from "./permission-gate.ts";
 
 export type Emit = (event: ServerEvent) => void;
@@ -17,6 +18,8 @@ export class Session {
    * down the agent session and its MCP clients.
    */
   pi?: { prompt(text: string): Promise<void>; followUp(text: string): Promise<void>; subscribe(l: (e: any) => void): () => void; close(): Promise<void> };
+  /** Direct MCP bridge used by UI-triggered actions (same tools, same gates). */
+  directBridge?: McpBridge;
   /** Set to true when the channel disconnects; prevents mid-build runtime leaks. */
   closed = false;
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();

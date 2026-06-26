@@ -6,6 +6,7 @@
 import { WebSocketServer } from "ws";
 import type { ClientEvent } from "@llm-wiki/protocol";
 import { runTurn } from "./core/agent-runner.ts";
+import { executeActionProposal, loadActionCenterState, markAction } from "./core/action-center-service.ts";
 import { Session, type Emit } from "./core/session.ts";
 import type { HostConfig } from "./config.ts";
 
@@ -18,8 +19,13 @@ export function startServer(config: HostConfig): WebSocketServer {
     };
     const session = new Session(emit, config.approvalTimeoutMs);
     emit({ type: "status", sessionId: session.id, state: "idle" });
+    emit({ type: "action_center_state", sessionId: session.id, state: loadActionCenterState() });
 
-    ws.on("close", () => { session.closed = true; void session.pi?.close(); });
+    ws.on("close", () => {
+      session.closed = true;
+      void session.pi?.close();
+      void session.directBridge?.close();
+    });
 
     ws.on("message", (data) => {
       let msg: ClientEvent;
@@ -42,6 +48,35 @@ export function startServer(config: HostConfig): WebSocketServer {
           break;
         case "question_response":
           session.resolveQuestion(msg.requestId, msg.selected);
+          break;
+        case "action_center_refresh":
+          emit({
+            type: "action_center_state",
+            sessionId: session.id,
+            state: loadActionCenterState({ includeDone: msg.includeDone, limit: msg.limit }),
+          });
+          break;
+        case "action_center_mark":
+          emit({ type: "action_center_state", sessionId: session.id, state: markAction(msg.id, msg.status) });
+          break;
+        case "action_center_execute":
+          void (async () => {
+            emit({ type: "status", sessionId: session.id, state: "running" });
+            try {
+              const state = await executeActionProposal({
+                config,
+                session,
+                emit,
+                actionId: msg.id,
+                proposalId: msg.proposalId,
+              });
+              emit({ type: "action_center_state", sessionId: session.id, state });
+            } catch (err) {
+              emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
+            } finally {
+              emit({ type: "status", sessionId: session.id, state: "idle" });
+            }
+          })();
           break;
       }
     });

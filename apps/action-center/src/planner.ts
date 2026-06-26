@@ -3,6 +3,7 @@ import type { Chat } from "./llm.ts";
 import { jsonFromLlm } from "./llm.ts";
 import type { ActionKind, ActionPriority, ContextSnapshot, ProposedAction } from "./types.ts";
 import { lookupCalendarContext, lookupContactContext, lookupWikiContext, type CalendarContext } from "./context.ts";
+import { collectReadToolContext, type ReadToolExecutor } from "./tool-context.ts";
 
 export interface PlanningMessage {
   messageId: string;
@@ -23,6 +24,7 @@ export interface PlannedActionCard {
   title: string;
   summary: string;
   dueAt: number | null;
+  deadline: { dueAt: number | null; iso: string | null; estimated: boolean };
   contextSnapshot: ContextSnapshot;
   proposedActions: ProposedAction[];
   needsAction: boolean;
@@ -72,12 +74,16 @@ Available read tools for later chat refinement:
 - mcp__mail__get_thread, mcp__contacts__search_contacts, mcp__llm-wiki__llm_wiki_search, mcp__calendar__search_events
 Rules:
 - Include multiple realistic alternatives when useful.
+- Read-only tool observations, if present in contextSnapshot.toolContext, have already been executed. Do not propose read-only steps merely to gather that same data; use those observations to produce validated write actions or explain uncertainty.
 - If requested slot is available, include an accept+create-calendar option.
 - If requested slot is busy, include a decline/propose-alternative option.
+- Calendar alarms must be numbers: minutes before event start, e.g. [15], not objects.
+- Calendar names must be real calendar names when known; avoid placeholders like "primary".
+- Do not propose forwarding/copying notifications to Alessio unless explicitly useful.
 - The host will guard all write tools, so output concrete executable inputs.
 - Preserve uncertainty in summaries, but keep tool inputs usable.`;
 
-export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[] } = {}): Promise<PlannedActionCard | null> {
+export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[]; readTool?: ReadToolExecutor } = {}): Promise<PlannedActionCard | null> {
   const analyzed = await analyzeMail(msg, chat, opts.userAddrs ?? []);
   if (!analyzed?.needsAction) return null;
 
@@ -86,6 +92,29 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
   const contacts = lookupContactContext({ fromName: msg.fromName, fromAddr: msg.fromAddr });
   const wikiQuery = [msg.fromName, msg.fromAddr.split("@").at(-1), msg.subject].filter(Boolean).join(" ");
   const wiki = await lookupWikiContext(wikiQuery);
+  const dueAt = analyzed.dueDateTime && Number.isFinite(Date.parse(analyzed.dueDateTime))
+    ? Math.floor(Date.parse(analyzed.dueDateTime) / 1000)
+    : firstSlotStart(analyzed.scheduling?.requestedSlots) ?? null;
+  const deadline = {
+    dueAt,
+    iso: dueAt ? new Date(dueAt * 1000).toISOString() : null,
+    estimated: dueAt != null,
+  };
+  const toolContext = await collectReadToolContext({
+    chat,
+    execute: opts.readTool,
+    message: {
+      messageId: msg.messageId,
+      threadId: msg.threadId,
+      from: msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr,
+      to: msg.to,
+      cc: msg.cc,
+      subject: msg.subject,
+      date: new Date(msg.date * 1000).toISOString(),
+      bodyPreview: cleanBody(msg.bodyText).slice(0, 2500),
+    },
+    analyzed: { ...analyzed, deadline },
+  });
   const contextSnapshot: ContextSnapshot = {
     mail: {
       messageId: msg.messageId,
@@ -97,17 +126,16 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
       date: new Date(msg.date * 1000).toISOString(),
       replyDrafts: analyzed.replyDrafts,
       scheduling: analyzed.scheduling,
+      deadline,
     },
     calendar: { ...calendar },
     contacts: { ...contacts },
     wiki,
+    toolContext,
     reasoning: analyzed.reasoning,
   };
 
   const planned = await planActions(msg, analyzed, contextSnapshot, calendar, chat);
-  const dueAt = analyzed.dueDateTime && Number.isFinite(Date.parse(analyzed.dueDateTime))
-    ? Math.floor(Date.parse(analyzed.dueDateTime) / 1000)
-    : firstSlotStart(analyzed.scheduling?.requestedSlots) ?? null;
 
   return {
     kind: analyzed.kind,
@@ -115,6 +143,7 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
     title: planned?.title ?? defaultTitle(analyzed.kind, msg.subject),
     summary: planned?.summary ?? analyzed.summary,
     dueAt,
+    deadline,
     contextSnapshot,
     proposedActions: planned?.proposedActions ?? fallbackActions(msg, analyzed, calendar),
     needsAction: true,
@@ -153,7 +182,7 @@ async function planActions(
   }, analyzed, contextSnapshot, calendar }, null, 2));
   const parsed = jsonFromLlm<Record<string, unknown>>(out);
   if (!parsed) return null;
-  const proposedActions = normalizeProposedActions(parsed.proposedActions);
+  const proposedActions = normalizeProposedActions(parsed.proposedActions, analyzed);
   if (!proposedActions.length) return null;
   return {
     title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : defaultTitle(analyzed.kind, msg.subject),
@@ -216,7 +245,7 @@ function normalizeAnalyzed(p: Record<string, unknown>): AnalyzedMail {
   };
 }
 
-function normalizeProposedActions(value: unknown): ProposedAction[] {
+function normalizeProposedActions(value: unknown, analyzed?: AnalyzedMail): ProposedAction[] {
   if (!Array.isArray(value)) return [];
   return value.map((a, index) => {
     if (!a || typeof a !== "object") return null;
@@ -226,11 +255,16 @@ function normalizeProposedActions(value: unknown): ProposedAction[] {
           if (!s || typeof s !== "object") return null;
           const step = s as Record<string, unknown>;
           if (typeof step.tool !== "string" || !step.tool.startsWith("mcp__")) return null;
+          const input = normalizeToolInput(
+            step.tool,
+            step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input as Record<string, unknown> : {},
+            analyzed,
+          );
           return {
             id: typeof step.id === "string" ? step.id : `step-${sIndex + 1}`,
             label: typeof step.label === "string" ? step.label : step.tool,
             tool: step.tool,
-            input: step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input as Record<string, unknown> : {},
+            input,
             writes: step.writes !== false,
           };
         }).filter((s): s is NonNullable<typeof s> => !!s)
@@ -244,6 +278,52 @@ function normalizeProposedActions(value: unknown): ProposedAction[] {
       steps,
     };
   }).filter((a): a is ProposedAction => !!a);
+}
+
+function normalizeToolInput(tool: string, input: Record<string, unknown>, analyzed?: AnalyzedMail): Record<string, unknown> {
+  if (tool === "mcp__calendar__create_event") {
+    const out = { ...input };
+    const calendar = typeof out.calendar === "string" ? out.calendar.trim() : "";
+    if ((!calendar || /^primary$/i.test(calendar) || /^calendar$/i.test(calendar)) && analyzed?.scheduling?.calendarName) {
+      out.calendar = analyzed.scheduling.calendarName;
+    }
+    out.alarms = normalizeAlarms(out.alarms);
+    for (const field of ["summary", "start", "end", "location", "description", "url"]) {
+      if (out[field] == null) delete out[field];
+    }
+    return out;
+  }
+  if (tool === "mcp__calendar__update_event") {
+    const out = { ...input };
+    if ("alarms" in out) out.alarms = normalizeAlarms(out.alarms);
+    return out;
+  }
+  if (tool === "mcp__mail__send_email") {
+    const out = { ...input };
+    for (const field of ["to", "cc", "bcc", "attachments"]) {
+      if (typeof out[field] === "string") out[field] = [out[field]];
+    }
+    return out;
+  }
+  return input;
+}
+
+function normalizeAlarms(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "number" && Number.isFinite(item)) return item;
+      if (item && typeof item === "object") {
+        const obj = item as Record<string, unknown>;
+        const raw = typeof obj.trigger === "number" ? obj.trigger : typeof obj.minutes === "number" ? obj.minutes : null;
+        if (raw == null || !Number.isFinite(raw)) return null;
+        // Some models emit seconds in {trigger}; MCP expects minutes before start.
+        return Math.abs(raw) > 180 ? Math.round(Math.abs(raw) / 60) : Math.abs(raw);
+      }
+      return null;
+    })
+    .filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0)
+    .map((n) => Math.round(n));
 }
 
 function fallbackActions(msg: PlanningMessage, analyzed: AnalyzedMail, calendar: CalendarContext): ProposedAction[] {

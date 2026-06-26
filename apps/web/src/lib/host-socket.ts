@@ -5,6 +5,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  ActionCenterState,
+  ActionStatus,
   ApprovalDecision,
   ClientEvent,
   ServerEvent,
@@ -32,7 +34,11 @@ export interface HostSocket {
   state: SessionState;
   messages: ChatMessage[];
   approvals: PendingApproval[];
+  actionCenter: ActionCenterState | null;
   sendMessage: (text: string) => void;
+  refreshActions: (includeDone?: boolean) => void;
+  markAction: (id: number, status: ActionStatus) => void;
+  executeProposal: (id: number, proposalId: string) => void;
   respondApproval: (
     requestId: string,
     decision: ApprovalDecision,
@@ -48,6 +54,7 @@ export function useHostSocket(url: string): HostSocket {
   const [state, setState] = useState<SessionState>("idle");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [actionCenter, setActionCenter] = useState<ActionCenterState | null>(null);
 
   useEffect(() => {
     const ws = new WebSocket(url);
@@ -84,6 +91,9 @@ export function useHostSocket(url: string): HostSocket {
             { requestId: msg.requestId, tool: msg.tool, input: msg.input },
           ]);
           break;
+        case "action_center_state":
+          setActionCenter(msg.state);
+          break;
         case "error":
           setMessages((prev) => [
             ...prev,
@@ -113,6 +123,21 @@ export function useHostSocket(url: string): HostSocket {
     [send],
   );
 
+  const refreshActions = useCallback(
+    (includeDone = false) => send({ type: "action_center_refresh", sessionId: sessionRef.current, includeDone, limit: 100 }),
+    [send],
+  );
+
+  const markAction = useCallback(
+    (id: number, status: ActionStatus) => send({ type: "action_center_mark", sessionId: sessionRef.current, id, status }),
+    [send],
+  );
+
+  const executeProposal = useCallback(
+    (id: number, proposalId: string) => send({ type: "action_center_execute", sessionId: sessionRef.current, id, proposalId }),
+    [send],
+  );
+
   const respondApproval = useCallback(
     (
       requestId: string,
@@ -133,7 +158,7 @@ export function useHostSocket(url: string): HostSocket {
     [send],
   );
 
-  return { connected, state, messages, approvals, sendMessage, respondApproval };
+  return { connected, state, messages, approvals, actionCenter, sendMessage, refreshActions, markAction, executeProposal, respondApproval };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {

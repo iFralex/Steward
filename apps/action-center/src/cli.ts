@@ -1,11 +1,14 @@
 import { Store } from "../../mail-mirror/src/store.ts";
 import { dbPath as mailDbPath } from "../../mail-mirror/src/paths.ts";
+import { fileURLToPath } from "node:url";
+import { buildMcpBridge, type McpBridge, type McpServerSpec } from "@llm-wiki/mcp-bridge";
 import { actionDbPath } from "./paths.ts";
 import { ActionStore } from "./store.ts";
 import { gatewayChat } from "./llm.ts";
 import { scanMailForActions } from "./mail.ts";
 import { scanCalendarForActions } from "./calendar.ts";
 import type { ActionStatus } from "./types.ts";
+import { isAllowedReadTool } from "./tool-context.ts";
 
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const cmd = argv[0] ?? "status";
@@ -14,11 +17,16 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     if (cmd === "scan") {
       const what = argv[1] ?? "all";
       const out: Record<string, unknown> = {};
+      let readBridge: McpBridge | null = null;
       if (what === "all" || what === "mail") {
         const mail = Store.openReadonly(mailDbPath());
         try {
+          if (process.env.ACTION_CENTER_READ_TOOLS !== "0") {
+            readBridge = await buildMcpBridge(defaultReadToolServers());
+          }
           const userAddrs = (mail.raw.prepare("SELECT emails FROM accounts").all() as { emails: string | null }[])
             .flatMap((r) => (r.emails ?? "").split(/[,;\s]+/).filter(Boolean));
+          const bridgeForReadTools = readBridge;
           out.mail = await scanMailForActions({
             mail,
             actions,
@@ -26,9 +34,16 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
             userAddrs,
             limit: Number(process.env.ACTION_CENTER_MAIL_LIMIT ?? 50),
             recentDays: Number(process.env.ACTION_CENTER_MAIL_DAYS ?? 14),
+            readTool: bridgeForReadTools
+              ? (tool, input) => {
+                  if (!isAllowedReadTool(tool)) throw new Error(`read tool not allowed: ${tool}`);
+                  return bridgeForReadTools.callTool(tool, input);
+                }
+              : undefined,
           });
         } finally {
           mail.close();
+          await readBridge?.close();
         }
       }
       if (what === "all" || what === "calendar") {
@@ -37,6 +52,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           horizonDays: Number(process.env.ACTION_CENTER_CALENDAR_DAYS ?? 3),
         });
       }
+      actions.setMeta("lastScan", { at: Math.floor(Date.now() / 1000), what, result: out });
       console.log(JSON.stringify(out, null, 2));
     } else if (cmd === "list") {
       const includeDone = argv.includes("--all");
@@ -57,6 +73,24 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   } finally {
     actions.close();
   }
+}
+
+function defaultReadToolServers(): Record<string, McpServerSpec> {
+  const llmWikiMcpEntry =
+    process.env.LLM_WIKI_MCP_ENTRY ??
+    fileURLToPath(new URL("../../llm-wiki/mcp-server/dist/src/index.js", import.meta.url));
+  const mailMcpEntry =
+    process.env.MAIL_MCP_ENTRY ?? fileURLToPath(new URL("../../mail-mcp/src/index.ts", import.meta.url));
+  const calendarMcpEntry =
+    process.env.CALENDAR_MCP_ENTRY ?? fileURLToPath(new URL("../../calendar-mcp/src/index.ts", import.meta.url));
+  const contactsMcpEntry =
+    process.env.CONTACTS_MCP_ENTRY ?? fileURLToPath(new URL("../../contacts-mcp/src/index.ts", import.meta.url));
+  return {
+    "llm-wiki": { command: process.execPath, args: [llmWikiMcpEntry] },
+    mail: { command: process.execPath, args: ["--import", "tsx", mailMcpEntry] },
+    calendar: { command: process.execPath, args: ["--import", "tsx", calendarMcpEntry] },
+    contacts: { command: process.execPath, args: ["--import", "tsx", contactsMcpEntry] },
+  };
 }
 
 main().catch((err) => {

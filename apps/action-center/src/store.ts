@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS actions (
 );
 CREATE INDEX IF NOT EXISTS idx_actions_status_due ON actions(status, due_at);
 CREATE INDEX IF NOT EXISTS idx_actions_kind ON actions(kind);
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 export class ActionStore {
@@ -32,10 +37,8 @@ export class ActionStore {
 
   upsert(input: UpsertAction): { id: number; inserted: boolean; updated: boolean } {
     const now = Math.floor(Date.now() / 1000);
-    const existing = this.raw.prepare("SELECT id, status FROM actions WHERE source_key=?").get(input.sourceKey) as
-      | { id: number; status: ActionStatus }
-      | undefined;
     const payload = JSON.stringify(input.payload ?? {});
+    const existing = this.findExisting(input);
 
     if (!existing) {
       const info = this.raw.prepare(
@@ -57,20 +60,26 @@ export class ActionStore {
 
     // Completed/dismissed actions are intentionally sticky: future scans should
     // not resurrect something the user already handled unless its source key
-    // changes (e.g. a newer message id).
+    // changes (e.g. a newer message id). For mail threads, however, a newer
+    // message in the same thread is a new user-visible event, so reopen it.
     if (existing.status === "done" || existing.status === "dismissed") {
-      return { id: existing.id, inserted: false, updated: false };
+      if (!shouldReopenHandledMail(existing.payload, input.payload)) {
+        return { id: existing.id, inserted: false, updated: false };
+      }
     }
 
     this.raw.prepare(
       `UPDATE actions
-       SET source_kind=@source_kind, kind=@kind, priority=@priority, title=@title,
+       SET source_key=@source_key, source_kind=@source_kind, kind=@kind,
+           status=@status, priority=@priority, title=@title,
            summary=@summary, due_at=@due_at, payload=@payload, updated_at=@now
        WHERE id=@id`,
     ).run({
       id: existing.id,
+      source_key: input.sourceKey,
       source_kind: input.sourceKind,
       kind: input.kind,
+      status: existing.status === "done" || existing.status === "dismissed" ? "new" : existing.status,
       priority: input.priority ?? "normal",
       title: input.title,
       summary: input.summary,
@@ -79,6 +88,27 @@ export class ActionStore {
       now,
     });
     return { id: existing.id, inserted: false, updated: true };
+  }
+
+  private findExisting(input: UpsertAction): { id: number; status: ActionStatus; payload: Record<string, unknown> } | undefined {
+    const byKey = this.raw.prepare("SELECT id, status, payload FROM actions WHERE source_key=?").get(input.sourceKey) as
+      | { id: number; status: ActionStatus; payload: string }
+      | undefined;
+    if (byKey) return { ...byKey, payload: parsePayload(byKey.payload) };
+
+    const threadId = input.sourceKind === "mail" ? input.payload?.threadId : null;
+    if (typeof threadId !== "number" || !Number.isFinite(threadId)) return undefined;
+
+    // Migration bridge for older rows keyed by message id: if they already
+    // represent the same thread, update that row instead of creating a duplicate.
+    const byThread = this.raw.prepare(
+      `SELECT id, status, payload FROM actions
+       WHERE source_kind='mail'
+         AND json_extract(payload, '$.threadId') = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+    ).get(threadId) as { id: number; status: ActionStatus; payload: string } | undefined;
+    return byThread ? { ...byThread, payload: parsePayload(byThread.payload) } : undefined;
   }
 
   mark(id: number, status: ActionStatus): boolean {
@@ -105,15 +135,28 @@ export class ActionStore {
     return { new: 0, read: 0, done: 0, dismissed: 0, ...Object.fromEntries(rows.map((r) => [r.status, r.cnt])) };
   }
 
+  setMeta(key: string, value: unknown): void {
+    this.raw.prepare(
+      `INSERT INTO meta(key,value,updated_at) VALUES (?,?,?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    ).run(key, JSON.stringify(value), Math.floor(Date.now() / 1000));
+  }
+
+  getMeta<T = unknown>(key: string): T | null {
+    const row = this.raw.prepare("SELECT value FROM meta WHERE key=?").get(key) as { value: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.value) as T;
+    } catch {
+      return null;
+    }
+  }
+
   close(): void { this.raw.close(); }
 }
 
 function rowToAction(r: Record<string, unknown>): ActionItem {
-  let payload: Record<string, unknown> = {};
-  try {
-    const p = JSON.parse(String(r.payload ?? "{}"));
-    if (p && typeof p === "object" && !Array.isArray(p)) payload = p as Record<string, unknown>;
-  } catch { /* keep empty */ }
+  const payload = parsePayload(r.payload);
   return {
     id: Number(r.id),
     sourceKey: String(r.source_key),
@@ -128,4 +171,24 @@ function rowToAction(r: Record<string, unknown>): ActionItem {
     updatedAt: Number(r.updated_at),
     payload,
   };
+}
+
+function parsePayload(value: unknown): Record<string, unknown> {
+  try {
+    const p = JSON.parse(String(value ?? "{}"));
+    if (p && typeof p === "object" && !Array.isArray(p)) return p as Record<string, unknown>;
+  } catch { /* keep empty */ }
+  return {};
+}
+
+function shouldReopenHandledMail(existingPayload: Record<string, unknown>, incomingPayload: Record<string, unknown> | undefined): boolean {
+  if (!incomingPayload) return false;
+  const existingThread = existingPayload.threadId;
+  const incomingThread = incomingPayload.threadId;
+  if (typeof existingThread !== "number" || existingThread !== incomingThread) return false;
+  const existingDate = typeof existingPayload.date === "number" ? existingPayload.date : 0;
+  const incomingDate = typeof incomingPayload.date === "number" ? incomingPayload.date : 0;
+  const existingMessage = typeof existingPayload.messageId === "string" ? existingPayload.messageId : "";
+  const incomingMessage = typeof incomingPayload.messageId === "string" ? incomingPayload.messageId : "";
+  return incomingDate > existingDate && incomingMessage !== existingMessage;
 }

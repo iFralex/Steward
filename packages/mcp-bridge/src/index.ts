@@ -14,11 +14,13 @@ export interface McpServerSpec {
 
 export interface McpBridge {
   tools: ToolDefinition[];
+  callTool(toolName: string, args: Record<string, unknown>): Promise<unknown>;
   close(): Promise<void>;
 }
 
 export async function buildMcpBridge(specs: Record<string, McpServerSpec>): Promise<McpBridge> {
   const clients: Client[] = [];
+  const clientsByServer = new Map<string, Client>();
   const tools: ToolDefinition[] = [];
 
   for (const [server, spec] of Object.entries(specs)) {
@@ -31,10 +33,12 @@ export async function buildMcpBridge(specs: Record<string, McpServerSpec>): Prom
       await client.connect(transport);
       const { tools: mcpTools } = await client.listTools();
       clients.push(client);
+      clientsByServer.set(server, client);
       for (const t of mcpTools) {
         const bareName = t.name;
+        const fullName = `mcp__${server}__${bareName}`;
         tools.push({
-          name: `mcp__${server}__${bareName}`,
+          name: fullName,
           label: bareName,
           description: t.description ?? bareName,
           parameters: (t.inputSchema ?? { type: "object", properties: {} }) as any,
@@ -59,8 +63,22 @@ export async function buildMcpBridge(specs: Record<string, McpServerSpec>): Prom
 
   return {
     tools,
+    callTool: async (toolName, args) => {
+      const parsed = parseBridgeToolName(toolName);
+      if (!parsed) throw new Error(`Invalid MCP tool name: ${toolName}`);
+      const client = clientsByServer.get(parsed.server);
+      if (!client) throw new Error(`MCP server not available: ${parsed.server}`);
+      const res: any = await client.callTool({ name: parsed.tool, arguments: args ?? {} });
+      return res.content ?? [{ type: "text", text: "" }];
+    },
     close: async () => {
       for (const c of clients) await c.close();
     },
   };
+}
+
+function parseBridgeToolName(toolName: string): { server: string; tool: string } | null {
+  const match = /^mcp__(.+?)__(.+)$/.exec(toolName);
+  if (!match) return null;
+  return { server: match[1], tool: match[2] };
 }

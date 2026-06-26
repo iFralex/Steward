@@ -11,6 +11,9 @@
 /** Messages a channel sends INTO the core. */
 export type ClientEvent =
   | { type: "user_message"; sessionId: string; text: string }
+  | { type: "action_center_refresh"; sessionId: string; includeDone?: boolean; limit?: number }
+  | { type: "action_center_mark"; sessionId: string; id: number; status: ActionStatus }
+  | { type: "action_center_execute"; sessionId: string; id: number; proposalId: string }
   | {
       type: "approval_decision";
       sessionId: string;
@@ -75,8 +78,39 @@ export type ServerEvent =
       multiSelect: boolean;
     }
   | { type: "tool_result"; sessionId: string; tool: string; ok: boolean; summary?: string }
+  | { type: "action_center_state"; sessionId: string; state: ActionCenterState }
   | { type: "status"; sessionId: string; state: SessionState }
   | { type: "error"; sessionId?: string; message: string };
 
 export type ApprovalDecision = "allow" | "deny";
 export type SessionState = "idle" | "running";
+export type ActionStatus = "new" | "read" | "done" | "dismissed";
+
+export interface ActionCenterItem {
+  id: number;
+  sourceKey: string;
+  sourceKind: "mail" | "calendar";
+  kind: string;
+  status: ActionStatus;
+  priority: "low" | "normal" | "high";
+  title: string;
+  summary: string;
+  dueAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  payload: Record<string, unknown>;
+}
+
+export interface ActionCenterDiagnostics {
+  counts: Record<ActionStatus, number>;
+  byKind: Record<string, number>;
+  staleNew: number;
+  nextDueAt: number | null;
+  lastUpdatedAt: number | null;
+  deferredReasons?: Record<string, number>;
+}
+
+export interface ActionCenterState {
+  items: ActionCenterItem[];
+  diagnostics: ActionCenterDiagnostics;
+}

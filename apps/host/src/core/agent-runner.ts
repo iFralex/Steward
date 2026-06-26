@@ -4,7 +4,7 @@
  * gate-wrapped; model = the gateway tier. Pi events map to channel events.
  */
 import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { buildMcpBridge, type McpBridge } from "./mcp-bridge.ts";
+import { buildMcpBridge, type McpBridge } from "@llm-wiki/mcp-bridge";
 import { gateToolDefinition } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
 import { registerGatewayModel } from "./pi-provider.ts";

@@ -14,25 +14,26 @@ export function lookupContactContext(args: { fromName: string; fromAddr: string;
   try {
     const email = args.fromAddr.toLowerCase();
     const domain = email.includes("@") ? email.split("@").at(-1) ?? "" : "";
-    const nameTokens = args.fromName.match(/[\p{L}\p{N}]+/gu) ?? [];
-    const like = `%${email}%`;
-    const domainLike = domain ? `%@${domain}` : "";
+    const nameTokens = (args.fromName.match(/[\p{L}\p{N}]+/gu) ?? [])
+      .map((t) => t.toLowerCase())
+      .filter((t) => t.length >= 3);
+    const clauses = ["lower(coalesce(primary_email,'')) = ?"];
+    const params: unknown[] = [email];
+    if (domain && !isGenericEmailDomain(domain)) {
+      clauses.push("lower(coalesce(primary_email,'')) LIKE ?");
+      params.push(`%@${domain}`);
+    }
+    if (nameTokens.length >= 2) {
+      clauses.push("(" + nameTokens.slice(0, 2).map(() => "lower(coalesce(display_name,'')) LIKE ?").join(" AND ") + ")");
+      params.push(...nameTokens.slice(0, 2).map((t) => `%${t}%`));
+    }
+    params.push(args.limit ?? 5);
     const rows = db.prepare(
       `SELECT uid, display_name, organization, primary_email
        FROM contacts
-       WHERE lower(coalesce(primary_email,'')) = ?
-          OR lower(coalesce(primary_email,'')) LIKE ?
-          OR lower(coalesce(display_name,'')) LIKE ?
-          OR (? != '' AND lower(coalesce(primary_email,'')) LIKE ?)
+       WHERE ${clauses.join(" OR ")}
        LIMIT ?`,
-    ).all(
-      email,
-      like,
-      `%${nameTokens[0]?.toLowerCase() ?? ""}%`,
-      domain,
-      domainLike,
-      args.limit ?? 5,
-    ) as { uid: string; display_name: string | null; organization: string | null; primary_email: string | null }[];
+    ).all(...params) as { uid: string; display_name: string | null; organization: string | null; primary_email: string | null }[];
     return {
       matches: rows.map((r) => ({
         uid: r.uid,
@@ -46,6 +47,10 @@ export function lookupContactContext(args: { fromName: string; fromAddr: string;
   } finally {
     db.close();
   }
+}
+
+function isGenericEmailDomain(domain: string): boolean {
+  return /^(gmail|googlemail|icloud|me|mac|outlook|hotmail|live|yahoo|proton|aol)\./i.test(domain);
 }
 
 export interface CalendarBlock {

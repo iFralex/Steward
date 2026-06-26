@@ -79,6 +79,7 @@ test("scanMailForActions creates reply-needed action with draft", async () => {
   });
   assert.equal(res.created, 1);
   const item = actions.list()[0];
+  assert.equal(item.sourceKey, "mail:m1");
   assert.equal(item.kind, "reply-needed");
   assert.equal(item.priority, "high");
   assert.equal(Array.isArray(item.payload.proposedActions), true);
@@ -88,10 +89,70 @@ test("scanMailForActions creates reply-needed action with draft", async () => {
   actions.close();
 });
 
+test("scanMailForActions keys actions by thread when available", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  mail.upsertMessage(row({ appleThrid: 99 }));
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    chat: async (system) => system.includes("Analyze")
+      ? JSON.stringify({
+          needsAction: true,
+          kind: "reply-needed",
+          priority: "normal",
+          summary: "Thread action.",
+          dueDateTime: null,
+          scheduling: null,
+          replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: "Ok." },
+          reasoning: "Direct request.",
+        })
+      : JSON.stringify({
+          title: "Thread action",
+          summary: "Thread action.",
+          proposedActions: [{
+            id: "reply",
+            label: "Reply",
+            summary: "Send reply.",
+            confidence: "high",
+            steps: [{ id: "send", label: "Send", tool: "mcp__mail__reply", input: { messageId: "m1", body: "Ok." }, writes: true }],
+          }],
+        }),
+  });
+  assert.equal(res.created, 1);
+  assert.equal(actions.list()[0].sourceKey, "mail:thread:99");
+  mail.close();
+  actions.close();
+});
+
 test("scanMailForActions skips no-reply senders without calling LLM", async () => {
   const mail = Store.open(":memory:");
   const actions = ActionStore.open(":memory:");
   mail.upsertMessage(row({ fromAddr: "no-reply@example.com" }));
+  let called = false;
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    chat: async () => {
+      called = true;
+      return "{}";
+    },
+  });
+  assert.equal(called, false);
+  assert.equal(res.skipped, 1);
+  assert.equal(actions.list().length, 0);
+  mail.close();
+  actions.close();
+});
+
+test("scanMailForActions skips low-value surveys without calling LLM", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  mail.upsertMessage(row({
+    fromAddr: "feedback@example.com",
+    subject: "IELTS Post Result Survey",
+    bodyText: "Please fill the survey. Do not reply.",
+  }));
   let called = false;
   const res = await scanMailForActions({
     mail,

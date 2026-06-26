@@ -2,10 +2,19 @@ import type { Store, MessageRow } from "../../mail-mirror/src/store.ts";
 import type { ActionStore } from "./store.ts";
 import type { Chat } from "./llm.ts";
 import { planMailAction } from "./planner.ts";
+import type { ReadToolExecutor } from "./tool-context.ts";
 
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|mailer|newsletter|bounce|postmaster)\b/i;
+const LOW_VALUE_SURVEY = /\b(survey|questionario|soddisfazione|feedback|post[-\s]?result survey)\b/i;
 
-export interface MailScanResult { considered: number; created: number; updated: number; skipped: number; deferred: number }
+export interface MailScanResult {
+  considered: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  deferred: number;
+  deferredReasons: Record<string, number>;
+}
 
 export async function scanMailForActions(deps: {
   mail: Store;
@@ -15,6 +24,7 @@ export async function scanMailForActions(deps: {
   recentDays?: number;
   limit?: number;
   userAddrs?: string[];
+  readTool?: ReadToolExecutor;
 }): Promise<MailScanResult> {
   const now = deps.now ?? Math.floor(Date.now() / 1000);
   const since = now - (deps.recentDays ?? 14) * 86400;
@@ -27,21 +37,27 @@ export async function scanMailForActions(deps: {
      LIMIT ?`,
   ).all(since, limit) as Record<string, unknown>[];
   const messages = rows.map(rowToMessageForAction);
-  const result: MailScanResult = { considered: messages.length, created: 0, updated: 0, skipped: 0, deferred: 0 };
+  const result: MailScanResult = { considered: messages.length, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {} };
 
   for (const msg of messages) {
     if (NO_REPLY.test(msg.fromAddr) || NO_REPLY.test(msg.fromName)) {
       result.skipped++;
       continue;
     }
+    if (isLowValueSurvey(msg)) {
+      result.skipped++;
+      continue;
+    }
     let plan: Awaited<ReturnType<typeof planMailAction>>;
     try {
-      plan = await planMailAction(msg, deps.chat, { userAddrs: deps.userAddrs });
-    } catch {
+      plan = await planMailAction(msg, deps.chat, { userAddrs: deps.userAddrs, readTool: deps.readTool });
+    } catch (err) {
+      recordDeferred(result, err instanceof Error ? err.message : String(err));
       plan = null;
     }
     if (!plan) {
       result.deferred++;
+      recordDeferred(result, "no-action-or-unparseable");
       continue;
     }
     if (!plan.needsAction) {
@@ -49,7 +65,7 @@ export async function scanMailForActions(deps: {
       continue;
     }
     const upsert = deps.actions.upsert({
-      sourceKey: `mail:${msg.messageId}`,
+      sourceKey: mailSourceKey(msg),
       sourceKind: "mail",
       kind: plan.kind,
       priority: plan.priority,
@@ -63,6 +79,7 @@ export async function scanMailForActions(deps: {
         subject: msg.subject,
         date: msg.date,
         mailbox: msg.mailbox,
+        deadline: plan.deadline,
         contextSnapshot: plan.contextSnapshot,
         proposedActions: plan.proposedActions,
         chatPrompt: buildActionChatPrompt(plan.title),
@@ -83,6 +100,29 @@ function buildActionChatPrompt(title: string): string {
     "Use contacts, calendar, mail and LLM Wiki tools as needed.",
     "When the user chooses or edits a plan, call the relevant mail/calendar tools; the host will ask approval for writes.",
   ].join(" ");
+}
+
+function mailSourceKey(msg: Pick<MessageForAction, "messageId" | "threadId">): string {
+  return typeof msg.threadId === "number" && Number.isFinite(msg.threadId)
+    ? `mail:thread:${msg.threadId}`
+    : `mail:${msg.messageId}`;
+}
+
+function isLowValueSurvey(msg: MessageForAction): boolean {
+  const subject = msg.subject ?? "";
+  const from = `${msg.fromName} ${msg.fromAddr}`;
+  if (!LOW_VALUE_SURVEY.test(subject) && !LOW_VALUE_SURVEY.test(from)) return false;
+  const body = msg.bodyText.slice(0, 1200);
+  return /non rispondere|do not reply|unsubscribe|annulla iscrizione|compilare il questionario|fill (out )?the survey/i.test(body)
+    || /feedback|survey|questionario|soddisfazione/i.test(subject);
+}
+
+function recordDeferred(result: MailScanResult, rawReason: string): void {
+  const reason = rawReason
+    .replace(/\s+/g, " ")
+    .slice(0, 160)
+    || "unknown";
+  result.deferredReasons[reason] = (result.deferredReasons[reason] ?? 0) + 1;
 }
 
 function rowToMessageForAction(m: Record<string, unknown>): MessageForAction {
@@ -112,6 +152,6 @@ function rowToMessageForAction(m: Record<string, unknown>): MessageForAction {
     junk: !!(m.junk as number),
     flagColor: (m.flag_color as number) ?? null,
     appleThrid: (m.apple_thrid as number) ?? null,
-    threadId: (m.thread_id as number) ?? null,
+    threadId: (m.thread_id as number) ?? (m.apple_thrid as number) ?? null,
   };
 }
