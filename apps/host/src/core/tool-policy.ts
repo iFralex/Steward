@@ -85,5 +85,9 @@ export const defaultPolicy: ToolPolicy = {
     "mcp__contacts__search_contacts": "allow",
     "mcp__contacts__read_contact": "allow",
     "mcp__contacts__resolve_recipient": "allow",
+    // Action Center MCP — read-only listing/reading is safe. mark_action falls
+    // through to gated default because it changes item state.
+    "mcp__action-center__list_actions": "allow",
+    "mcp__action-center__read_action": "allow",
   },
 };

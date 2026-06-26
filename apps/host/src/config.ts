@@ -22,6 +22,11 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Use the LLM Wiki tools (mcp__llm-wiki__*) as your long-term memory:",
   "search and read the wiki before answering questions about the user's",
   "knowledge, projects, or documents.",
+  "Use the Action Center tools (mcp__action-center__*) to inspect pending",
+  "reply requests, scheduling requests, reminders, and their proposed plans.",
+  "When the user discusses an action item, read the action first, then use",
+  "mail, calendar, contacts, and LLM Wiki tools as needed to refine or execute",
+  "the chosen plan.",
   "For email, use ONLY Apple Mail (mcp__mail__*) — search, read, send, reply.",
   "Sensitive actions (sending email, creating events, writing files) require",
   "the user's approval — propose them via the appropriate tool and the host",
@@ -38,6 +43,8 @@ export function loadConfig(): HostConfig {
     process.env.CALENDAR_MCP_ENTRY ?? fileURLToPath(new URL("../../calendar-mcp/src/index.ts", import.meta.url));
   const contactsMcpEntry =
     process.env.CONTACTS_MCP_ENTRY ?? fileURLToPath(new URL("../../contacts-mcp/src/index.ts", import.meta.url));
+  const actionCenterMcpEntry =
+    process.env.ACTION_CENTER_MCP_ENTRY ?? fileURLToPath(new URL("../../action-center/src/index.ts", import.meta.url));
 
   return {
     port: Number(process.env.HOST_PORT ?? 4317),
@@ -55,6 +62,7 @@ export function loadConfig(): HostConfig {
       mail: { command: process.execPath, args: ["--import", "tsx", mailMcpEntry] },
       calendar: { command: process.execPath, args: ["--import", "tsx", calendarMcpEntry] },
       contacts: { command: process.execPath, args: ["--import", "tsx", contactsMcpEntry] },
+      "action-center": { command: process.execPath, args: ["--import", "tsx", actionCenterMcpEntry] },
     },
   };
 }

@@ -60,12 +60,13 @@ async function main(): Promise<void> {
     const sourcesDir = resolveSourcesDir();
     deps.wiki = makeFsWikiPromoter(sourcesDir);
     const maxAttachmentBytes = Number(process.env.MAIL_PROMOTER_ATTACHMENT_MAX_MB ?? 100) * 1024 * 1024;
-    deps.syncAttachments = (threadId) => syncThreadAttachments({
+    deps.syncAttachments = (threadId, selectedAttachmentIds) => syncThreadAttachments({
       store,
       threadId,
       blobRoot: blobsDir(),
       sourcesDir,
       maxBytes: maxAttachmentBytes,
+      includeIds: selectedAttachmentIds,
     }).attachments;
     console.log(`promote backfill: limit=${limit ?? "all"} concurrency=${concurrency} model=${cfg.triageModel}`);
     console.log(`promote backfill: writing notes to ${sourcesDir} (app can be closed)`);

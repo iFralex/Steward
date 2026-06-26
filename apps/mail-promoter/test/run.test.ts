@@ -82,6 +82,35 @@ test("non-promotable update keeps an existing durable thread note", async () => 
   assert.equal(d.state.needsProcessing("thread:1", saved!.sourceHash), false);
 });
 
+test("processThread can promote only selected attachments without creating a note", async () => {
+  const d = deps({
+    chat: async (_system, user) => {
+      assert.match(user, /Attachments available for independent promotion/);
+      assert.match(user, /CV\.pdf/);
+      return '{"promoteMail":false,"categories":[],"note":null,"attachments":[{"id":"aaaaaaaaaaaaaaaa-CV.pdf","promote":true,"reason":"CV","categories":["cv"]}]}';
+    },
+  });
+  d.store.insertAttachments("m1", [
+    { filename: "CV.pdf", mime: "application/pdf", size: 1234, sha256: "a".repeat(64), relPath: "aa/cv", downloaded: true },
+    { filename: "logo.png", mime: "image/png", size: 123, sha256: "b".repeat(64), relPath: "bb/logo", downloaded: true },
+  ]);
+  const selected: string[][] = [];
+  const promotedNotes: unknown[] = [];
+  d.syncAttachments = (_threadId, ids) => {
+    selected.push(ids ?? []);
+    return [{ filename: "CV.pdf", relativePath: "cv/aaaaaaaaaaaaaaaa-CV.pdf", mime: "application/pdf", size: 1234, sha256: "a".repeat(64) }];
+  };
+  d.wiki = { addSources: async (_p, s) => { promotedNotes.push(s); return {}; } };
+
+  assert.equal(await processThread(d, 1), "promoted");
+  assert.deepEqual(selected, [["aaaaaaaaaaaaaaaa-CV.pdf"]]);
+  assert.deepEqual(promotedNotes, []);
+  const saved = d.state.getRecord("thread:1");
+  assert.equal(saved?.decision, "promoted");
+  assert.equal(saved?.wikiFilename, null);
+  assert.deepEqual(saved?.categories, ["cv"]);
+});
+
 test("processThread filters a junk-role thread without calling the LLM", async () => {
   let called = false;
   const d = deps({ roleOf: () => "junk", chat: async () => { called = true; return "{}"; } });

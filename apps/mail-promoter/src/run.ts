@@ -8,7 +8,7 @@ import { triage } from "./triage.ts";
 import { buildThreadInput } from "./thread-input.ts";
 import { buildNote } from "./note.ts";
 import { promote } from "./wiki.ts";
-import type { PromotedAttachment } from "./attachments.ts";
+import { attachmentDecisionId, type PromotedAttachment } from "./attachments.ts";
 
 export interface RunDeps {
   store: Store;
@@ -19,7 +19,7 @@ export interface RunDeps {
   accountLabelOf: (account: string) => string;
   userAddrs?: string[];
   model?: string;
-  syncAttachments?: (threadId: number) => PromotedAttachment[];
+  syncAttachments?: (threadId: number, selectedAttachmentIds?: string[]) => PromotedAttachment[];
 }
 
 /** Hash of the whole thread — a new/edited message in the thread changes it, triggering re-processing. */
@@ -50,14 +50,22 @@ export async function processThread(deps: RunDeps, threadId: number): Promise<"p
     return "filtered";
   }
 
+  const attachmentInputs = deps.store.attachmentsForThread(threadId).map((row) => ({
+    id: attachmentDecisionId(row),
+    filename: row.filename,
+    mime: row.mime,
+    size: row.size,
+    messageId: row.messageId,
+  }));
   let result;
   try {
-    result = await triage(input, deps.chat, { userAddrs: deps.userAddrs, isThread: true });
+    result = await triage(input, deps.chat, { userAddrs: deps.userAddrs, isThread: true, attachments: attachmentInputs });
   } catch {
     return "deferred";
   }
   if (!result) return "deferred"; // LLM unavailable / unparseable / promote w/o note — retry next run, no state
   const model = deps.model ?? "tier-5";
+  const selectedAttachmentIds = result.attachments.filter((a) => a.promote).map((a) => a.id);
   if (!result.promote) {
     // A later message may make the current exchange non-promotable without
     // invalidating durable knowledge already captured. Keep the canonical note
@@ -78,18 +86,26 @@ export async function processThread(deps: RunDeps, threadId: number): Promise<"p
     return "skipped";
   }
   const primary = input.primary;
-  const attachments = deps.syncAttachments?.(threadId) ?? [];
-  const note = buildNote({
-    msg: primary,
-    accountLabel: deps.accountLabelOf(primary.account),
-    distilled: result.note!,
-    categories: result.categories,
-    threadId,
-    messageIds: input.messageIds,
-    attachments,
-  });
-  await promote(note, deps.wiki, "current", false, previous?.wikiFilename); // bulk: skip per-note rescan, rescan once at the end
-  deps.state.record({ messageId: key, decision: "promoted", categories: result.categories, classifyModel: model, distillModel: model, wikiFilename: note.filename, sourceHash: hash });
+  const attachments = selectedAttachmentIds.length ? deps.syncAttachments?.(threadId, selectedAttachmentIds) ?? [] : [];
+  let wikiFilename = previous?.wikiFilename ?? null;
+  let distillModel = previous?.distillModel ?? null;
+  if (result.promoteMail) {
+    const note = buildNote({
+      msg: primary,
+      accountLabel: deps.accountLabelOf(primary.account),
+      distilled: result.note!,
+      categories: result.categories,
+      threadId,
+      messageIds: input.messageIds,
+      attachments,
+    });
+    await promote(note, deps.wiki, "current", false, previous?.wikiFilename); // bulk: skip per-note rescan, rescan once at the end
+    wikiFilename = note.filename;
+    distillModel = model;
+  }
+  const attachmentCategories = result.attachments.flatMap((a) => a.promote ? a.categories : []);
+  const categories = [...new Set([...result.categories, ...attachmentCategories])];
+  deps.state.record({ messageId: key, decision: "promoted", categories, classifyModel: model, distillModel, wikiFilename, sourceHash: hash });
   return "promoted";
 }
 

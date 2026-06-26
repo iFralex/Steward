@@ -21,6 +21,7 @@ const runCli = (entry: string, args: string[], timeoutMs: number) => () =>
 
 const MAIL_MIRROR = cli("../../mail-mirror/src/cli.ts");
 const MAIL_PROMOTER = cli("../../mail-promoter/src/cli.ts");
+const ACTION_CENTER = cli("../../action-center/src/cli.ts");
 
 export const jobs: Job[] = [
   // 1) Ingest new/changed mail from Apple Mail into the local mirror.
@@ -29,4 +30,6 @@ export const jobs: Job[] = [
   { name: "mail-embed", everyMs: mins("SCHED_EMBED_MIN", 15), run: runCli(MAIL_MIRROR, ["embed"], 20 * 60_000) },
   // 3) Triage + distil new mail into wiki source notes (writes to disk; gateway-backed).
   { name: "mail-distill", everyMs: mins("SCHED_DISTILL_MIN", 15), run: runCli(MAIL_PROMOTER, ["backfill"], 30 * 60_000) },
+  // 4) Build the user's actionable notification center: reply-needed mail + upcoming events.
+  { name: "action-center", everyMs: mins("SCHED_ACTION_CENTER_MIN", 10), run: runCli(ACTION_CENTER, ["scan"], 10 * 60_000) },
 ];

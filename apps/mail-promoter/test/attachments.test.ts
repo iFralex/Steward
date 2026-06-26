@@ -58,3 +58,34 @@ test("categoryForAttachment separates CVs, letters and other documents", () => {
   assert.equal(categoryForAttachment("reference letter Sciuto.txt"), "lettere");
   assert.equal(categoryForAttachment("contratto.pdf"), "documenti");
 });
+
+test("syncThreadAttachments copies only selected attachment ids when provided", () => {
+  const root = mkdtempSync(join(tmpdir(), "mail-atts-selected-"));
+  const blobs = join(root, "blobs");
+  const sources = join(root, "sources");
+  const store = Store.open(":memory:");
+  store.upsertMessage(message("m1"));
+  store.setThreadId("m1", 9);
+
+  mkdirSync(dirname(join(blobs, "aa/cv")), { recursive: true });
+  mkdirSync(dirname(join(blobs, "bb/contract")), { recursive: true });
+  writeFileSync(join(blobs, "aa/cv"), "%PDF-cv-content-that-is-long-enough");
+  writeFileSync(join(blobs, "bb/contract"), "%PDF-contract-content-that-is-long-enough");
+  store.insertAttachments("m1", [
+    { filename: "CV.pdf", mime: "application/pdf", size: 100, sha256: "a".repeat(64), relPath: "aa/cv", downloaded: true },
+    { filename: "Contract.pdf", mime: "application/pdf", size: 100, sha256: "b".repeat(64), relPath: "bb/contract", downloaded: true },
+  ]);
+
+  const r = syncThreadAttachments({
+    store,
+    threadId: 9,
+    blobRoot: blobs,
+    sourcesDir: sources,
+    includeIds: ["aaaaaaaaaaaaaaaa-CV.pdf"],
+  });
+
+  assert.equal(r.copied, 1);
+  assert.deepEqual(r.attachments.map((a) => a.filename), ["CV.pdf"]);
+  assert.equal(existsSync(join(sources, "documenti", "bbbbbbbbbbbbbbbb-Contract.pdf")), false);
+  store.close();
+});

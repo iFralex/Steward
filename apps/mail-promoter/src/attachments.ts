@@ -36,6 +36,16 @@ export interface AttachmentSyncResult {
   skipped: number;
 }
 
+export function attachmentDecisionId(row: AttachmentRow): string {
+  const safe = basename(row.filename)
+    .normalize("NFKC")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .slice(0, 48) || "attachment";
+  return `${row.sha256.slice(0, 16)}-${safe}`;
+}
+
 export function categoryForAttachment(filename: string): "cv" | "lettere" | "documenti" {
   const name = filename.normalize("NFKC").toLowerCase();
   if (/\b(cv|curriculum|resume|résumé)\b/.test(name)) return "cv";
@@ -77,12 +87,15 @@ export function syncThreadAttachments(args: {
   blobRoot: string;
   sourcesDir: string;
   maxBytes?: number;
+  includeIds?: Iterable<string>;
 }): AttachmentSyncResult {
   const maxBytes = args.maxBytes ?? 100 * 1024 * 1024;
+  const includeIds = args.includeIds ? new Set(args.includeIds) : null;
   const seen = new Set<string>();
   const result: AttachmentSyncResult = { attachments: [], copied: 0, alreadyPresent: 0, skipped: 0 };
 
   for (const row of args.store.attachmentsForThread(args.threadId)) {
+    if (includeIds && !includeIds.has(attachmentDecisionId(row))) continue;
     if (seen.has(row.sha256)) continue;
     seen.add(row.sha256);
     const extension = extensionFor(row);

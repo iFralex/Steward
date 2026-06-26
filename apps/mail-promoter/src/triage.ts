@@ -4,6 +4,9 @@ import type { Chat } from "./llm.ts";
 import { cleanBody } from "./clean-body.ts";
 
 const CATEGORIES = ["commitment", "document", "personal-fact", "decision", "relationship"];
+const ATTACHMENT_CATEGORIES = [
+  "cv", "cover-letter", "career", "contract", "certificate", "financial", "legal", "portfolio", "project", "identity", "other",
+];
 
 // One LLM call does the whole job: decide whether the email holds durable
 // personal knowledge AND, when it does, distil it. Splitting these into two
@@ -15,9 +18,11 @@ const SYSTEM =
   `in either case produce ONE note covering the whole conversation. ` +
   `Decide whether it holds DURABLE PERSONAL KNOWLEDGE worth keeping — the user's own ` +
   `requests/commitments, important documents, personal facts, decisions, relationships — ` +
+  `and separately decide which attachments, if any, are durable source documents worth ingesting. ` +
   `vs noise (marketing, promotions, time-limited offers, notifications, one-off transactional, generic announcements). ` +
   `Reply with ONLY JSON: ` +
-  `{"promote": boolean, "categories": string[], "note": {"summary": string, "facts": string[], "commitments": string[], "people": string[], "orgs": string[], "reviewBy": "YYYY-MM-DD" | null} | null}. ` +
+  `{"promoteMail": boolean, "categories": string[], "note": {"summary": string, "facts": string[], "commitments": string[], "people": string[], "orgs": string[], "reviewBy": "YYYY-MM-DD" | null} | null, ` +
+  `"attachments": [{"id": string, "promote": boolean, "reason": string, "categories": string[]}]}. ` +
   `Rules: ` +
   `(1) Do NOT promote promotional or time-limited content (discounts, sales, event invites, deadlines) — noise even if still valid. ` +
   `(2) Do NOT promote service/transactional notifications and reminders (confirmations, onboarding/funnel steps, ` +
@@ -32,7 +37,11 @@ const SYSTEM =
   `or it is clearly about the user's own life, work, money, health, documents, or relationships. ` +
   `Treat mailing-list or forum threads where OTHER people discuss generic questions (the user is only a subscriber, not addressed) as noise — skip them. ` +
   `(5) categories ⊆ ${JSON.stringify(CATEGORIES)}. ` +
-  `If promote is false, set note to null. If promote is true, fill note: summary 1-3 sentences; ` +
+  `(6) Attachment decisions are independent from promoteMail: promote durable user-owned documents such as CVs, cover letters, ` +
+  `portfolio/project documents, contracts, certificates, official/financial/legal documents, or other files likely useful in long-term memory. ` +
+  `Do not promote logos, signatures, calendar invites, tracking pixels, generic brochures, duplicated noise, or transient attachments. ` +
+  `For attachments[].categories use only ${JSON.stringify(ATTACHMENT_CATEGORIES)}. ` +
+  `If promoteMail is false, set note to null. If promoteMail is true, fill note: summary 1-3 sentences; ` +
   `facts concrete durable facts; commitments requests/promises (who owes what); people/orgs named entities. ` +
   `reviewBy: if the note involves a future deadline, a scheduled event, or an action to revisit, set it to the date to revisit ` +
   `(the deadline/event date, or shortly before, as YYYY-MM-DD); use null when the knowledge is timeless or already resolved. ` +
@@ -48,9 +57,28 @@ function strs(v: unknown): string[] {
 }
 
 export interface TriageResult {
+  /** True when either the mail note or at least one attachment should be promoted. */
   promote: boolean;
+  /** True only when the mail/thread should become a distilled note. */
+  promoteMail: boolean;
   categories: string[];
   note: DistilledNote | null;
+  attachments: AttachmentDecision[];
+}
+
+export interface AttachmentForTriage {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+  messageId: string;
+}
+
+export interface AttachmentDecision {
+  id: string;
+  promote: boolean;
+  reason: string;
+  categories: string[];
 }
 
 /**
@@ -61,7 +89,7 @@ export interface TriageResult {
 export async function triage(
   msg: { fromName: string; fromAddr: string; subject: string; bodyText: string; date?: number; to?: string[]; cc?: string[] },
   chat: Chat,
-  opts: { userAddrs?: string[]; isThread?: boolean } = {},
+  opts: { userAddrs?: string[]; isThread?: boolean; attachments?: AttachmentForTriage[] } = {},
 ): Promise<TriageResult | null> {
   const recipients = [...(msg.to ?? []), ...(msg.cc ?? [])].filter(Boolean).join(", ");
   const youLine = opts.userAddrs?.length ? `You: ${opts.userAddrs.join(", ")}\n` : "";
@@ -71,27 +99,58 @@ export async function triage(
   // single email, clean it here. Threads get more room.
   const body = opts.isThread ? msg.bodyText : cleanBody(msg.bodyText).slice(0, 8000);
   const threadHint = opts.isThread ? "[EMAIL THREAD — messages below in chronological order]\n" : "";
+  const attachmentLine = opts.attachments?.length
+    ? `\n\nAttachments available for independent promotion:\n${opts.attachments
+      .map((a) => `- id=${a.id}; filename=${a.filename}; mime=${a.mime}; size=${a.size}; messageId=${a.messageId}`)
+      .join("\n")}`
+    : "";
   const user =
     `From: ${msg.fromName} <${msg.fromAddr}>\n${youLine}${toLine}Subject: ${msg.subject}\n` +
     `Date: ${isoDay(msg.date)}\nToday: ${isoDay(Math.floor(Date.now() / 1000))}\n\n` +
-    `${threadHint}${body}`;
+    `${threadHint}${body}${attachmentLine}`;
   try {
     const out = (await chat(SYSTEM, user)) as string;
-    const p = extractJson(out) as { promote?: unknown; categories?: unknown; note?: unknown };
-    if (typeof p.promote !== "boolean") return null;
+    const p = extractJson(out) as { promote?: unknown; promoteMail?: unknown; categories?: unknown; note?: unknown; attachments?: unknown };
+    const promoteMail = typeof p.promoteMail === "boolean" ? p.promoteMail : p.promote;
+    if (typeof promoteMail !== "boolean") return null;
     const categories = Array.isArray(p.categories)
       ? p.categories.filter((c): c is string => typeof c === "string" && CATEGORIES.includes(c))
       : [];
-    if (!p.promote) return { promote: false, categories, note: null };
+    const attachmentIds = new Set((opts.attachments ?? []).map((a) => a.id));
+    const attachments = parseAttachmentDecisions(p.attachments, attachmentIds);
+    const promotesAttachment = attachments.some((a) => a.promote);
+    if (!promoteMail) return { promote: promotesAttachment, promoteMail: false, categories, note: null, attachments };
     const n = p.note as Record<string, unknown> | null | undefined;
     if (!n || typeof n.summary !== "string" || !n.summary.trim()) return null; // malformed promote -> retry
     const reviewBy = typeof n.reviewBy === "string" && /^\d{4}-\d{2}-\d{2}$/.test(n.reviewBy) ? n.reviewBy : null;
     return {
       promote: true,
+      promoteMail: true,
       categories,
       note: { summary: n.summary, facts: strs(n.facts), commitments: strs(n.commitments), people: strs(n.people), orgs: strs(n.orgs), reviewBy },
+      attachments,
     };
   } catch {
     return null;
   }
+}
+
+function parseAttachmentDecisions(raw: unknown, allowedIds: Set<string>): AttachmentDecision[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: AttachmentDecision[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.id !== "string" || (allowedIds.size > 0 && !allowedIds.has(r.id)) || seen.has(r.id)) continue;
+    seen.add(r.id);
+    const categories = strs(r.categories).filter((c) => ATTACHMENT_CATEGORIES.includes(c));
+    out.push({
+      id: r.id,
+      promote: r.promote === true,
+      reason: typeof r.reason === "string" ? r.reason.slice(0, 500) : "",
+      categories,
+    });
+  }
+  return out;
 }
