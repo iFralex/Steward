@@ -39,6 +39,7 @@ export interface HostSocket {
   refreshActions: (includeDone?: boolean) => void;
   markAction: (id: number, status: ActionStatus) => void;
   executeProposal: (id: number, proposalId: string) => void;
+  reviseProposal: (id: number, proposalId: string, instruction: string) => void;
   respondApproval: (
     requestId: string,
     decision: ApprovalDecision,
@@ -138,6 +139,19 @@ export function useHostSocket(url: string): HostSocket {
     [send],
   );
 
+  const reviseProposal = useCallback(
+    (id: number, proposalId: string, instruction: string) => {
+      const trimmed = instruction.trim();
+      if (!trimmed) return;
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "user", text: `Revise proposal ${proposalId}: ${trimmed}` },
+      ]);
+      send({ type: "action_center_revise", sessionId: sessionRef.current, id, proposalId, instruction: trimmed });
+    },
+    [send],
+  );
+
   const respondApproval = useCallback(
     (
       requestId: string,
@@ -158,7 +172,7 @@ export function useHostSocket(url: string): HostSocket {
     [send],
   );
 
-  return { connected, state, messages, approvals, actionCenter, sendMessage, refreshActions, markAction, executeProposal, respondApproval };
+  return { connected, state, messages, approvals, actionCenter, sendMessage, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {

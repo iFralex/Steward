@@ -180,3 +180,74 @@ test("planMailAction can run follow-up read tools and removes read-only proposal
   ]);
   assert.deepEqual(card.proposedActions[0].steps.map((s) => s.tool), ["mcp__mail__reply"]);
 });
+
+test("planMailAction seeds cross-thread sent-mail search for administrative replies", async () => {
+  const adminMsg: PlanningMessage = {
+    ...msg(),
+    threadId: 42,
+    fromName: "Giulia Crespi",
+    fromAddr: "giulia.crespi@example.com",
+    subject: "Presenze GIUGNO 2026",
+    bodyText: "Vi chiedo di comunicarmi le presenze di giugno e specificare come scaricate il ponte del 1 giugno.",
+  };
+  const executed: { tool: string; input: Record<string, unknown> }[] = [];
+  let planPayload: { contextSnapshot?: { mail?: { replyRequirements?: string[]; relatedMailFacts?: { kind?: string }[] } } } = {};
+  const card = await planMailAction(adminMsg, async (system, prompt) => {
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "admin-task",
+        priority: "normal",
+        summary: "Comunicare presenze e assenze di giugno.",
+        dueDateTime: null,
+        scheduling: null,
+        replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: "Ciao Giulia, ti aggiorno sul 1 giugno." },
+        reasoning: "Administrative attendance request.",
+      });
+    }
+    if (system.startsWith("You decide which read-only tools")) {
+      return JSON.stringify({ toolCalls: [] });
+    }
+    planPayload = JSON.parse(prompt) as typeof planPayload;
+    return JSON.stringify({
+      title: "Aggiornare Giulia sulle presenze",
+      summary: "Usa le osservazioni già raccolte.",
+      proposedActions: [{
+        id: "reply",
+        label: "Rispondi",
+        summary: "Invia aggiornamento.",
+        confidence: "medium",
+        steps: [{ id: "send", label: "Send", tool: "mcp__mail__reply", input: { messageId: adminMsg.messageId, body: "Ciao Giulia, ti aggiorno sul 1 giugno." }, writes: true }],
+      }],
+    });
+  }, {
+    userAddrs: ["alessio.antonucci@steantycip.com"],
+    readTool: async (tool, input) => {
+      executed.push({ tool, input });
+      return tool === "mcp__mail__search_messages"
+        ? [{
+            subject: "Re: Note Spese GIUGNO 2026",
+            from: "Alessio Antonucci <alessio.antonucci@steantycip.com>",
+            date: "2026-06-26T09:55:29.000Z",
+            mailUrl: "message://%3Cnote-spese@example.com%3E",
+            snippet: "Nulla da segnalare per le assenze.",
+          }]
+        : [{ subject: "Presenze GIUGNO 2026" }];
+    },
+  });
+
+  assert.ok(card);
+  assert.deepEqual(executed.map((c) => c.tool), [
+    "mcp__mail__get_thread",
+    "mcp__mail__search_messages",
+  ]);
+  assert.equal(executed[1].input.recipient, "giulia.crespi@example.com");
+  assert.equal(executed[1].input.mailbox, undefined);
+  assert.equal(executed[1].input.anyMailbox, true);
+  assert.equal(executed[1].input.perMessage, true);
+  assert.deepEqual(planPayload.contextSnapshot?.mail?.replyRequirements, [
+    "State June attendance/presence/absence information, including whether there are absences or nothing to report.",
+    "Specify how the 1 June bridge/closure day should be accounted for, such as ferie, ROL/banca ore, or another explicit choice.",
+  ]);
+  assert.equal(planPayload.contextSnapshot?.mail?.relatedMailFacts?.[0]?.kind, "already-communicated-absence-status");
+});

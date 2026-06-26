@@ -168,3 +168,153 @@ test("scanMailForActions skips low-value surveys without calling LLM", async () 
   mail.close();
   actions.close();
 });
+
+test("scanMailForActions can include read mail for rebuilds", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  mail.upsertMessage(row({ unread: false }));
+  let called = false;
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    includeRead: true,
+    chat: async (system) => {
+      called = true;
+      if (system.includes("Analyze")) {
+        return JSON.stringify({
+          needsAction: false,
+          kind: "admin-task",
+          priority: "normal",
+          summary: "No action.",
+          dueDateTime: null,
+          scheduling: null,
+          replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null },
+          reasoning: "test",
+        });
+      }
+      return JSON.stringify({ proposedActions: [] });
+    },
+  });
+  assert.equal(called, true);
+  assert.equal(res.considered, 1);
+  mail.close();
+  actions.close();
+});
+
+test("scanMailForActions can target a single thread", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  mail.upsertMessage(row({ messageId: "m1", appleThrid: 10 }));
+  mail.upsertMessage(row({ messageId: "m2", appleThrid: 20 }));
+  const seen: string[] = [];
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    threadId: 20,
+    chat: async (system, prompt) => {
+      if (system.includes("Analyze")) {
+        seen.push(prompt);
+        return JSON.stringify({
+          needsAction: false,
+          kind: "admin-task",
+          priority: "normal",
+          summary: "No action.",
+          dueDateTime: null,
+          scheduling: null,
+          replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null },
+          reasoning: "test",
+        });
+      }
+      return JSON.stringify({ proposedActions: [] });
+    },
+  });
+  assert.equal(res.considered, 1);
+  assert.match(seen[0], /m2|Mi mandi il documento/);
+  mail.close();
+  actions.close();
+});
+
+test("scanMailForActions plans once per thread using aggregated thread context", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  const now = Math.floor(Date.now() / 1000);
+  mail.upsertMessage(row({
+    messageId: "giulia-1",
+    appleThrid: 77,
+    fromName: "Giulia",
+    fromAddr: "giulia@example.com",
+    to: ["me@example.com"],
+    subject: "Presenze GIUGNO 2026",
+    date: now - 200,
+    bodyText: "Vi chiedo di comunicare le presenze di giugno.",
+  }));
+  mail.upsertMessage(row({
+    messageId: "giulia-2",
+    appleThrid: 77,
+    fromName: "Giulia",
+    fromAddr: "giulia@example.com",
+    to: ["me@example.com"],
+    subject: "R: Presenze GIUGNO 2026",
+    date: now - 100,
+    bodyText: "Vi ricordo che dovete comunicare come scaricare il ponte del 1 giugno.",
+  }));
+  mail.upsertMessage(row({
+    messageId: "colleague-1",
+    appleThrid: 77,
+    fromName: "Collega",
+    fromAddr: "colleague@example.com",
+    to: ["giulia@example.com"],
+    subject: "RE: Presenze GIUGNO 2026",
+    date: now - 10,
+    bodyText: "Per me il 1 giugno è ROL.\n\nFrom: Giulia\nVi ricordo che dovete comunicare come scaricare il ponte del 1 giugno.",
+  }));
+  let analyzeCalls = 0;
+  const prompts: string[] = [];
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    includeRead: true,
+    userAddrs: ["me@example.com"],
+    chat: async (system, prompt) => {
+      if (system.includes("Analyze")) {
+        analyzeCalls++;
+        prompts.push(prompt);
+        return JSON.stringify({
+          needsAction: true,
+          kind: "admin-task",
+          priority: "normal",
+          summary: "Serve rispondere a Giulia.",
+          dueDateTime: null,
+          scheduling: null,
+          replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: "Ok." },
+          reasoning: "Thread request.",
+        });
+      }
+      return JSON.stringify({
+        title: "Rispondi a Giulia",
+        summary: "Thread action.",
+        proposedActions: [{
+          id: "reply",
+          label: "Reply",
+          summary: "Send reply.",
+          confidence: "high",
+          steps: [{ id: "send", label: "Send", tool: "mcp__mail__reply", input: { messageId: "giulia-2", body: "Ok." }, writes: true }],
+        }],
+      });
+    },
+    now,
+  });
+
+  assert.equal(res.considered, 1);
+  assert.equal(analyzeCalls, 1);
+  assert.match(prompts[0], /THREAD CONTEXT/);
+  assert.match(prompts[0], /comunicare le presenze/);
+  assert.match(prompts[0], /scaricare il ponte/);
+  assert.match(prompts[0], /Per me il 1 giugno è ROL/);
+  const item = actions.list()[0];
+  assert.equal(item.sourceKey, "mail:thread:77");
+  assert.equal(item.payload.triggerMessageId, "colleague-1");
+  assert.equal(item.payload.messageId, "giulia-2");
+  mail.close();
+  actions.close();
+});

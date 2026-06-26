@@ -40,6 +40,16 @@ test("gated tool blocked on user deny, with note", async () => {
   assert.equal(calls.length, 0);
 });
 
+test("gated tool asks model to revise on user revise", async () => {
+  const calls: any[] = [];
+  const revise: RequestApproval = async () => ({ decision: "revise", note: "usa ferie e scusati per il ritardo" });
+  const t = gateToolDefinition(fakeTool("send", calls), policy, revise, noFollowUp);
+  const res: any = await t.execute("1", { body: "old" }, undefined, undefined, {} as any);
+  assert.match(res.content[0].text, /user requested a revision/);
+  assert.match(res.content[0].text, /usa ferie/);
+  assert.equal(calls.length, 0);
+});
+
 test("gated tool runs on approval; note delivered as follow-up; edited args used", async () => {
   const calls: any[] = [];
   const followUps: string[] = [];

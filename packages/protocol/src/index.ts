@@ -14,6 +14,7 @@ export type ClientEvent =
   | { type: "action_center_refresh"; sessionId: string; includeDone?: boolean; limit?: number }
   | { type: "action_center_mark"; sessionId: string; id: number; status: ActionStatus }
   | { type: "action_center_execute"; sessionId: string; id: number; proposalId: string }
+  | { type: "action_center_revise"; sessionId: string; id: number; proposalId: string; instruction: string }
   | {
       type: "approval_decision";
       sessionId: string;
@@ -82,7 +83,7 @@ export type ServerEvent =
   | { type: "status"; sessionId: string; state: SessionState }
   | { type: "error"; sessionId?: string; message: string };
 
-export type ApprovalDecision = "allow" | "deny";
+export type ApprovalDecision = "allow" | "deny" | "revise";
 export type SessionState = "idle" | "running";
 export type ActionStatus = "new" | "read" | "done" | "dismissed";
 

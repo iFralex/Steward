@@ -25,21 +25,32 @@ export async function scanMailForActions(deps: {
   limit?: number;
   userAddrs?: string[];
   readTool?: ReadToolExecutor;
+  includeRead?: boolean;
+  includeAnswered?: boolean;
+  threadId?: number;
 }): Promise<MailScanResult> {
   const now = deps.now ?? Math.floor(Date.now() / 1000);
   const since = now - (deps.recentDays ?? 14) * 86400;
   const limit = deps.limit ?? 50;
+  const unreadClause = deps.includeRead ? "" : "AND unread=1";
+  const answeredClause = deps.includeAnswered ? "" : "AND answered=0";
+  const threadClause = typeof deps.threadId === "number" ? "AND (thread_id=? OR apple_thrid=?)" : "";
+  const params: unknown[] = [since];
+  if (typeof deps.threadId === "number") params.push(deps.threadId, deps.threadId);
+  params.push(limit);
   const rows = deps.mail.raw.prepare(
     `SELECT * FROM messages
-     WHERE deleted=0 AND date>=? AND unread=1 AND answered=0 AND junk=0
+     WHERE deleted=0 AND date>=? ${unreadClause} ${answeredClause} ${threadClause} AND junk=0
        AND length(trim(coalesce(body_text,'')))>0
      ORDER BY date DESC
      LIMIT ?`,
-  ).all(since, limit) as Record<string, unknown>[];
+  ).all(...params) as Record<string, unknown>[];
   const messages = rows.map(rowToMessageForAction);
-  const result: MailScanResult = { considered: messages.length, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {} };
+  const candidates = buildThreadCandidates(deps.mail, messages, deps.userAddrs ?? []);
+  const result: MailScanResult = { considered: candidates.length, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {} };
 
-  for (const msg of messages) {
+  for (const candidate of candidates) {
+    const msg = candidate.message;
     if (NO_REPLY.test(msg.fromAddr) || NO_REPLY.test(msg.fromName)) {
       result.skipped++;
       continue;
@@ -75,6 +86,9 @@ export async function scanMailForActions(deps: {
       payload: {
         messageId: msg.messageId,
         threadId: msg.threadId,
+        triggerMessageId: candidate.trigger.messageId,
+        triggerDate: candidate.trigger.date,
+        threadMessageIds: candidate.threadMessages.map((m) => m.messageId),
         from: msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr,
         subject: msg.subject,
         date: msg.date,
@@ -92,6 +106,11 @@ export async function scanMailForActions(deps: {
 }
 
 interface MessageForAction extends MessageRow { threadId: number | null }
+interface ThreadCandidate {
+  message: MessageForAction;
+  trigger: MessageForAction;
+  threadMessages: MessageForAction[];
+}
 
 function buildActionChatPrompt(title: string): string {
   return [
@@ -106,6 +125,95 @@ function mailSourceKey(msg: Pick<MessageForAction, "messageId" | "threadId">): s
   return typeof msg.threadId === "number" && Number.isFinite(msg.threadId)
     ? `mail:thread:${msg.threadId}`
     : `mail:${msg.messageId}`;
+}
+
+function buildThreadCandidates(mail: Store, messages: MessageForAction[], userAddrs: string[]): ThreadCandidate[] {
+  const groups = new Map<string, MessageForAction[]>();
+  for (const msg of messages) {
+    const key = mailSourceKey(msg);
+    const group = groups.get(key);
+    if (group) group.push(msg);
+    else groups.set(key, [msg]);
+  }
+  const candidates: ThreadCandidate[] = [];
+  for (const group of groups.values()) {
+    const latestTrigger = [...group].sort((a, b) => b.date - a.date)[0];
+    const threadMessages = latestTrigger.threadId != null
+      ? loadThreadMessages(mail, latestTrigger.threadId)
+      : group;
+    const representative = chooseRepresentativeMessage(threadMessages, userAddrs) ?? latestTrigger;
+    const merged = mergeThreadForPlanning(representative, latestTrigger, threadMessages, userAddrs);
+    candidates.push({ message: merged, trigger: latestTrigger, threadMessages });
+  }
+  return candidates.sort((a, b) => b.trigger.date - a.trigger.date);
+}
+
+function loadThreadMessages(mail: Store, threadId: number): MessageForAction[] {
+  const rows = mail.raw.prepare(
+    `SELECT * FROM messages
+     WHERE deleted=0 AND junk=0 AND (thread_id=? OR apple_thrid=?)
+       AND length(trim(coalesce(body_text,'')))>0
+     ORDER BY date ASC`,
+  ).all(threadId, threadId) as Record<string, unknown>[];
+  return rows.map(rowToMessageForAction);
+}
+
+function chooseRepresentativeMessage(threadMessages: MessageForAction[], userAddrs: string[]): MessageForAction | null {
+  const incoming = threadMessages
+    .filter((m) => !isFromUser(m, userAddrs))
+    .filter((m) => !NO_REPLY.test(m.fromAddr) && !NO_REPLY.test(m.fromName));
+  const requestLike = incoming.filter(isRequestLikeMessage);
+  if (requestLike.length) {
+    const primaryRequester = requestLike[0].fromAddr.toLowerCase();
+    const sameRequester = requestLike.filter((m) => m.fromAddr.toLowerCase() === primaryRequester);
+    return sameRequester.sort((a, b) => b.date - a.date)[0] ?? null;
+  }
+  return [...incoming]
+    .sort((a, b) => b.date - a.date)[0] ?? null;
+}
+
+function mergeThreadForPlanning(
+  representative: MessageForAction,
+  trigger: MessageForAction,
+  threadMessages: MessageForAction[],
+  userAddrs: string[],
+): MessageForAction {
+  return {
+    ...representative,
+    date: Math.max(trigger.date, representative.date),
+    messageId: representative.messageId,
+    bodyText: renderThreadBody(threadMessages, userAddrs),
+    unread: threadMessages.some((m) => m.unread),
+    answered: threadMessages.every((m) => m.answered),
+  };
+}
+
+function renderThreadBody(threadMessages: MessageForAction[], userAddrs: string[]): string {
+  return [
+    "THREAD CONTEXT — analyze the whole thread, not only one message. Newer messages are listed last.",
+    ...threadMessages.map((m) => [
+      "---",
+      `Date: ${new Date(m.date * 1000).toISOString()}`,
+      `From: ${m.fromName ? `${m.fromName} <${m.fromAddr}>` : m.fromAddr}${isFromUser(m, userAddrs) ? " (Alessio/user)" : ""}`,
+      `To: ${m.to.join(", ")}`,
+      `Subject: ${m.subject}`,
+      cleanThreadBody(m.bodyText),
+    ].join("\n")),
+  ].join("\n\n");
+}
+
+function cleanThreadBody(body: string): string {
+  return body.replace(/\s+/g, " ").trim().slice(0, 2500);
+}
+
+function isFromUser(msg: MessageForAction, userAddrs: string[]): boolean {
+  const from = msg.fromAddr.toLowerCase();
+  return userAddrs.some((addr) => addr.toLowerCase() === from);
+}
+
+function isRequestLikeMessage(msg: MessageForAction): boolean {
+  const text = `${msg.subject}\n${msg.bodyText}`.toLowerCase();
+  return /\b(chiedo|vi chiedo|dovete|devi|potete|puoi|ricordo|vi ricordo|comunica|comunicare|inviami|inviate|entro|scadenza|deadline|please|can you|could you|required|action required|need you)\b/i.test(text);
 }
 
 function isLowValueSurvey(msg: MessageForAction): boolean {

@@ -6,7 +6,7 @@
 import { WebSocketServer } from "ws";
 import type { ClientEvent } from "@llm-wiki/protocol";
 import { runTurn } from "./core/agent-runner.ts";
-import { executeActionProposal, loadActionCenterState, markAction } from "./core/action-center-service.ts";
+import { ActionRevisionRequestedError, executeActionProposal, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
 import { Session, type Emit } from "./core/session.ts";
 import type { HostConfig } from "./config.ts";
 
@@ -69,6 +69,28 @@ export function startServer(config: HostConfig): WebSocketServer {
                 emit,
                 actionId: msg.id,
                 proposalId: msg.proposalId,
+              });
+              emit({ type: "action_center_state", sessionId: session.id, state });
+            } catch (err) {
+              if (err instanceof ActionRevisionRequestedError) {
+                await runTurn(config, session, emit, err.prompt);
+              } else {
+                emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
+              }
+            } finally {
+              emit({ type: "status", sessionId: session.id, state: "idle" });
+            }
+          })();
+          break;
+        case "action_center_revise":
+          void (async () => {
+            emit({ type: "status", sessionId: session.id, state: "running" });
+            try {
+              const state = await reviseActionProposal({
+                config,
+                actionId: msg.id,
+                proposalId: msg.proposalId,
+                instruction: msg.instruction,
               });
               emit({ type: "action_center_state", sessionId: session.id, state });
             } catch (err) {

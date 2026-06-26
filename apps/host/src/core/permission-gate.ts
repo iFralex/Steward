@@ -46,6 +46,10 @@ export function gateToolDefinition(
       }
       // gate → ask the user
       const outcome = await requestApproval({ tool: def.name, input: toRecord(params) });
+      if (outcome.decision === "revise") {
+        const how = outcome.note?.trim() ? `: ${outcome.note.trim()}` : "";
+        return blocked(`NOT DONE — user requested a revision${how}. Revise the tool input/action accordingly and try again only when the revised plan is ready.`);
+      }
       if (outcome.decision !== "allow") {
         const why = outcome.note?.trim() ? `: ${outcome.note.trim()}` : "";
         return blocked(`NOT DONE — denied by user${why}. Do not retry; propose an alternative.`);

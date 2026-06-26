@@ -90,7 +90,7 @@ export function ApprovalCard({
         )}
         <input
           className="border-input mt-3 w-full rounded-md border bg-transparent px-3 py-1.5 text-sm outline-none"
-          placeholder="Optional note (sent to the agent)"
+          placeholder="Optional note (sent to the agent after approval)"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />

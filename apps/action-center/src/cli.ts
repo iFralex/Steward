@@ -34,6 +34,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
             userAddrs,
             limit: Number(process.env.ACTION_CENTER_MAIL_LIMIT ?? 50),
             recentDays: Number(process.env.ACTION_CENTER_MAIL_DAYS ?? 14),
+            includeRead: process.env.ACTION_CENTER_INCLUDE_READ === "1",
+            includeAnswered: process.env.ACTION_CENTER_INCLUDE_ANSWERED === "1",
+            threadId: process.env.ACTION_CENTER_THREAD_ID ? Number(process.env.ACTION_CENTER_THREAD_ID) : undefined,
             readTool: bridgeForReadTools
               ? (tool, input) => {
                   if (!isAllowedReadTool(tool)) throw new Error(`read tool not allowed: ${tool}`);
