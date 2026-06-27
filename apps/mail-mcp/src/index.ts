@@ -126,7 +126,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           cc: STRINGS("cc addresses"),
           bcc: STRINGS("bcc addresses"),
           subject: { type: "string" },
-          body: { type: "string" },
+          body: { type: "string", minLength: 1 },
           attachments: STRINGS("absolute file paths to attach"),
         },
         required: ["to", "subject", "body"],
@@ -141,7 +141,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           id: { type: "string", description: "the message's `id` from a search result — pass it back as-is" },
           messageId: { type: "string", description: "RFC Message-ID — alternative to `id`" },
-          body: { type: "string" },
+          body: { type: "string", minLength: 1 },
           attachments: STRINGS("absolute file paths to attach"),
           replyAll: { type: "boolean" },
         },

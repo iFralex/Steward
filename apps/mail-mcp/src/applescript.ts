@@ -241,16 +241,44 @@ export function sendScript(args: SendArgs): string {
 }
 
 export function replyScript(args: ReplyArgs): string {
+  const body = esc(args.body);
   const lines: string[] = [
     'tell application "Mail"',
+    "  with timeout of 600 seconds",
     ...findMessageLines(args, "orig"),
-    `  set r to reply orig opening window false${args.replyAll ? " reply to all true" : ""}`,
-    `  set content of r to "${esc(args.body)}" & return & content of r`,
+    // Mail.app can ignore `content` changes on headless reply drafts
+    // (`opening window false`). Opening the compose window gives Mail a real
+    // editable draft. Saving and verifying the draft before sending prevents
+    // blank-body replies on Exchange/Mail.app. We preserve Mail's generated
+    // quoted reply content when available, but only verify the new reply body:
+    // Mail may rewrite quote/signature formatting during save/send.
+    `  set r to reply orig opening window true${args.replyAll ? " reply to all true" : ""}`,
+    `  set replyBody to "${body}"`,
+    '  set quotedContent to ""',
+    "  delay 1",
+    "  try",
+    "    set quotedContent to ((content of r) as string)",
+    "  end try",
+    "  if quotedContent is \"\" then",
+    "    set finalBody to replyBody",
+    "  else",
+    "    set finalBody to replyBody & return & return & quotedContent",
+    "  end if",
+    "  tell r",
+    "    set content to finalBody",
+    "  end tell",
+    "  save r",
+    "  delay 1",
+    "  set observedBody to ((content of r) as string)",
+    '  if observedBody does not contain replyBody then error "Reply body was not persisted before send"',
+    "  tell r",
   ];
   for (const att of args.attachments ?? []) {
-    lines.push(`  tell r to make new attachment with properties {file name:(POSIX file "${esc(att)}")} at after the last paragraph`);
+    lines.push(`    make new attachment with properties {file name:(POSIX file "${esc(att)}")} at after the last paragraph`);
   }
-  lines.push("  send r");
+  lines.push("    send");
+  lines.push("  end tell");
+  lines.push("  end timeout");
   lines.push("end tell");
   lines.push('return "sent"');
   return lines.join("\n");

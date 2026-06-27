@@ -34,7 +34,7 @@ function toEpochSeconds(s?: string): number | undefined {
 /** Reading a message body waits on a server download — allow longer. */
 const READ_TIMEOUT_MS = 90_000;
 /** Sending/replying goes through Mail + the mail server (Exchange round-trip) — allow longer. */
-const WRITE_TIMEOUT_MS = 120_000;
+const WRITE_TIMEOUT_MS = 300_000;
 
 export interface MailDeps {
   store: Store;
@@ -117,6 +117,9 @@ export class Mail {
   }
 
   async reply(args: ReplyArgs): Promise<{ sent: true }> {
+    if (!args.body?.trim()) {
+      throw new Error("reply body must not be empty");
+    }
     await this.run(replyScript(args), WRITE_TIMEOUT_MS);
     return { sent: true };
   }

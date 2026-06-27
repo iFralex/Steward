@@ -38,6 +38,16 @@ test("reply/send use a long write timeout (Exchange round-trip)", async () => {
   assert.ok(sendTimeout && sendTimeout >= 120_000, `send timeout too short: ${sendTimeout}`);
 });
 
+test("reply rejects an empty body without running anything", async () => {
+  let ran = false;
+  const mail = new Mail({
+    store: emptyStore(),
+    runner: async () => { ran = true; return ""; },
+  });
+  await assert.rejects(() => mail.reply({ messageId: "m@x", body: "   " }), /reply body must not be empty/);
+  assert.equal(ran, false);
+});
+
 test("send rejects an invalid `from` address without running anything", async () => {
   let ran = false;
   const mail = new Mail({

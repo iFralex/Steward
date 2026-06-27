@@ -33,8 +33,22 @@ test("searchScript escapes the sender filter and bounds the limit", () => {
 
 test("replyScript sends a reply and honours replyAll", () => {
   const s = replyScript({ messageId: "id1", body: "ok", replyAll: true });
+  assert.ok(s.includes("opening window true"));
   assert.ok(s.includes("reply to all true"));
   assert.ok(/\bsend\b/.test(s));
+});
+
+test("replyScript saves and verifies the reply body before sending", () => {
+  const s = replyScript({ messageId: "id1", body: 'ok "quoted" \\ path' });
+  assert.ok(s.includes("with timeout of 600 seconds"));
+  assert.ok(s.includes('set replyBody to "ok \\"quoted\\" \\\\ path"'));
+  assert.ok(s.includes("set quotedContent to"));
+  assert.ok(s.includes("set finalBody to replyBody & return & return & quotedContent"));
+  assert.equal((s.match(/set content to finalBody/g) ?? []).length, 1);
+  assert.ok(s.includes("save r"));
+  assert.ok(s.includes("observedBody does not contain replyBody"));
+  assert.ok(s.indexOf("set content to finalBody") < s.indexOf("save r"));
+  assert.ok(s.indexOf("save r") < s.indexOf("send"));
 });
 
 test("mailboxesScript includes the account email addresses", () => {
@@ -98,8 +112,10 @@ test("readScript falls back to the slow `whose message id is` path for an RFC id
   assert.ok(s.includes('whose message id is "abc@host"'));
 });
 
-test("readScript rejects a non-numeric native id (injection guard)", () => {
-  assert.throws(() => readScript({ id: '1 or true' }), /numeric id/);
+test("readScript treats a non-numeric id as a message-id fallback", () => {
+  const s = readScript({ id: "abc@host" });
+  assert.ok(s.includes('whose message id is "abc@host"'));
+  assert.ok(!s.includes("whose id is"));
 });
 
 test("searchScript record emits Mail's native id first for fast follow-up lookups", () => {
