@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_account_date ON messages(account, date);
 CREATE INDEX IF NOT EXISTS idx_messages_emlx_path ON messages(emlx_path);
+CREATE INDEX IF NOT EXISTS idx_messages_size ON messages(size);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   subject, from_addr, from_name, to_addrs, body_text
 );
