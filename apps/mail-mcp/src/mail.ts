@@ -69,7 +69,27 @@ export class Mail {
   }
 
   async listMailboxes(): Promise<Mailbox[]> {
+    // Serve from the local mirror (instant) instead of a ~5s live AppleScript
+    // enumeration. Falls back to AppleScript only when the mirror is empty
+    // (e.g. an in-memory store when the DB file is absent).
+    const fromMirror = this.mailboxesFromMirror();
+    if (fromMirror.length) return fromMirror;
     return parseMailboxes(await this.run(mailboxesScript()));
+  }
+
+  /** Mailboxes that actually hold mail, with each account's name + emails. */
+  private mailboxesFromMirror(): Mailbox[] {
+    const rows = this.store.raw.prepare(
+      `SELECT DISTINCT m.mailbox AS name, COALESCE(a.name, m.account) AS account, a.emails AS emails
+       FROM messages m LEFT JOIN accounts a ON a.uuid = m.account
+       WHERE m.deleted=0 AND m.mailbox IS NOT NULL AND m.mailbox <> ''
+       ORDER BY account, name`,
+    ).all() as { name: string; account: string; emails: string | null }[];
+    return rows.map((r) => ({
+      account: r.account,
+      emails: r.emails ? r.emails.split(/,\s*/).filter(Boolean) : [],
+      name: r.name,
+    }));
   }
 
   async search(args: SearchArgs): Promise<MessageSummary[]> {

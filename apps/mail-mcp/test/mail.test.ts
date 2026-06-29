@@ -17,6 +17,24 @@ function row(id: string, subject: string, body: string): MessageRow {
   };
 }
 
+test("listMailboxes is served from the mirror (no AppleScript) with account name + emails", async () => {
+  const s = emptyStore();
+  s.upsertMessage(row("m1@x", "hi", "body"));
+  s.raw.prepare("INSERT INTO accounts(uuid, name, emails) VALUES (?,?,?)").run("ACC", "Polimi", "alessio@polimi.it");
+  const mail = new Mail({ store: s, runner: async () => { throw new Error("AppleScript must not run"); } });
+  const boxes = await mail.listMailboxes();
+  assert.ok(boxes.some((b) => b.name === "INBOX" && b.account === "Polimi" && b.emails.includes("alessio@polimi.it")));
+  s.close();
+});
+
+test("listMailboxes falls back to AppleScript when the mirror is empty", async () => {
+  const US = "\x1f", RS = "\x1e";
+  const mail = new Mail({ store: emptyStore(), runner: async () => ["Polimi", "a@polimi.it", "INBOX"].join(US) + RS });
+  const boxes = await mail.listMailboxes();
+  assert.equal(boxes[0]?.name, "INBOX");
+  assert.deepEqual(boxes[0]?.emails, ["a@polimi.it"]);
+});
+
 test("send validates recipients then runs the send script", async () => {
   let ran = "";
   const mail = new Mail({
