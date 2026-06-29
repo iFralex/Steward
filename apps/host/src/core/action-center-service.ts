@@ -5,6 +5,7 @@ import type {
   ActionStatus,
   ServerEvent,
 } from "@llm-wiki/protocol";
+import { randomUUID } from "node:crypto";
 import { ActionStore } from "../../../action-center/src/store.ts";
 import { actionDbPath } from "../../../action-center/src/paths.ts";
 import { gatewayChat, jsonFromLlm } from "../../../action-center/src/llm.ts";
@@ -12,6 +13,7 @@ import type { HostConfig } from "../config.ts";
 import { buildMcpBridge } from "@llm-wiki/mcp-bridge";
 import type { Emit, Session } from "./session.ts";
 import { decideTool } from "./tool-policy.ts";
+import { extractToolOutput } from "./agent-runner.ts";
 
 interface ProposedStep {
   id: string;
@@ -83,19 +85,31 @@ export async function executeActionProposal(args: {
     if (decision === "gate") {
       const approved = await args.session.requestApproval({ tool: step.tool, input });
       if (approved.decision === "revise") {
-        args.emit({ type: "tool_result", sessionId: args.session.id, tool: step.tool, ok: false, summary: approved.note ?? "Revision requested" });
         throw new ActionRevisionRequestedError(buildRevisionPrompt(action, proposal, step, approved.note));
       }
       if (approved.decision !== "allow") {
-        args.emit({ type: "tool_result", sessionId: args.session.id, tool: step.tool, ok: false, summary: approved.note ?? "Denied" });
         throw new Error(`Action execution stopped: ${step.label}`);
       }
       input = approved.editedInput ?? input;
     }
 
-    args.emit({ type: "tool_call", sessionId: args.session.id, tool: step.tool, input });
-    const result = await bridge.callTool(step.tool, input);
-    args.emit({ type: "tool_result", sessionId: args.session.id, tool: step.tool, ok: true, summary: summarizeToolResult(result) });
+    const toolCallId = randomUUID();
+    args.emit({ type: "tool_call", sessionId: args.session.id, toolCallId, tool: step.tool, input });
+    const startedAt = Date.now();
+    try {
+      const result = await bridge.callTool(step.tool, input);
+      args.emit({
+        type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
+        ok: true, output: extractToolOutput(result), durationMs: Date.now() - startedAt,
+      });
+    } catch (err) {
+      args.emit({
+        type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
+        ok: false, output: null, durationMs: Date.now() - startedAt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 
   return markAction(args.actionId, "done");
@@ -269,11 +283,3 @@ function diagnostics(store: ActionStore, all: ActionCenterItem[]): ActionCenterD
   };
 }
 
-function summarizeToolResult(result: unknown): string {
-  try {
-    const text = JSON.stringify(result);
-    return text.length > 240 ? `${text.slice(0, 240)}…` : text;
-  } catch {
-    return String(result);
-  }
-}

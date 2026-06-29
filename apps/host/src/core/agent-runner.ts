@@ -60,16 +60,55 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
   };
 }
 
+/**
+ * Turn Pi's tool result into a UI-friendly `output`: pull the text out of the
+ * `{ content: [{ text }] }` shape and parse it as JSON when the tool returned
+ * JSON (our MCP tools do), otherwise keep the raw string.
+ */
+export function extractToolOutput(result: unknown): unknown {
+  const content = (result as { content?: unknown })?.content;
+  let text = "";
+  if (Array.isArray(content)) {
+    text = content.map((c) => (typeof (c as { text?: unknown })?.text === "string" ? (c as { text: string }).text : "")).join("");
+  } else if (typeof result === "string") {
+    text = result;
+  }
+  if (!text) return result ?? null;
+  const trimmed = text.trim();
+  if (trimmed[0] === "{" || trimmed[0] === "[") {
+    try { return JSON.parse(trimmed); } catch { /* not JSON, fall through */ }
+  }
+  return text;
+}
+
 /** Run one user turn through the agent, emitting channel events. */
 export async function runTurn(config: HostConfig, session: Session, emit: Emit, prompt: string): Promise<void> {
   if (!session.pi) {
     const runtime = await buildPiRuntime(config, session);
     if (session.closed) { await runtime.close(); return; }
+    const toolStarts = new Map<string, number>();
     const unsub = runtime.session.subscribe((e: any) => {
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
         if (e.assistantMessageEvent.delta) emit({ type: "assistant_token", sessionId: session.id, text: e.assistantMessageEvent.delta });
       } else if (e.type === "tool_execution_start") {
-        emit({ type: "tool_call", sessionId: session.id, tool: e.toolName, input: e.args ?? {} });
+        if (e.toolCallId) toolStarts.set(e.toolCallId, Date.now());
+        emit({ type: "tool_call", sessionId: session.id, toolCallId: e.toolCallId ?? "", tool: e.toolName, input: e.args ?? {} });
+      } else if (e.type === "tool_execution_end") {
+        const startedAt = e.toolCallId ? toolStarts.get(e.toolCallId) : undefined;
+        if (e.toolCallId) toolStarts.delete(e.toolCallId);
+        const durationMs = startedAt != null ? Date.now() - startedAt : 0;
+        const ok = !e.isError;
+        const output = extractToolOutput(e.result);
+        emit({
+          type: "tool_result",
+          sessionId: session.id,
+          toolCallId: e.toolCallId ?? "",
+          tool: e.toolName,
+          ok,
+          output,
+          durationMs,
+          ...(ok ? {} : { error: typeof output === "string" ? output : JSON.stringify(output) }),
+        });
       }
     });
     session.pi = {

@@ -19,6 +19,16 @@ export interface ChatMessage {
   text: string;
   /** For role "tool": the tool's input payload. */
   toolInput?: unknown;
+  /** For role "tool": correlates the call with its result. */
+  toolCallId?: string;
+  /** For role "tool": lifecycle of the invocation. */
+  toolStatus?: "running" | "ok" | "error";
+  /** For role "tool": the tool's result (set when it finishes). */
+  toolOutput?: unknown;
+  /** For role "tool": wall-clock duration in ms (set when it finishes). */
+  toolDurationMs?: number;
+  /** For role "tool": error message when it failed. */
+  toolError?: string;
   /** True while the assistant is still streaming into this message. */
   open?: boolean;
 }
@@ -83,8 +93,17 @@ export function useHostSocket(url: string): HostSocket {
         case "tool_call":
           setMessages((prev) => [
             ...prev,
-            { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input },
+            { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running" },
           ]);
+          break;
+        case "tool_result":
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.role === "tool" && m.toolCallId === msg.toolCallId
+                ? { ...m, toolStatus: msg.ok ? "ok" : "error", toolOutput: msg.output, toolDurationMs: msg.durationMs, toolError: msg.error }
+                : m,
+            ),
+          );
           break;
         case "approval_request":
           setApprovals((prev) => [

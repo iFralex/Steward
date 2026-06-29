@@ -17,18 +17,10 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { ToolCard } from "@/components/tool-card";
 import type { ActionCenterItem } from "@llm-wiki/protocol";
 
 const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
-
-function summarizeInput(input: unknown): string {
-  try {
-    const s = JSON.stringify(input);
-    return s.length > 140 ? `${s.slice(0, 140)}…` : s;
-  } catch {
-    return String(input);
-  }
-}
 
 function App() {
   const host = useHostSocket(HOST_URL);
@@ -112,12 +104,7 @@ function App() {
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
             {host.messages.map((m) =>
               m.role === "tool" ? (
-                <div key={m.id} className="text-muted-foreground flex items-center gap-2 text-xs">
-                  <span className="bg-muted shrink-0 rounded px-1.5 py-0.5 font-mono">🔧 {m.text}</span>
-                  {m.toolInput != null && (
-                    <span className="truncate font-mono opacity-70">{summarizeInput(m.toolInput)}</span>
-                  )}
-                </div>
+                <ToolCard key={m.id} m={m} />
               ) : (
                 <div key={m.id} className={m.role === "user" ? "text-right" : "text-left"}>
                   <div

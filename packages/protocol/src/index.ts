@@ -46,9 +46,13 @@ export type ServerEvent =
   | { type: "assistant_token"; sessionId: string; text: string }
   | { type: "assistant_done"; sessionId: string }
   | {
-      /** The agent invoked a tool (shown in the transcript so nothing is lost). */
+      /**
+       * The agent invoked a tool (shown in the transcript so nothing is lost).
+       * `toolCallId` correlates with the matching `tool_result`.
+       */
       type: "tool_call";
       sessionId: string;
+      toolCallId: string;
       tool: string;
       input: unknown;
     }
@@ -78,7 +82,21 @@ export type ServerEvent =
       options: string[];
       multiSelect: boolean;
     }
-  | { type: "tool_result"; sessionId: string; tool: string; ok: boolean; summary?: string }
+  | {
+      /**
+       * A tool finished. `toolCallId` matches the `tool_call`. `output` is the
+       * tool's result (parsed JSON when the tool returned JSON, else a string),
+       * `durationMs` is wall-clock time, `error` is set when `ok` is false.
+       */
+      type: "tool_result";
+      sessionId: string;
+      toolCallId: string;
+      tool: string;
+      ok: boolean;
+      output: unknown;
+      durationMs: number;
+      error?: string;
+    }
   | { type: "action_center_state"; sessionId: string; state: ActionCenterState }
   | { type: "status"; sessionId: string; state: SessionState }
   | { type: "error"; sessionId?: string; message: string };
