@@ -36,7 +36,21 @@ function App() {
 
   const copyJson = async () => {
     const json = JSON.stringify(
-      { messages: host.messages.map(({ role, text }) => ({ role, text })) },
+      {
+        messages: host.messages.map((m) =>
+          m.role === "tool"
+            ? {
+                role: "tool",
+                tool: m.text,
+                input: m.toolInput,
+                output: m.toolOutput,
+                durationMs: m.toolDurationMs,
+                status: m.toolStatus,
+                ...(m.toolError ? { error: m.toolError } : {}),
+              }
+            : { role: m.role, text: m.text },
+        ),
+      },
       null,
       2,
     );
