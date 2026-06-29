@@ -27,6 +27,18 @@ test("readDb returns the DB body when full (no live read)", async () => {
   s.close();
 });
 
+test("readDb serves a substantial partial body straight from the mirror (no live read)", async () => {
+  const s = Store.open(":memory:");
+  const r: MessageRow = { ...row("p2@x", "none"), bodyState: "partial", bodyText: "This is the full extracted body text from the mirror." };
+  s.upsertMessage(r);
+  let ran = false;
+  const d = await readDb(s, { messageId: "p2@x" }, async () => { ran = true; return ""; });
+  assert.equal(ran, false, "must NOT do a live read when the mirror already has the body");
+  assert.equal(d.body, "This is the full extracted body text from the mirror.");
+  assert.equal(d.bodyState, "partial");
+  s.close();
+});
+
 test("readDb completes a non-full body with a live read", async () => {
   const s = Store.open(":memory:");
   s.upsertMessage(row("b@x", "none"));

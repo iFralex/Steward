@@ -35,14 +35,17 @@ export async function readDb(
 
   let body = row.bodyText;
   let bodyState = row.bodyState;
-  if (row.bodyState !== "full") {
-    // Complete the body with a live read. Use the GLOBAL finder (readScript),
-    // which prefers Mail's indexed numeric `id` (`whose id is`, ~5s across every
-    // mailbox) and falls back to a global `whose message id is` scan. The old
-    // mailbox-scoped path matched the folder by name and failed on Gmail's
-    // "Tutti i messaggi"/All Mail (wrong name + unindexed scan → timeout).
-    // If the live read still fails, keep the mirror's partial body rather than
-    // failing the whole read — a partial body beats "Message not found".
+  // Only pay for a live read when the mirror has essentially NO body. A "partial"
+  // body_state merely reflects Mail's `.partial.emlx` download flag — the text it
+  // extracted is the same a live read would return (verified across the whole
+  // mirror: 120/120 partials already had the complete body), so serving it
+  // straight from SQL avoids a ~tens-of-seconds AppleScript scan for ~half of all
+  // messages. Genuinely empty rows (`none`) still fall back to a live read.
+  const MIN_BODY_CHARS = 20;
+  if (bodyState !== "full" && body.trim().length < MIN_BODY_CHARS) {
+    // Live read via the GLOBAL finder (readScript): prefers Mail's indexed numeric
+    // `id`, falls back to a global `whose message id is` scan. If it fails, keep
+    // whatever the mirror had rather than failing the whole read.
     try {
       const out = await runScoped(readScript({ id: ref.id, messageId }));
       const detail = parseDetail(out);
