@@ -246,13 +246,12 @@ export function replyScript(args: ReplyArgs): string {
     'tell application "Mail"',
     "  with timeout of 600 seconds",
     ...findMessageLines(args, "orig"),
-    // Mail.app can ignore `content` changes on headless reply drafts
-    // (`opening window false`). Opening the compose window gives Mail a real
-    // editable draft. Saving and verifying the draft before sending prevents
-    // blank-body replies on Exchange/Mail.app. We preserve Mail's generated
-    // quoted reply content when available, but only verify the new reply body:
-    // Mail may rewrite quote/signature formatting during save/send.
-    `  set r to reply orig opening window true${args.replyAll ? " reply to all true" : ""}`,
+    // Mail.app can send blank-body replies if we set content and immediately
+    // send. Saving and verifying the draft before sending prevents that on
+    // Exchange/Mail.app. We preserve Mail's generated quoted reply content
+    // when available, but only verify the new reply body: Mail may rewrite
+    // quote/signature formatting during save/send.
+    `  set r to reply orig opening window false${args.replyAll ? " reply to all true" : ""}`,
     `  set replyBody to "${body}"`,
     '  set quotedContent to ""',
     "  delay 1",
@@ -265,6 +264,7 @@ export function replyScript(args: ReplyArgs): string {
     "    set finalBody to replyBody & return & return & quotedContent",
     "  end if",
     "  tell r",
+    ...(args.from ? [`    set sender to "${esc(args.from)}"`] : []),
     "    set content to finalBody",
     "  end tell",
     "  save r",

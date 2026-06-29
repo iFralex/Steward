@@ -92,6 +92,8 @@ export interface SendArgs {
 }
 
 export interface ReplyArgs extends MessageRef {
+  /** Sender address — must be one of your account email addresses. Defaults to Mail's reply-selected account. */
+  from?: string;
   body: string;
   attachments?: string[];
   replyAll?: boolean;

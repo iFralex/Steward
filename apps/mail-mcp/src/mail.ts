@@ -22,6 +22,7 @@ import type { Store } from "../../mail-mirror/src/store.ts";
 import { searchDb, type SearchDbArgs } from "./db-search.ts";
 import { readDb, type MailDetail } from "./db-read.ts";
 import { getThread } from "./db-thread.ts";
+import { bodySnippet, sha256, WriteOpsStore } from "@llm-wiki/write-ops";
 
 type Runner = (script: string, timeoutMs?: number) => Promise<string>;
 
@@ -36,21 +37,35 @@ const READ_TIMEOUT_MS = 90_000;
 /** Sending/replying goes through Mail + the mail server (Exchange round-trip) — allow longer. */
 const WRITE_TIMEOUT_MS = 300_000;
 
+let writeLock: Promise<void> = Promise.resolve();
+
+async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeLock.then(fn, fn);
+  writeLock = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export interface MailDeps {
   store: Store;
   embedQuery?: (text: string) => Promise<number[] | null>;
   runner?: Runner;
+  writeOps?: WriteOpsStore | null;
 }
 
 export class Mail {
   private readonly store: Store;
   private readonly embedQuery?: (text: string) => Promise<number[] | null>;
   private readonly run: Runner;
+  private readonly writeOps: WriteOpsStore | null;
 
   constructor(deps: MailDeps) {
     this.store = deps.store;
     this.embedQuery = deps.embedQuery;
     this.run = deps.runner ?? ((script, timeoutMs) => runOsa(script, { timeoutMs }));
+    this.writeOps = deps.writeOps ?? null;
   }
 
   async listMailboxes(): Promise<Mailbox[]> {
@@ -105,23 +120,63 @@ export class Mail {
     return { path: dest };
   }
 
-  async send(args: SendArgs): Promise<{ sent: true }> {
+  async send(args: SendArgs): Promise<{ sent: true; operationId?: string }> {
     if (args.from && !isEmail(args.from)) {
       throw new Error(`from: must be one of your account email addresses, got "${args.from}"`);
     }
     assertEmails(args.to, "to");
     if (args.cc?.length) assertEmails(args.cc, "cc");
     if (args.bcc?.length) assertEmails(args.bcc, "bcc");
-    await this.run(sendScript(args), WRITE_TIMEOUT_MS);
-    return { sent: true };
+    const operationId = this.writeOps?.start({
+      kind: "mail.send",
+      input: args as unknown as Record<string, unknown>,
+      expected: {
+        from: args.from ?? null,
+        to: args.to,
+        cc: args.cc ?? [],
+        bcc: args.bcc ?? [],
+        subject: args.subject,
+        bodyHash: sha256(args.body),
+        bodySnippet: bodySnippet(args.body),
+      },
+    });
+    try {
+      await withWriteLock(() => this.run(sendScript(args), WRITE_TIMEOUT_MS));
+      if (operationId) this.writeOps?.scriptReturned(operationId);
+      return { sent: true, ...(operationId ? { operationId } : {}) };
+    } catch (err) {
+      if (operationId) this.writeOps?.failed(operationId, err);
+      throw err;
+    }
   }
 
-  async reply(args: ReplyArgs): Promise<{ sent: true }> {
+  async reply(args: ReplyArgs): Promise<{ sent: true; operationId?: string }> {
+    if (args.from && !isEmail(args.from)) {
+      throw new Error(`from: must be one of your account email addresses, got "${args.from}"`);
+    }
     if (!args.body?.trim()) {
       throw new Error("reply body must not be empty");
     }
-    await this.run(replyScript(args), WRITE_TIMEOUT_MS);
-    return { sent: true };
+    const operationId = this.writeOps?.start({
+      kind: "mail.reply",
+      input: args as unknown as Record<string, unknown>,
+      expected: {
+        messageId: args.messageId ?? null,
+        id: args.id ?? null,
+        from: args.from ?? null,
+        replyAll: args.replyAll ?? false,
+        bodyHash: sha256(args.body),
+        bodySnippet: bodySnippet(args.body),
+      },
+    });
+    try {
+      await withWriteLock(() => this.run(replyScript(args), WRITE_TIMEOUT_MS));
+      if (operationId) this.writeOps?.scriptReturned(operationId);
+      return { sent: true, ...(operationId ? { operationId } : {}) };
+    } catch (err) {
+      if (operationId) this.writeOps?.failed(operationId, err);
+      throw err;
+    }
   }
 
   async getThread(args: { threadId?: number; id?: string; messageId?: string }): Promise<MessageSummary[]> {

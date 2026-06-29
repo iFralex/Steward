@@ -12,6 +12,7 @@ import { embedText } from "@llm-wiki/search";
 import { createEvent, updateEvent, deleteEvent } from "./applescript.ts";
 import { parseSearchArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { applePath, indexDbPath } from "./paths.ts";
+import { WriteOpsStore } from "@llm-wiki/write-ops";
 
 const appleReady = existsSync(applePath());
 const store = appleReady ? AppleStore.openReadonly(applePath()) : null;
@@ -20,6 +21,7 @@ const index = idxReady ? IndexDb.open(indexDbPath()) : null;
 if (index) index.vectors.enable();
 const embedCfg = loadEmbedConfig();
 const embedQuery = embedCfg ? (t: string) => embedText(t, embedCfg) : undefined;
+const writeOps = WriteOpsStore.open();
 
 const server = new Server({ name: "calendar", version: "0.0.0" }, { capabilities: { tools: {} } });
 
@@ -78,9 +80,54 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (!store) throw new Error("Apple Calendar store not found. Grant Full Disk Access.");
         return ok(store.getEvent(requireString(raw, "uid")) ?? null);
       }
-      case "create_event": return ok({ uid: await createEvent(parseCreateArgs(raw)) });
-      case "update_event": { await updateEvent(parseUpdateArgs(raw)); return ok({ ok: true }); }
-      case "delete_event": { await deleteEvent(requireString(raw, "uid")); return ok({ ok: true }); }
+      case "create_event": {
+        const args = parseCreateArgs(raw);
+        const operationId = writeOps.start({
+          kind: "calendar.create",
+          input: args as unknown as Record<string, unknown>,
+          expected: args as unknown as Record<string, unknown>,
+        });
+        try {
+          const uid = await createEvent(args);
+          writeOps.scriptReturned(operationId, { uid });
+          return ok({ uid, operationId });
+        } catch (err) {
+          writeOps.failed(operationId, err);
+          throw err;
+        }
+      }
+      case "update_event": {
+        const args = parseUpdateArgs(raw);
+        const operationId = writeOps.start({
+          kind: "calendar.update",
+          input: args as unknown as Record<string, unknown>,
+          expected: args as unknown as Record<string, unknown>,
+        });
+        try {
+          await updateEvent(args);
+          writeOps.scriptReturned(operationId, { uid: args.uid });
+          return ok({ ok: true, operationId });
+        } catch (err) {
+          writeOps.failed(operationId, err);
+          throw err;
+        }
+      }
+      case "delete_event": {
+        const uid = requireString(raw, "uid");
+        const operationId = writeOps.start({
+          kind: "calendar.delete",
+          input: { uid },
+          expected: { uid },
+        });
+        try {
+          await deleteEvent(uid);
+          writeOps.scriptReturned(operationId, { uid });
+          return ok({ ok: true, operationId });
+        } catch (err) {
+          writeOps.failed(operationId, err);
+          throw err;
+        }
+      }
       default: throw new McpError(ErrorCode.MethodNotFound, `unknown tool ${req.params.name}`);
     }
   } catch (e) {

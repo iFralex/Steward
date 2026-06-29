@@ -16,6 +16,7 @@ import { Mail } from "./mail.ts";
 import type { ReadArgs, ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } from "./types.ts";
 import { enrichmentReady } from "./capabilities.ts";
 import { usesAdvancedFilters } from "./advanced-args.ts";
+import { WriteOpsStore } from "@llm-wiki/write-ops";
 
 // Open the read-only Store once at startup if the DB exists.
 // send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.
@@ -29,7 +30,7 @@ const enriched = dbReady && enrichmentReady(store);
 const embedCfg = loadEmbedConfig();
 const embedQuery = embedCfg ? (text: string) => embedText(text, embedCfg) : undefined;
 
-const mail = new Mail({ store, embedQuery });
+const mail = new Mail({ store, embedQuery, writeOps: WriteOpsStore.open() });
 
 const server = new Server({ name: "mail", version: "0.0.0" }, { capabilities: { tools: {} } });
 
@@ -141,6 +142,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           id: { type: "string", description: "the message's `id` from a search result — pass it back as-is" },
           messageId: { type: "string", description: "RFC Message-ID — alternative to `id`" },
+          from: {
+            type: "string",
+            description: "sender address; must be one of your account emails (see list_mailboxes). Omit to let Mail choose the reply account.",
+          },
           body: { type: "string", minLength: 1 },
           attachments: STRINGS("absolute file paths to attach"),
           replyAll: { type: "boolean" },

@@ -48,6 +48,42 @@ test("reply rejects an empty body without running anything", async () => {
   assert.equal(ran, false);
 });
 
+test("reply rejects an invalid `from` address without running anything", async () => {
+  let ran = false;
+  const mail = new Mail({
+    store: emptyStore(),
+    runner: async () => { ran = true; return ""; },
+  });
+  await assert.rejects(
+    () => mail.reply({ messageId: "m@x", from: "Polimi", body: "ok" }),
+    /account email addresses/,
+  );
+  assert.equal(ran, false);
+});
+
+test("send/reply writes are serialized", async () => {
+  const events: string[] = [];
+  let releaseFirst!: () => void;
+  const firstDone = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const mail = new Mail({
+    store: emptyStore(),
+    runner: async (script) => {
+      const kind = script.includes("make new outgoing message") ? "send" : "reply";
+      events.push(`${kind}:start`);
+      if (kind === "send") await firstDone;
+      events.push(`${kind}:end`);
+      return "sent";
+    },
+  });
+  const send = mail.send({ to: ["a@b.co"], subject: "x", body: "y" });
+  const reply = mail.reply({ messageId: "m@x", body: "ok" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(events, ["send:start"]);
+  releaseFirst();
+  await Promise.all([send, reply]);
+  assert.deepEqual(events, ["send:start", "send:end", "reply:start", "reply:end"]);
+});
+
 test("send rejects an invalid `from` address without running anything", async () => {
   let ran = false;
   const mail = new Mail({

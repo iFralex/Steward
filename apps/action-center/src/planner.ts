@@ -67,7 +67,7 @@ Return ONLY JSON:
    "steps": [{"id": string, "label": string, "tool": string, "input": object, "writes": boolean}]}
 ]}.
 Available write tools:
-- mcp__mail__reply with {messageId, body, replyAll}
+- mcp__mail__reply with {messageId, from, body, replyAll}
 - mcp__mail__send_email with {to, cc, subject, body}
 - mcp__calendar__create_event with {calendar, summary, start, end, location, description, url, alarms}
 Available read tools for later chat refinement:

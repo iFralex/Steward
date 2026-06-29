@@ -33,9 +33,14 @@ test("searchScript escapes the sender filter and bounds the limit", () => {
 
 test("replyScript sends a reply and honours replyAll", () => {
   const s = replyScript({ messageId: "id1", body: "ok", replyAll: true });
-  assert.ok(s.includes("opening window true"));
+  assert.ok(s.includes("opening window false"));
   assert.ok(s.includes("reply to all true"));
   assert.ok(/\bsend\b/.test(s));
+});
+
+test("replyScript sets the sender when `from` is given", () => {
+  const s = replyScript({ messageId: "id1", from: "me@polimi.it", body: "ok" });
+  assert.ok(s.includes('set sender to "me@polimi.it"'));
 });
 
 test("replyScript saves and verifies the reply body before sending", () => {

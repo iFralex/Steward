@@ -117,6 +117,30 @@ export class IndexDb {
   uidToRowid(uid: string): number | undefined {
     return (this.raw.prepare("SELECT rowid FROM events WHERE uid=?").get(uid) as { rowid: number } | undefined)?.rowid;
   }
+  getEvent(uid: string): CalEvent | null {
+    const row = this.raw.prepare("SELECT * FROM events WHERE uid=?").get(uid) as
+      | {
+          uid: string; summary: string; description: string | null; location: string | null;
+          start: string; end: string; all_day: number; calendar: string; account: string;
+          status: number; url: string | null; last_modified: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      uid: row.uid,
+      summary: row.summary,
+      description: row.description,
+      location: row.location,
+      start: row.start,
+      end: row.end,
+      allDay: !!row.all_day,
+      calendar: row.calendar,
+      account: row.account,
+      status: row.status,
+      url: row.url,
+      lastModified: row.last_modified,
+    };
+  }
 
   close(): void { this.raw.close(); }
 }
