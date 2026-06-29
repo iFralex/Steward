@@ -100,6 +100,13 @@ export class Store {
 
   constructor(db: Database.Database, opts: { readonly?: boolean } = {}) {
     this.raw = db;
+    // Memory-map the DB and keep a larger page cache. On a multi-GB mail DB this
+    // cuts read syscalls and cold-page re-reads, helping point lookups and the
+    // first queries of a process (readers in WAL mode map the file safely).
+    try {
+      db.pragma("mmap_size = 2147483648"); // 2 GiB
+      db.pragma("cache_size = -65536"); // 64 MiB page cache
+    } catch { /* best-effort */ }
     this.vec = new VectorStore(this.raw, {
       table: "vec_messages",
       stateKey: "vec_dim",

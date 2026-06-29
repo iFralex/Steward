@@ -39,20 +39,32 @@ export async function searchDb(
   const limit = Math.min(Math.max(args.limit ?? 20, 1), 100);
   const offset = Math.max(args.offset ?? 0, 0);
   const scope = resolveScope(store, { account: args.account, mailbox: args.mailbox, anyMailbox: args.anyMailbox });
-  const filters: DbFilters = { ...args, account: scope.account, mailbox: undefined, mailboxNames: scope.mailboxNames, anyMailbox: scope.anyMailbox };
+
+  // Trigram substring params (AND across params), computed up front so they DRIVE
+  // candidate selection. Single-field params map to one column; the convenience
+  // fields sender/recipient/cc OR across name+addr. Routing these through the
+  // trigram index (≥3 chars) avoids a LIKE full SCAN of the messages table — which
+  // stores bodies inline, so a scan reads ~everything and costs tens of seconds cold.
+  const TRIG: [keyof SearchDbArgs, string[]][] = [
+    ["fromName", ["from_name"]], ["fromAddr", ["from_addr"]], ["toName", ["to_names"]],
+    ["subjectContains", ["subject"]], ["bodyContains", ["body_text"]],
+    ["sender", ["from_name", "from_addr"]], ["recipient", ["to_names", "to_addrs"]], ["cc", ["cc_names", "cc_addrs"]],
+  ];
+  const trigParams = TRIG.filter(([k]) => typeof args[k] === "string" && (args[k] as string).trim().length >= 3);
+
+  // Convenience fields handled by trigram must NOT also run their SQL LIKE.
+  const trigKeys = new Set<string>(trigParams.map(([k]) => k as string));
+  const filterArgs: SearchDbArgs = { ...args };
+  for (const k of ["sender", "recipient", "cc"] as const) if (trigKeys.has(k)) filterArgs[k] = undefined;
+  const filters: DbFilters = { ...filterArgs, account: scope.account, mailbox: undefined, mailboxNames: scope.mailboxNames, anyMailbox: scope.anyMailbox };
   const { clause, params } = buildFilterSql(filters);
 
-  // Field-scoped trigram substring params (AND across params), computed up front so
-  // they can DRIVE candidate selection — not merely filter a recency-limited window.
-  const TRIG: [keyof SearchDbArgs, string][] = [
-    ["fromName", "from_name"], ["fromAddr", "from_addr"], ["toName", "to_names"],
-    ["subjectContains", "subject"], ["bodyContains", "body_text"],
-  ];
-  const trigParams = TRIG.filter(([k]) => typeof args[k] === "string" && (args[k] as string).length);
   let trigAllowed: Set<string> | null = null;
   if (trigParams.length) {
-    for (const [k, field] of trigParams) {
-      const ids = new Set(store.searchTrig(field, args[k] as string, 500).map((m) => m.messageId));
+    for (const [k, fields] of trigParams) {
+      const needle = args[k] as string;
+      const ids = new Set<string>();
+      for (const field of fields) for (const m of store.searchTrig(field, needle, 500)) ids.add(m.messageId);
       trigAllowed = trigAllowed === null ? ids : new Set(([...trigAllowed] as string[]).filter((id) => ids.has(id)));
     }
     trigAllowed = trigAllowed ?? new Set<string>();
