@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { writeFileSync } from "node:fs";
+import { join, basename } from "node:path";
 import type {
   Mailbox,
   MessageSummary,
@@ -22,6 +23,7 @@ import type { Store } from "../../mail-mirror/src/store.ts";
 import { searchDb, type SearchDbArgs } from "./db-search.ts";
 import { readDb, type MailDetail } from "./db-read.ts";
 import { getThread } from "./db-thread.ts";
+import { parseEmlxFile } from "../../mail-mirror/src/emlx.ts";
 import { bodySnippet, sha256, WriteOpsStore, type WriteOpKind } from "@llm-wiki/write-ops";
 
 /** Result of a send/reply: sent now, or queued for later delivery. */
@@ -137,10 +139,35 @@ export class Mail {
 
   async saveAttachment(args: SaveAttachmentArgs): Promise<{ path: string }> {
     const dir = args.destDir ? assertSafeDestPath(args.destDir) : tmpdir();
+    // Fast path: extract the attachment from the message's .emlx on disk — no
+    // AppleScript, no global message scan (which timed out on large mailboxes).
+    const fromMirror = await this.saveAttachmentFromMirror(args, dir);
+    if (fromMirror) return fromMirror;
+    // Fallback: live AppleScript save (message not mirrored / no .emlx / not found).
     const name = typeof args.attachment === "string" ? args.attachment : `attachment-${args.attachment}`;
-    const dest = join(dir, name);
+    const dest = join(dir, basename(name));
     await this.run(saveAttachmentScript(args, args.attachment, dest), READ_TIMEOUT_MS);
     return { path: dest };
+  }
+
+  /** Save an attachment straight from the message's .emlx (decoded by the mirror's parser). */
+  private async saveAttachmentFromMirror(args: SaveAttachmentArgs, dir: string): Promise<{ path: string } | null> {
+    const messageId = args.messageId ?? args.id;
+    if (!messageId) return null;
+    const row = this.store.getMessage(messageId);
+    if (!row?.emlxPath) return null;
+    try {
+      const parsed = await parseEmlxFile(row.emlxPath);
+      const att = typeof args.attachment === "number"
+        ? parsed.attachments[args.attachment - 1]
+        : parsed.attachments.find((a) => a.filename === args.attachment);
+      if (!att?.content) return null;
+      const dest = join(dir, basename(att.filename || `attachment-${args.attachment}`));
+      writeFileSync(dest, att.content);
+      return { path: dest };
+    } catch {
+      return null;
+    }
   }
 
   /** If `sendAt` is set, queue the op for later delivery and return the receipt; else undefined. */

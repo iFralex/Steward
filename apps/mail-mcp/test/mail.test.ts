@@ -18,6 +18,14 @@ function row(id: string, subject: string, body: string): MessageRow {
   };
 }
 
+test("saveAttachment falls back to AppleScript when the message isn't in the mirror", async () => {
+  let ran = false;
+  const mail = new Mail({ store: emptyStore(), runner: async () => { ran = true; return "/tmp/x.pdf"; } });
+  const r = await mail.saveAttachment({ messageId: "missing@x", attachment: "x.pdf", destDir: "/tmp" });
+  assert.equal(ran, true, "no mirror row → live AppleScript save");
+  assert.equal(r.path, "/tmp/x.pdf");
+});
+
 test("send with sendAt queues the email and does NOT run AppleScript", async () => {
   const writeOps = WriteOpsStore.open(":memory:");
   let ran = false;
