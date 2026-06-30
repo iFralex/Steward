@@ -62,7 +62,6 @@ CREATE TABLE IF NOT EXISTS write_ops (
 );
 CREATE INDEX IF NOT EXISTS idx_write_ops_status ON write_ops(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_write_ops_kind_started ON write_ops(kind, started_at);
-CREATE INDEX IF NOT EXISTS idx_write_ops_scheduled ON write_ops(status, scheduled_for);
 `;
 
 export function writeOpsDir(): string {
@@ -90,9 +89,11 @@ export class WriteOpsStore {
     this.raw = db;
     this.raw.pragma("journal_mode = WAL");
     this.raw.exec(SCHEMA);
-    // Migrate older DBs that predate scheduled sends.
+    // Migrate older DBs that predate scheduled sends (add the column BEFORE its
+    // index — an old table lacks the column, so the index can't be in SCHEMA).
     const cols = new Set((this.raw.prepare("PRAGMA table_info(write_ops)").all() as { name: string }[]).map((c) => c.name));
     if (!cols.has("scheduled_for")) this.raw.exec("ALTER TABLE write_ops ADD COLUMN scheduled_for INTEGER");
+    this.raw.exec("CREATE INDEX IF NOT EXISTS idx_write_ops_scheduled ON write_ops(status, scheduled_for)");
   }
 
   static open(path = writeOpsDbPath()): WriteOpsStore {
