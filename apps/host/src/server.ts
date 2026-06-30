@@ -11,12 +11,20 @@ import type { ClientEvent } from "@llm-wiki/protocol";
 import { runTurn } from "./core/agent-runner.ts";
 import { ActionRevisionRequestedError, executeActionProposal, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
 import { resolveToken } from "./core/file-registry.ts";
+import { usageStore } from "./core/usage-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import type { HostConfig } from "./config.ts";
 
-/** Serve a registered file by token: GET /file/<token>. Unknown tokens → 404. */
-function handleHttp(req: IncomingMessage, res: ServerResponse): void {
-  const m = (req.url ?? "").match(/^\/file\/([\w-]+)/);
+/** HTTP routes: GET /usage (JSON cost/token stats) and GET /file/<token>. */
+function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerResponse): void {
+  const url = req.url ?? "";
+  if (url.startsWith("/usage")) {
+    const body = JSON.stringify({ ...(usageStore().summary() as object), rates: config.gateway.cost });
+    res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+    res.end(body);
+    return;
+  }
+  const m = url.match(/^\/file\/([\w-]+)/);
   const entry = m ? resolveToken(m[1]) : null;
   if (!entry) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
   res.writeHead(200, {
@@ -29,7 +37,7 @@ function handleHttp(req: IncomingMessage, res: ServerResponse): void {
 }
 
 export function startServer(config: HostConfig): WebSocketServer {
-  const httpServer = createServer(handleHttp);
+  const httpServer = createServer((req, res) => handleHttp(config, req, res));
   const wss = new WebSocketServer({ server: httpServer });
 
   wss.on("connection", (ws) => {

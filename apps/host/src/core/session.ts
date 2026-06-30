@@ -30,6 +30,8 @@ export class Session {
   closed = false;
   /** Cumulative gateway cost (USD) already reported, to compute per-turn deltas. */
   lastCostUsd = 0;
+  /** Cumulative token counts already reported, to compute per-turn token deltas. */
+  lastTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
   private readonly pendingQuestions = new Map<string, (selected: string[]) => void>();
 

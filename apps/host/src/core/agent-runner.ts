@@ -9,6 +9,7 @@ import { gateToolDefinition } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
+import { usageStore } from "./usage-store.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 
@@ -134,7 +135,27 @@ export async function runTurn(config: HostConfig, session: Session, emit: Emit, 
       const stats = session.pi?.getStats();
       if (stats) {
         const turnCostUsd = Math.max(0, stats.cost - session.lastCostUsd);
+        const prev = session.lastTokens;
+        const turn = {
+          input: Math.max(0, stats.tokens.input - prev.input),
+          output: Math.max(0, stats.tokens.output - prev.output),
+          cacheRead: Math.max(0, stats.tokens.cacheRead - prev.cacheRead),
+          cacheWrite: Math.max(0, stats.tokens.cacheWrite - prev.cacheWrite),
+        };
         session.lastCostUsd = stats.cost;
+        session.lastTokens = { input: stats.tokens.input, output: stats.tokens.output, cacheRead: stats.tokens.cacheRead, cacheWrite: stats.tokens.cacheWrite };
+        try {
+          usageStore().record({
+            ts: Date.now(),
+            sessionId: session.id,
+            model: config.gateway.tier,
+            inputTokens: turn.input,
+            outputTokens: turn.output,
+            cacheReadTokens: turn.cacheRead,
+            cacheWriteTokens: turn.cacheWrite,
+            costUsd: turnCostUsd,
+          });
+        } catch { /* usage ledger unavailable — don't break the turn */ }
         emit({ type: "usage", sessionId: session.id, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
       }
     } catch { /* stats unavailable */ }

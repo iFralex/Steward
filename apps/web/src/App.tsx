@@ -20,14 +20,17 @@ import {
 import { cn } from "@/lib/utils";
 import { ToolCard } from "@/components/tool-card";
 import { CardView, type FileApi } from "@/components/cards";
+import { UsagePage } from "@/components/usage-page";
 import type { ActionCenterItem } from "@llm-wiki/protocol";
 
 const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
+const HTTP_BASE = HOST_URL.replace(/^ws/, "http");
 
 function App() {
   const host = useHostSocket(HOST_URL);
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<"chat" | "usage">("chat");
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -82,15 +85,34 @@ function App() {
   return (
     <div className="bg-background text-foreground flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 py-3">
-        <h1 className="text-sm font-semibold">Personal Agent</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-sm font-semibold">Personal Agent</h1>
+          <div className="bg-muted flex rounded-md p-0.5 text-xs">
+            {(["chat", "usage"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={cn(
+                  "rounded px-2.5 py-1 capitalize transition",
+                  view === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
+                )}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex items-center gap-3">
           {host.usage && (
-            <span
-              className="text-muted-foreground border-border rounded-md border px-2 py-0.5 text-xs tabular-nums"
-              title={`Ultimo turno: $${host.usage.turnCostUsd.toFixed(4)} · ${host.usage.tokens.total.toLocaleString("it-IT")} token (in ${host.usage.tokens.input.toLocaleString("it-IT")} / out ${host.usage.tokens.output.toLocaleString("it-IT")} / cache ${host.usage.tokens.cacheRead.toLocaleString("it-IT")})`}
+            <button
+              type="button"
+              onClick={() => setView("usage")}
+              className="text-muted-foreground border-border hover:bg-muted rounded-md border px-2 py-0.5 text-xs tabular-nums transition"
+              title={`Ultimo turno: $${host.usage.turnCostUsd.toFixed(4)} · ${host.usage.tokens.total.toLocaleString("it-IT")} token (in ${host.usage.tokens.input.toLocaleString("it-IT")} / out ${host.usage.tokens.output.toLocaleString("it-IT")} / cache ${host.usage.tokens.cacheRead.toLocaleString("it-IT")}) — apri Usage`}
             >
               ${host.usage.costUsd.toFixed(4)}
-            </span>
+            </button>
           )}
           <span className="text-muted-foreground text-xs">
             {host.connected ? (host.state === "running" ? "thinking…" : "connected") : "disconnected"}
@@ -106,6 +128,11 @@ function App() {
         </div>
       </header>
 
+      {view === "usage" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <UsagePage httpBase={HTTP_BASE} />
+        </div>
+      ) : (
       <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)_minmax(360px,0.9fr)]">
         <aside className="min-h-0 border-r">
           <ActionCenterPanel
@@ -184,6 +211,7 @@ function App() {
           />
         </aside>
       </div>
+      )}
     </div>
   );
 }
