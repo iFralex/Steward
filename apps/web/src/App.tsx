@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useHostSocket } from "@/lib/host-socket";
 import { ApprovalCard } from "@/components/approval-card";
+import { QuestionCard } from "@/components/question-card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -62,7 +63,7 @@ function App() {
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [host.messages, host.approvals]);
+  }, [host.messages, host.approvals, host.questions]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -140,6 +141,9 @@ function App() {
             )}
             {host.approvals.map((a) => (
               <ApprovalCard key={a.requestId} approval={a} onDecision={host.respondApproval} />
+            ))}
+            {host.questions.map((q) => (
+              <QuestionCard key={q.requestId} question={q} onRespond={host.respondQuestion} />
             ))}
           </div>
 

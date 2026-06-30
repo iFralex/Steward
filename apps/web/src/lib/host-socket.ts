@@ -39,13 +39,22 @@ export interface PendingApproval {
   input: unknown;
 }
 
+export interface PendingQuestion {
+  requestId: string;
+  question: string;
+  options: string[];
+  multiSelect: boolean;
+}
+
 export interface HostSocket {
   connected: boolean;
   state: SessionState;
   messages: ChatMessage[];
   approvals: PendingApproval[];
+  questions: PendingQuestion[];
   actionCenter: ActionCenterState | null;
   sendMessage: (text: string) => void;
+  respondQuestion: (requestId: string, selected: string[]) => void;
   refreshActions: (includeDone?: boolean) => void;
   markAction: (id: number, status: ActionStatus) => void;
   executeProposal: (id: number, proposalId: string) => void;
@@ -65,6 +74,7 @@ export function useHostSocket(url: string): HostSocket {
   const [state, setState] = useState<SessionState>("idle");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [actionCenter, setActionCenter] = useState<ActionCenterState | null>(null);
 
   useEffect(() => {
@@ -109,6 +119,12 @@ export function useHostSocket(url: string): HostSocket {
           setApprovals((prev) => [
             ...prev,
             { requestId: msg.requestId, tool: msg.tool, input: msg.input },
+          ]);
+          break;
+        case "question_request":
+          setQuestions((prev) => [
+            ...prev,
+            { requestId: msg.requestId, question: msg.question, options: msg.options, multiSelect: msg.multiSelect },
           ]);
           break;
         case "action_center_state":
@@ -191,7 +207,15 @@ export function useHostSocket(url: string): HostSocket {
     [send],
   );
 
-  return { connected, state, messages, approvals, actionCenter, sendMessage, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  const respondQuestion = useCallback(
+    (requestId: string, selected: string[]) => {
+      setQuestions((prev) => prev.filter((q) => q.requestId !== requestId));
+      send({ type: "question_response", sessionId: sessionRef.current, requestId, selected });
+    },
+    [send],
+  );
+
+  return { connected, state, messages, approvals, questions, actionCenter, sendMessage, respondQuestion, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {
