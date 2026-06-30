@@ -7,6 +7,7 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSe
 import { buildMcpBridge, type McpBridge } from "@llm-wiki/mcp-bridge";
 import { gateToolDefinition } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
+import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
@@ -99,6 +100,7 @@ export async function runTurn(config: HostConfig, session: Session, emit: Emit, 
         const durationMs = startedAt != null ? Date.now() - startedAt : 0;
         const ok = !e.isError;
         const output = extractToolOutput(e.result);
+        const files = filesFromOutput(output);
         emit({
           type: "tool_result",
           sessionId: session.id,
@@ -107,6 +109,7 @@ export async function runTurn(config: HostConfig, session: Session, emit: Emit, 
           ok,
           output,
           durationMs,
+          ...(files.length ? { files } : {}),
           ...(ok ? {} : { error: typeof output === "string" ? output : JSON.stringify(output) }),
         });
       }

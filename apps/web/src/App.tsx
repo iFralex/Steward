@@ -119,7 +119,7 @@ function App() {
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
             {host.messages.map((m) =>
               m.role === "tool" ? (
-                <ToolCard key={m.id} m={m} />
+                <ToolCard key={m.id} m={m} onOpenFile={host.openFile} onRevealFile={host.revealFile} />
               ) : (
                 <div key={m.id} className={m.role === "user" ? "text-right" : "text-left"}>
                   <div

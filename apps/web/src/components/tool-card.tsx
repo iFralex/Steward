@@ -9,6 +9,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
+import { FileChip } from "@/components/file-chip";
 import type { ChatMessage } from "@/lib/host-socket";
 
 const NS_ICON: Record<string, string> = { mail: "✉️", calendar: "📅", contacts: "👤", "llm-wiki": "📚" };
@@ -88,7 +89,11 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function ToolCard({ m }: { m: ChatMessage }) {
+export function ToolCard({ m, onOpenFile, onRevealFile }: {
+  m: ChatMessage;
+  onOpenFile: (token: string) => void;
+  onRevealFile: (token: string) => void;
+}) {
   const { icon, label } = parseToolName(m.text);
   const running = m.toolStatus === "running";
   const error = m.toolStatus === "error";
@@ -96,30 +101,39 @@ export function ToolCard({ m }: { m: ChatMessage }) {
   const duration = m.toolDurationMs != null ? formatDuration(m.toolDurationMs) : null;
 
   return (
-    <Accordion className={cn("rounded-md border text-xs", error ? "border-destructive/40" : "border-border")}>
-      <AccordionItem value={m.id} className="border-0">
-        <AccordionTrigger className="px-2 py-1.5 no-underline hover:no-underline">
-          <span className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="shrink-0">{icon}</span>
-            <span className="truncate font-mono font-medium">{label}</span>
-            <span className="text-muted-foreground ml-auto flex items-center gap-2 pr-1 font-normal">
-              {summary && <span className="max-w-[180px] truncate">{summary}</span>}
-              {duration && <span className="tabular-nums">{duration}</span>}
-              <StatusDot status={m.toolStatus} />
+    <div className={cn("rounded-md border text-xs", error ? "border-destructive/40" : "border-border")}>
+      <Accordion>
+        <AccordionItem value={m.id} className="border-0">
+          <AccordionTrigger className="px-2 py-1.5 no-underline hover:no-underline">
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="shrink-0">{icon}</span>
+              <span className="truncate font-mono font-medium">{label}</span>
+              <span className="text-muted-foreground ml-auto flex items-center gap-2 pr-1 font-normal">
+                {summary && <span className="max-w-[180px] truncate">{summary}</span>}
+                {duration && <span className="tabular-nums">{duration}</span>}
+                <StatusDot status={m.toolStatus} />
+              </span>
             </span>
-          </span>
-        </AccordionTrigger>
-        <AccordionContent className="px-2 pb-2">
-          <div className="space-y-2">
-            <Section title="Input"><JsonBlock value={m.toolInput} /></Section>
-            {!running && (
-              <Section title={error ? "Error" : "Output"}>
-                {error ? <JsonBlock value={m.toolError} tone="error" /> : <OutputBlock value={m.toolOutput} />}
-              </Section>
-            )}
-          </div>
-        </AccordionContent>
-      </AccordionItem>
-    </Accordion>
+          </AccordionTrigger>
+          <AccordionContent className="px-2 pb-2">
+            <div className="space-y-2">
+              <Section title="Input"><JsonBlock value={m.toolInput} /></Section>
+              {!running && (
+                <Section title={error ? "Error" : "Output"}>
+                  {error ? <JsonBlock value={m.toolError} tone="error" /> : <OutputBlock value={m.toolOutput} />}
+                </Section>
+              )}
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+      {m.toolFiles && m.toolFiles.length > 0 && (
+        <div className="flex flex-col gap-1 border-t px-2 py-2">
+          {m.toolFiles.map((f) => (
+            <FileChip key={f.token} file={f} onOpen={onOpenFile} onReveal={onRevealFile} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

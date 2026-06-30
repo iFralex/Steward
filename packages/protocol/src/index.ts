@@ -8,9 +8,23 @@
  * by both the host (Node) and the web client (browser).
  */
 
+/**
+ * A file produced/referenced by a tool, served by the host over HTTP at
+ * `/file/<token>`. The channel renders it as an openable, draggable chip.
+ */
+export interface ChannelFile {
+  name: string;
+  /** Opaque handle; fetch the bytes at `<httpBase>/file/<token>`. */
+  token: string;
+  mime: string;
+  size: number;
+}
+
 /** Messages a channel sends INTO the core. */
 export type ClientEvent =
   | { type: "user_message"; sessionId: string; text: string }
+  | { type: "open_file"; token: string }
+  | { type: "reveal_file"; token: string }
   | { type: "action_center_refresh"; sessionId: string; includeDone?: boolean; limit?: number }
   | { type: "action_center_mark"; sessionId: string; id: number; status: ActionStatus }
   | { type: "action_center_execute"; sessionId: string; id: number; proposalId: string }
@@ -96,6 +110,8 @@ export type ServerEvent =
       output: unknown;
       durationMs: number;
       error?: string;
+      /** On-disk files the tool produced/referenced (e.g. a saved attachment). */
+      files?: ChannelFile[];
     }
   | { type: "action_center_state"; sessionId: string; state: ActionCenterState }
   | { type: "status"; sessionId: string; state: SessionState }

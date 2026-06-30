@@ -8,6 +8,7 @@ import type {
   ActionCenterState,
   ActionStatus,
   ApprovalDecision,
+  ChannelFile,
   ClientEvent,
   ServerEvent,
   SessionState,
@@ -29,6 +30,8 @@ export interface ChatMessage {
   toolDurationMs?: number;
   /** For role "tool": error message when it failed. */
   toolError?: string;
+  /** For role "tool": on-disk files the tool produced (openable/draggable). */
+  toolFiles?: ChannelFile[];
   /** True while the assistant is still streaming into this message. */
   open?: boolean;
 }
@@ -55,6 +58,8 @@ export interface HostSocket {
   actionCenter: ActionCenterState | null;
   sendMessage: (text: string) => void;
   respondQuestion: (requestId: string, selected: string[]) => void;
+  openFile: (token: string) => void;
+  revealFile: (token: string) => void;
   refreshActions: (includeDone?: boolean) => void;
   markAction: (id: number, status: ActionStatus) => void;
   executeProposal: (id: number, proposalId: string) => void;
@@ -110,7 +115,7 @@ export function useHostSocket(url: string): HostSocket {
           setMessages((prev) =>
             prev.map((m) =>
               m.role === "tool" && m.toolCallId === msg.toolCallId
-                ? { ...m, toolStatus: msg.ok ? "ok" : "error", toolOutput: msg.output, toolDurationMs: msg.durationMs, toolError: msg.error }
+                ? { ...m, toolStatus: msg.ok ? "ok" : "error", toolOutput: msg.output, toolDurationMs: msg.durationMs, toolError: msg.error, toolFiles: msg.files }
                 : m,
             ),
           );
@@ -215,7 +220,10 @@ export function useHostSocket(url: string): HostSocket {
     [send],
   );
 
-  return { connected, state, messages, approvals, questions, actionCenter, sendMessage, respondQuestion, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  const openFile = useCallback((token: string) => send({ type: "open_file", token }), [send]);
+  const revealFile = useCallback((token: string) => send({ type: "reveal_file", token }), [send]);
+
+  return { connected, state, messages, approvals, questions, actionCenter, sendMessage, respondQuestion, openFile, revealFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {

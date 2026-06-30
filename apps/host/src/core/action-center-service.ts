@@ -14,6 +14,7 @@ import { buildMcpBridge } from "@llm-wiki/mcp-bridge";
 import type { Emit, Session } from "./session.ts";
 import { decideTool } from "./tool-policy.ts";
 import { extractToolOutput } from "./agent-runner.ts";
+import { filesFromOutput } from "./file-registry.ts";
 
 interface ProposedStep {
   id: string;
@@ -98,9 +99,12 @@ export async function executeActionProposal(args: {
     const startedAt = Date.now();
     try {
       const result = await bridge.callTool(step.tool, input);
+      const output = extractToolOutput(result);
+      const files = filesFromOutput(output);
       args.emit({
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
-        ok: true, output: extractToolOutput(result), durationMs: Date.now() - startedAt,
+        ok: true, output, durationMs: Date.now() - startedAt,
+        ...(files.length ? { files } : {}),
       });
     } catch (err) {
       args.emit({
