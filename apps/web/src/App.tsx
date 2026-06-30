@@ -65,7 +65,7 @@ function App() {
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [host.messages, host.approvals, host.questions]);
+  }, [host.messages, host.approvals, host.questions, host.state]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -147,6 +147,11 @@ function App() {
             {host.questions.map((q) => (
               <QuestionCard key={q.requestId} question={q} onRespond={host.respondQuestion} />
             ))}
+            {(() => {
+              const last = host.messages[host.messages.length - 1];
+              const streaming = last?.role === "assistant" && last.open && !!last.text;
+              return host.state === "running" && !streaming ? <ThinkingIndicator /> : null;
+            })()}
           </div>
 
           <form onSubmit={submit} className="flex gap-2 border-t p-3">
@@ -176,6 +181,18 @@ function App() {
 }
 
 export default App;
+
+function ThinkingIndicator() {
+  return (
+    <div className="text-left">
+      <div className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-lg px-3 py-3" aria-label="sta ragionando">
+        <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-current" />
+      </div>
+    </div>
+  );
+}
 
 function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) {
   return (
