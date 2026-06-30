@@ -142,7 +142,7 @@ function App() {
               ),
             )}
             {host.approvals.map((a) => (
-              <ApprovalCard key={a.requestId} approval={a} onDecision={host.respondApproval} />
+              <ApprovalCard key={a.requestId} approval={a} onDecision={host.respondApproval} fileApi={fileApi} />
             ))}
             {host.questions.map((q) => (
               <QuestionCard key={q.requestId} question={q} onRespond={host.respondQuestion} />

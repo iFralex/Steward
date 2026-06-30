@@ -22,13 +22,20 @@ type Dict = Record<string, unknown>;
 const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
 
 function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]; fileApi: FileApi }) {
-  const attachments = Array.isArray(data.attachments) ? (data.attachments as Dict[]) : [];
+  const attachments = (Array.isArray(data.attachments) ? data.attachments : []).map((a) =>
+    typeof a === "string" ? { name: a.split("/").pop() ?? a, path: a } : (a as Dict),
+  );
   const mailUrl = str(data.mailUrl);
   return (
     <div className="bg-card my-1 overflow-hidden rounded-md border text-xs">
       <div className="bg-muted/40 border-b px-3 py-2">
         <div className="font-medium">{str(data.subject) || "(senza oggetto)"}</div>
-        <div className="text-muted-foreground">{str(data.from)}{data.date ? ` · ${fmtDate(data.date)}` : ""}</div>
+        <div className="text-muted-foreground">
+          {data.to != null && String(data.to).length
+            ? `A: ${Array.isArray(data.to) ? data.to.join(", ") : str(data.to)}`
+            : str(data.from)}
+          {data.date ? ` · ${fmtDate(data.date)}` : ""}
+        </div>
       </div>
       {data.body ? (
         <div className="max-h-64 overflow-auto px-3 py-2 leading-relaxed whitespace-pre-wrap">{str(data.body)}</div>
@@ -37,7 +44,7 @@ function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]
         {mailUrl && <a href={mailUrl} className="text-primary underline">Apri in Mail</a>}
         {attachments.map((a, i) => {
           const name = str(a.name);
-          const f = fileApi.resolve(name);
+          const f = fileApi.resolve(str(a.path)) ?? fileApi.resolve(name);
           return f
             ? <FileChip key={name + i} file={f} onOpen={fileApi.open} onReveal={fileApi.reveal} />
             : <span key={name + i} className="bg-muted/60 rounded border px-2 py-1">📎 {name}</span>;
@@ -98,9 +105,22 @@ export function CardView({ type, data, files, fileApi }: { type: string; data: u
   }
 }
 
+const bareName = (tool: string): string => {
+  const p = tool.split("__");
+  return p[0] === "mcp" && p.length >= 3 ? p.slice(2).join("__") : tool;
+};
+
+/** Pick a card to PREVIEW a pending gated action (from its proposed input). */
+export function cardForApproval(tool: string, input: unknown): { type: string; data: unknown } | null {
+  const name = bareName(tool);
+  if (name === "send_email" || name === "reply") return { type: "email", data: input };
+  if (name === "create_event" || name === "update_event") return { type: "event", data: input };
+  return null;
+}
+
 /** Pick a card for a tool result, or null to fall back to raw JSON. */
 export function cardForTool(tool: string, input: unknown, output: unknown): { type: string; data: unknown } | null {
-  const name = tool.split("__").slice(2).join("__") || tool;
+  const name = bareName(tool);
   if (name === "read_message" && output && typeof output === "object") return { type: "email", data: output };
   if ((name === "search_messages" || name === "get_thread") && Array.isArray(output)) return { type: "search", data: output };
   if ((name === "create_event" || name === "update_event") && input && typeof input === "object") {
