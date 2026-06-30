@@ -31,6 +31,14 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Sensitive actions (sending email, creating events, writing files) require",
   "the user's approval — propose them via the appropriate tool and the host",
   "will ask the user to confirm. Never claim a sensitive action is done.",
+  "To show a rich card inline in your reply, emit a fenced code block with",
+  "language `card` containing JSON with a `type` field. Types:",
+  "`email` {from, subject, date, body, mailUrl};",
+  "`file` {path} (a file you saved on disk — the user can open/drag it);",
+  "`event` {summary, start, end, location, calendar, url};",
+  "`search` {results:[{subject, from, date, mailUrl, snippet}]}.",
+  "Use a card when presenting an email you read or sent, a saved file, or an",
+  "event — e.g. write \"Ho inviato la mail:\" then the email card.",
 ].join(" ");
 
 export function loadConfig(): HostConfig {

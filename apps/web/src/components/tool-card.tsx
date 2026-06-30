@@ -10,6 +10,7 @@ import remarkGfm from "remark-gfm";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
 import { FileChip } from "@/components/file-chip";
+import { CardView, cardForTool, type FileApi } from "@/components/cards";
 import type { ChatMessage } from "@/lib/host-socket";
 
 const NS_ICON: Record<string, string> = { mail: "✉️", calendar: "📅", contacts: "👤", "llm-wiki": "📚" };
@@ -89,11 +90,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function ToolCard({ m, onOpenFile, onRevealFile }: {
-  m: ChatMessage;
-  onOpenFile: (token: string) => void;
-  onRevealFile: (token: string) => void;
-}) {
+export function ToolCard({ m, fileApi }: { m: ChatMessage; fileApi: FileApi }) {
   const { icon, label } = parseToolName(m.text);
   const running = m.toolStatus === "running";
   const error = m.toolStatus === "error";
@@ -120,7 +117,14 @@ export function ToolCard({ m, onOpenFile, onRevealFile }: {
               <Section title="Input"><JsonBlock value={m.toolInput} /></Section>
               {!running && (
                 <Section title={error ? "Error" : "Output"}>
-                  {error ? <JsonBlock value={m.toolError} tone="error" /> : <OutputBlock value={m.toolOutput} />}
+                  {error ? (
+                    <JsonBlock value={m.toolError} tone="error" />
+                  ) : (() => {
+                    const card = cardForTool(m.text, m.toolInput, m.toolOutput);
+                    return card
+                      ? <CardView type={card.type} data={card.data} files={m.toolFiles} fileApi={fileApi} />
+                      : <OutputBlock value={m.toolOutput} />;
+                  })()}
                 </Section>
               )}
             </div>
@@ -130,7 +134,7 @@ export function ToolCard({ m, onOpenFile, onRevealFile }: {
       {m.toolFiles && m.toolFiles.length > 0 && (
         <div className="flex flex-col gap-1 border-t px-2 py-2">
           {m.toolFiles.map((f) => (
-            <FileChip key={f.token} file={f} onOpen={onOpenFile} onReveal={onRevealFile} />
+            <FileChip key={f.token} file={f} onOpen={fileApi.open} onReveal={fileApi.reveal} />
           ))}
         </div>
       )}

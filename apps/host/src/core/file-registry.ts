@@ -32,7 +32,7 @@ export function registerFile(path: string): ChannelFile | null {
     if (!st.isFile()) return null;
     const existing = byPath.get(path);
     if (existing) return existing.ref;
-    const ref: ChannelFile = { name: basename(path), token: randomUUID(), mime: mimeFor(path), size: st.size };
+    const ref: ChannelFile = { name: basename(path), token: randomUUID(), mime: mimeFor(path), size: st.size, path };
     const entry = { ref, path };
     byPath.set(path, entry);
     byToken.set(ref.token, entry);

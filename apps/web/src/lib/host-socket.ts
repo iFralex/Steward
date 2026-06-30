@@ -60,6 +60,7 @@ export interface HostSocket {
   respondQuestion: (requestId: string, selected: string[]) => void;
   openFile: (token: string) => void;
   revealFile: (token: string) => void;
+  resolveFile: (key: string) => ChannelFile | undefined;
   refreshActions: (includeDone?: boolean) => void;
   markAction: (id: number, status: ActionStatus) => void;
   executeProposal: (id: number, proposalId: string) => void;
@@ -81,6 +82,8 @@ export function useHostSocket(url: string): HostSocket {
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [actionCenter, setActionCenter] = useState<ActionCenterState | null>(null);
+  /** Files seen in tool results, keyed by both absolute path and name — lets inline `card:file` resolve to an openable file. */
+  const filesRef = useRef<Map<string, ChannelFile>>(new Map());
 
   useEffect(() => {
     const ws = new WebSocket(url);
@@ -112,6 +115,12 @@ export function useHostSocket(url: string): HostSocket {
           ]);
           break;
         case "tool_result":
+          if (msg.files) {
+            for (const f of msg.files) {
+              if (f.path) filesRef.current.set(f.path, f);
+              filesRef.current.set(f.name, f);
+            }
+          }
           setMessages((prev) =>
             prev.map((m) =>
               m.role === "tool" && m.toolCallId === msg.toolCallId
@@ -222,8 +231,9 @@ export function useHostSocket(url: string): HostSocket {
 
   const openFile = useCallback((token: string) => send({ type: "open_file", token }), [send]);
   const revealFile = useCallback((token: string) => send({ type: "reveal_file", token }), [send]);
+  const resolveFile = useCallback((key: string) => filesRef.current.get(key), []);
 
-  return { connected, state, messages, approvals, questions, actionCenter, sendMessage, respondQuestion, openFile, revealFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals, questions, actionCenter, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {

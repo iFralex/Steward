@@ -18,6 +18,8 @@ export interface ChannelFile {
   token: string;
   mime: string;
   size: number;
+  /** Absolute local path (the UI is local/trusted) — lets inline file cards match by path. */
+  path?: string;
 }
 
 /** Messages a channel sends INTO the core. */

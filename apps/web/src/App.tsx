@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { ToolCard } from "@/components/tool-card";
+import { CardView, type FileApi } from "@/components/cards";
 import type { ActionCenterItem } from "@llm-wiki/protocol";
 
 const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
@@ -30,6 +31,7 @@ function App() {
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile };
   const selectedAction =
     host.actionCenter?.items.find((a) => a.id === selectedActionId)
     ?? host.actionCenter?.items[0]
@@ -119,7 +121,7 @@ function App() {
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
             {host.messages.map((m) =>
               m.role === "tool" ? (
-                <ToolCard key={m.id} m={m} onOpenFile={host.openFile} onRevealFile={host.revealFile} />
+                <ToolCard key={m.id} m={m} fileApi={fileApi} />
               ) : (
                 <div key={m.id} className={m.role === "user" ? "text-right" : "text-left"}>
                   <div
@@ -131,7 +133,7 @@ function App() {
                     )}
                   >
                     {m.role === "assistant" ? (
-                      m.text ? <MarkdownMessage text={m.text} /> : (m.open ? "…" : "")
+                      m.text ? <MarkdownMessage text={m.text} fileApi={fileApi} /> : (m.open ? "…" : "")
                     ) : (
                       m.text || (m.open ? "…" : "")
                     )}
@@ -175,7 +177,7 @@ function App() {
 
 export default App;
 
-function MarkdownMessage({ text }: { text: string }) {
+function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -204,8 +206,22 @@ function MarkdownMessage({ text }: { text: string }) {
         thead: ({ children }) => <thead className="bg-background/60">{children}</thead>,
         th: ({ children }) => <th className="border-border border px-2 py-1.5 font-semibold">{children}</th>,
         td: ({ children }) => <td className="border-border border px-2 py-1.5 align-top">{children}</td>,
-        code: ({ children }) => <code className="bg-background/70 rounded px-1 py-0.5 font-mono text-[0.85em]">{children}</code>,
-        pre: ({ children }) => <pre className="bg-background/70 mb-2 overflow-auto rounded-md p-2 text-xs last:mb-0">{children}</pre>,
+        code: ({ className, children }) => {
+          if (className === "language-card") {
+            try {
+              const obj = JSON.parse(String(children).trim()) as { type?: unknown } & Record<string, unknown>;
+              const { type, ...data } = obj;
+              if (type) return <CardView type={String(type)} data={data} fileApi={fileApi} />;
+            } catch { /* not valid card JSON → render as a normal code block */ }
+          }
+          return <code className="bg-background/70 rounded px-1 py-0.5 font-mono text-[0.85em]">{children}</code>;
+        },
+        pre: ({ children }) => {
+          const child = Array.isArray(children) ? children[0] : children;
+          const cls = (child as { props?: { className?: string } } | undefined)?.props?.className;
+          if (cls === "language-card") return <>{children}</>; // the card replaces the code block; no <pre> wrapper
+          return <pre className="bg-background/70 mb-2 overflow-auto rounded-md p-2 text-xs last:mb-0">{children}</pre>;
+        },
         a: ({ children, href }) => (
           <a className="text-primary underline underline-offset-2" href={href} target="_blank" rel="noreferrer">
             {children}
