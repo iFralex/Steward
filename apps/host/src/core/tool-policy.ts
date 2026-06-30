@@ -77,6 +77,7 @@ export const defaultPolicy: ToolPolicy = {
     "mcp__mail__read_message": "allow",
     "mcp__mail__get_thread": "allow",
     "mcp__mail__save_attachment": "allow",
+    "mcp__mail__list_scheduled": "allow", // read-only (send/reply/cancel_scheduled stay gated)
     // Calendar MCP — read-only (create/update/delete stay gated by default-deny).
     "mcp__calendar__list_calendars": "allow",
     "mcp__calendar__search_events": "allow",
