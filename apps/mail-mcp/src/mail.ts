@@ -22,7 +22,10 @@ import type { Store } from "../../mail-mirror/src/store.ts";
 import { searchDb, type SearchDbArgs } from "./db-search.ts";
 import { readDb, type MailDetail } from "./db-read.ts";
 import { getThread } from "./db-thread.ts";
-import { bodySnippet, sha256, WriteOpsStore } from "@llm-wiki/write-ops";
+import { bodySnippet, sha256, WriteOpsStore, type WriteOpKind } from "@llm-wiki/write-ops";
+
+/** Result of a send/reply: sent now, or queued for later delivery. */
+type WriteResult = { sent: true; operationId?: string } | { scheduled: true; sendAt: string; operationId: string };
 
 type Runner = (script: string, timeoutMs?: number) => Promise<string>;
 
@@ -140,26 +143,31 @@ export class Mail {
     return { path: dest };
   }
 
-  async send(args: SendArgs): Promise<{ sent: true; operationId?: string }> {
+  /** If `sendAt` is set, queue the op for later delivery and return the receipt; else undefined. */
+  private maybeSchedule(kind: WriteOpKind, args: { sendAt?: string }, input: unknown, expected: Record<string, unknown>): { scheduled: true; sendAt: string; operationId: string } | undefined {
+    if (!args.sendAt) return undefined;
+    const ts = Date.parse(args.sendAt);
+    if (Number.isNaN(ts)) throw new Error(`sendAt must be an ISO 8601 date, got "${args.sendAt}"`);
+    if (!this.writeOps) throw new Error("scheduled send is unavailable (write-ops store not configured)");
+    const operationId = this.writeOps.startScheduled({ kind, input: input as Record<string, unknown>, expected }, Math.floor(ts / 1000));
+    return { scheduled: true, sendAt: new Date(ts).toISOString(), operationId };
+  }
+
+  async send(args: SendArgs): Promise<WriteResult> {
     if (args.from && !isEmail(args.from)) {
       throw new Error(`from: must be one of your account email addresses, got "${args.from}"`);
     }
     assertEmails(args.to, "to");
     if (args.cc?.length) assertEmails(args.cc, "cc");
     if (args.bcc?.length) assertEmails(args.bcc, "bcc");
-    const operationId = this.writeOps?.start({
-      kind: "mail.send",
-      input: args as unknown as Record<string, unknown>,
-      expected: {
-        from: args.from ?? null,
-        to: args.to,
-        cc: args.cc ?? [],
-        bcc: args.bcc ?? [],
-        subject: args.subject,
-        bodyHash: sha256(args.body),
-        bodySnippet: bodySnippet(args.body),
-      },
-    });
+    const expected = {
+      from: args.from ?? null, to: args.to, cc: args.cc ?? [], bcc: args.bcc ?? [],
+      subject: args.subject, bodyHash: sha256(args.body), bodySnippet: bodySnippet(args.body),
+    };
+    const scheduled = this.maybeSchedule("mail.send", args, args, expected);
+    if (scheduled) return scheduled;
+
+    const operationId = this.writeOps?.start({ kind: "mail.send", input: args as unknown as Record<string, unknown>, expected });
     try {
       await withWriteLock(() => this.run(sendScript(args), WRITE_TIMEOUT_MS));
       if (operationId) this.writeOps?.scriptReturned(operationId);
@@ -170,25 +178,21 @@ export class Mail {
     }
   }
 
-  async reply(args: ReplyArgs): Promise<{ sent: true; operationId?: string }> {
+  async reply(args: ReplyArgs): Promise<WriteResult> {
     if (args.from && !isEmail(args.from)) {
       throw new Error(`from: must be one of your account email addresses, got "${args.from}"`);
     }
     if (!args.body?.trim()) {
       throw new Error("reply body must not be empty");
     }
-    const operationId = this.writeOps?.start({
-      kind: "mail.reply",
-      input: args as unknown as Record<string, unknown>,
-      expected: {
-        messageId: args.messageId ?? null,
-        id: args.id ?? null,
-        from: args.from ?? null,
-        replyAll: args.replyAll ?? false,
-        bodyHash: sha256(args.body),
-        bodySnippet: bodySnippet(args.body),
-      },
-    });
+    const expected = {
+      messageId: args.messageId ?? null, id: args.id ?? null, from: args.from ?? null,
+      replyAll: args.replyAll ?? false, bodyHash: sha256(args.body), bodySnippet: bodySnippet(args.body),
+    };
+    const scheduled = this.maybeSchedule("mail.reply", args, args, expected);
+    if (scheduled) return scheduled;
+
+    const operationId = this.writeOps?.start({ kind: "mail.reply", input: args as unknown as Record<string, unknown>, expected });
     try {
       await withWriteLock(() => this.run(replyScript(args), WRITE_TIMEOUT_MS));
       if (operationId) this.writeOps?.scriptReturned(operationId);

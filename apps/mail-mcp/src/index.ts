@@ -30,7 +30,8 @@ const enriched = dbReady && enrichmentReady(store);
 const embedCfg = loadEmbedConfig();
 const embedQuery = embedCfg ? (text: string) => embedText(text, embedCfg) : undefined;
 
-const mail = new Mail({ store, embedQuery, writeOps: WriteOpsStore.open() });
+const writeOps = WriteOpsStore.open();
+const mail = new Mail({ store, embedQuery, writeOps });
 
 // Warm the cold paths once at startup so the first real query isn't slow: the
 // knn over the (~280MB) vector table and the trigram index each pay a one-time
@@ -142,6 +143,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           subject: { type: "string" },
           body: { type: "string", minLength: 1 },
           attachments: STRINGS("absolute file paths to attach"),
+          sendAt: { type: "string", description: "ISO 8601 time to send later (e.g. 2026-07-01T09:00:00+02:00). Omit to send now." },
         },
         required: ["to", "subject", "body"],
         additionalProperties: false,
@@ -162,8 +164,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           body: { type: "string", minLength: 1 },
           attachments: STRINGS("absolute file paths to attach"),
           replyAll: { type: "boolean" },
+          sendAt: { type: "string", description: "ISO 8601 time to send later. Omit to send now." },
         },
         required: ["body"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "list_scheduled",
+      description: "List emails queued for later delivery (scheduled send/reply not yet sent).",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      name: "cancel_scheduled",
+      description: "Cancel a scheduled send/reply before it fires. Pass the operationId from the scheduled receipt or list_scheduled.",
+      inputSchema: {
+        type: "object",
+        properties: { operationId: { type: "string" } },
+        required: ["operationId"],
         additionalProperties: false,
       },
     },
@@ -223,6 +241,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         return text(await mail.send(args as unknown as SendArgs));
       case "reply":
         return text(await mail.reply(args as unknown as ReplyArgs));
+      case "list_scheduled":
+        return text(writeOps.listScheduled().map((o) => ({
+          operationId: o.id,
+          kind: o.kind,
+          sendAt: o.scheduledFor ? new Date(o.scheduledFor * 1000).toISOString() : null,
+          to: o.input.to ?? null,
+          subject: o.input.subject ?? null,
+          bodySnippet: o.expected.bodySnippet ?? null,
+        })));
+      case "cancel_scheduled":
+        return text({ cancelled: writeOps.cancelScheduled(String((args as { operationId?: unknown }).operationId ?? "")) });
       case "get_thread": {
         const check = dbEmptyCheck();
         if (check.empty) return text({ error: check.message });

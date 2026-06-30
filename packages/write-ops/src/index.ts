@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
 export type WriteOpStatus =
+  | "scheduled"
   | "started"
   | "script_returned"
   | "confirmed"
@@ -36,6 +37,8 @@ export interface WriteOpRow extends WriteOpInput {
   updatedAt: number;
   scriptFinishedAt: number | null;
   confirmedAt: number | null;
+  /** For status "scheduled": unix seconds at/after which the op should be sent. */
+  scheduledFor: number | null;
   lastError: string | null;
   result: Record<string, unknown> | null;
 }
@@ -51,6 +54,7 @@ CREATE TABLE IF NOT EXISTS write_ops (
   updated_at INTEGER NOT NULL,
   script_finished_at INTEGER,
   confirmed_at INTEGER,
+  scheduled_for INTEGER,
   input_json TEXT NOT NULL,
   expected_json TEXT NOT NULL,
   result_json TEXT,
@@ -58,6 +62,7 @@ CREATE TABLE IF NOT EXISTS write_ops (
 );
 CREATE INDEX IF NOT EXISTS idx_write_ops_status ON write_ops(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_write_ops_kind_started ON write_ops(kind, started_at);
+CREATE INDEX IF NOT EXISTS idx_write_ops_scheduled ON write_ops(status, scheduled_for);
 `;
 
 export function writeOpsDir(): string {
@@ -85,6 +90,9 @@ export class WriteOpsStore {
     this.raw = db;
     this.raw.pragma("journal_mode = WAL");
     this.raw.exec(SCHEMA);
+    // Migrate older DBs that predate scheduled sends.
+    const cols = new Set((this.raw.prepare("PRAGMA table_info(write_ops)").all() as { name: string }[]).map((c) => c.name));
+    if (!cols.has("scheduled_for")) this.raw.exec("ALTER TABLE write_ops ADD COLUMN scheduled_for INTEGER");
   }
 
   static open(path = writeOpsDbPath()): WriteOpsStore {
@@ -104,6 +112,39 @@ export class WriteOpsStore {
        VALUES (?, ?, 'started', 1, 0, ?, ?, ?, ?)`,
     ).run(id, op.kind, now, now, JSON.stringify(op.input), JSON.stringify(op.expected));
     return id;
+  }
+
+  /** Enqueue a deferred send/reply to fire at `scheduledFor` (unix seconds). */
+  startScheduled(op: WriteOpInput, scheduledFor: number): string {
+    const id = randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    this.raw.prepare(
+      `INSERT INTO write_ops
+       (id, kind, status, attempts, confirm_attempts, started_at, updated_at, scheduled_for, input_json, expected_json)
+       VALUES (?, ?, 'scheduled', 0, 0, ?, ?, ?, ?, ?)`,
+    ).run(id, op.kind, now, now, scheduledFor, JSON.stringify(op.input), JSON.stringify(op.expected));
+    return id;
+  }
+
+  /** Scheduled ops whose time has come (status 'scheduled' and due). */
+  dueScheduled(now: number, limit = 50): WriteOpRow[] {
+    const rows = this.raw.prepare(
+      "SELECT * FROM write_ops WHERE status='scheduled' AND scheduled_for <= ? ORDER BY scheduled_for ASC LIMIT ?",
+    ).all(now, limit) as Record<string, unknown>[];
+    return rows.map(rowToWriteOp);
+  }
+
+  /** All still-pending scheduled ops (for listing). */
+  listScheduled(limit = 100): WriteOpRow[] {
+    const rows = this.raw.prepare(
+      "SELECT * FROM write_ops WHERE status='scheduled' ORDER BY scheduled_for ASC LIMIT ?",
+    ).all(limit) as Record<string, unknown>[];
+    return rows.map(rowToWriteOp);
+  }
+
+  /** Cancel a still-pending scheduled op. Returns false if it isn't scheduled (e.g. already fired). */
+  cancelScheduled(id: string): boolean {
+    return this.raw.prepare("DELETE FROM write_ops WHERE id=? AND status='scheduled'").run(id).changes > 0;
   }
 
   scriptReturned(id: string, result: Record<string, unknown> = {}): void {
@@ -179,6 +220,7 @@ function rowToWriteOp(row: Record<string, unknown>): WriteOpRow {
     updatedAt: Number(row.updated_at),
     scriptFinishedAt: row.script_finished_at == null ? null : Number(row.script_finished_at),
     confirmedAt: row.confirmed_at == null ? null : Number(row.confirmed_at),
+    scheduledFor: row.scheduled_for == null ? null : Number(row.scheduled_for),
     input: JSON.parse((row.input_json as string) || "{}"),
     expected: JSON.parse((row.expected_json as string) || "{}"),
     result: row.result_json == null ? null : JSON.parse(row.result_json as string),

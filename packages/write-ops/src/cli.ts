@@ -31,6 +31,11 @@ async function main(): Promise<void> {
     console.log(`write-ops calendar: confirmed ${res.confirmed}, pending ${res.pending}`);
     return;
   }
+  if (cmd === "send-due") {
+    const res = await sendDueWrites();
+    console.log(`write-ops send-due: fired ${res.fired}, failed ${res.failed}`);
+    return;
+  }
   if (cmd === "status") {
     const store = WriteOpsStore.open();
     const rows = store.raw.prepare("SELECT status, count(*) c FROM write_ops GROUP BY status ORDER BY status").all();
@@ -38,8 +43,40 @@ async function main(): Promise<void> {
     store.close();
     return;
   }
-  console.log("usage: write-ops <reconcile-mail|reconcile-calendar|status>");
+  console.log("usage: write-ops <reconcile-mail|reconcile-calendar|send-due|status>");
   process.exit(1);
+}
+
+/** Fire scheduled sends/replies whose time has come, then let reconcile confirm them. */
+export async function sendDueWrites(): Promise<{ fired: number; failed: number }> {
+  const ops = WriteOpsStore.open();
+  const now = Math.floor(Date.now() / 1000);
+  let fired = 0;
+  let failed = 0;
+  try {
+    for (const op of ops.dueScheduled(now, 50)) {
+      try {
+        if (op.kind === "mail.send") {
+          await runOsa(sendScript(op.input as unknown as SendArgs), { timeoutMs: 300_000 });
+        } else if (op.kind === "mail.reply") {
+          await runOsa(replyScript(op.input as unknown as ReplyArgs), { timeoutMs: 300_000 });
+        } else {
+          ops.failed(op.id, new Error(`unsupported scheduled kind: ${op.kind}`));
+          failed++;
+          continue;
+        }
+        // Hand off to the normal confirmation flow (reconcile-mail verifies it landed).
+        ops.scriptReturned(op.id, { scheduled: true });
+        fired++;
+      } catch (err) {
+        ops.failed(op.id, err);
+        failed++;
+      }
+    }
+  } finally {
+    ops.close();
+  }
+  return { fired, failed };
 }
 
 export async function reconcileCalendarWrites(): Promise<{ confirmed: number; pending: number }> {
@@ -78,12 +115,12 @@ function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): boolean {
     if (!uid) return false;
     const ev = index.getEvent(uid);
     if (!ev) return false;
-    return calendarFieldsMatch(ev, op.expected);
+    return calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected);
   }
   if (op.kind === "calendar.create") {
     if (uid) {
       const ev = index.getEvent(uid);
-      return !!ev && calendarFieldsMatch(ev, op.expected);
+      return !!ev && calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected);
     }
     return false;
   }

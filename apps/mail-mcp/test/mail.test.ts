@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type MessageRow } from "../../mail-mirror/src/store.ts";
 import { Mail } from "../src/mail.ts";
+import { WriteOpsStore } from "@llm-wiki/write-ops";
 
 /** Minimal in-memory store for tests that do not exercise DB behaviour. */
 function emptyStore(): Store {
@@ -16,6 +17,27 @@ function row(id: string, subject: string, body: string): MessageRow {
     toNames: [], ccNames: [], unread: false, flagged: false, answered: false, junk: false, flagColor: null, appleThrid: null,
   };
 }
+
+test("send with sendAt queues the email and does NOT run AppleScript", async () => {
+  const writeOps = WriteOpsStore.open(":memory:");
+  let ran = false;
+  const mail = new Mail({ store: emptyStore(), writeOps, runner: async () => { ran = true; return "sent"; } });
+  const r = await mail.send({ to: ["a@b.co"], subject: "x", body: "later", sendAt: "2099-01-01T09:00:00Z" });
+  assert.equal(ran, false, "must not send immediately");
+  assert.ok("scheduled" in r && r.scheduled === true);
+  assert.equal(writeOps.listScheduled().length, 1);
+  writeOps.close();
+});
+
+test("reply with sendAt queues; an invalid sendAt is rejected", async () => {
+  const writeOps = WriteOpsStore.open(":memory:");
+  const mail = new Mail({ store: emptyStore(), writeOps, runner: async () => "sent" });
+  const r = await mail.reply({ messageId: "m@x", body: "later", sendAt: "2099-01-01T09:00:00Z" });
+  assert.ok("scheduled" in r && r.scheduled === true);
+  assert.equal(writeOps.listScheduled().length, 1);
+  await assert.rejects(() => mail.reply({ messageId: "m@x", body: "x", sendAt: "not-a-date" }), /ISO 8601/);
+  writeOps.close();
+});
 
 test("listMailboxes is served from the mirror (no AppleScript) with account name + emails", async () => {
   const s = emptyStore();

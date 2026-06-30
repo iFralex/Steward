@@ -89,6 +89,8 @@ export interface SendArgs {
   subject: string;
   body: string;
   attachments?: string[];
+  /** ISO 8601 time to send later. Omit to send immediately. */
+  sendAt?: string;
 }
 
 export interface ReplyArgs extends MessageRef {
@@ -97,4 +99,6 @@ export interface ReplyArgs extends MessageRef {
   body: string;
   attachments?: string[];
   replyAll?: boolean;
+  /** ISO 8601 time to send later. Omit to send immediately. */
+  sendAt?: string;
 }
