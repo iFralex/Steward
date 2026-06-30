@@ -49,12 +49,19 @@ export interface PendingQuestion {
   multiSelect: boolean;
 }
 
+export interface SessionUsage {
+  turnCostUsd: number;
+  costUsd: number;
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+}
+
 export interface HostSocket {
   connected: boolean;
   state: SessionState;
   messages: ChatMessage[];
   approvals: PendingApproval[];
   questions: PendingQuestion[];
+  usage: SessionUsage | null;
   actionCenter: ActionCenterState | null;
   sendMessage: (text: string) => void;
   respondQuestion: (requestId: string, selected: string[]) => void;
@@ -81,6 +88,7 @@ export function useHostSocket(url: string): HostSocket {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
+  const [usage, setUsage] = useState<SessionUsage | null>(null);
   const [actionCenter, setActionCenter] = useState<ActionCenterState | null>(null);
   /** Files seen in tool results, keyed by both absolute path and name — lets inline `card:file` resolve to an openable file. */
   const filesRef = useRef<Map<string, ChannelFile>>(new Map());
@@ -140,6 +148,9 @@ export function useHostSocket(url: string): HostSocket {
             ...prev,
             { requestId: msg.requestId, question: msg.question, options: msg.options, multiSelect: msg.multiSelect },
           ]);
+          break;
+        case "usage":
+          setUsage({ turnCostUsd: msg.turnCostUsd, costUsd: msg.costUsd, tokens: msg.tokens });
           break;
         case "action_center_state":
           setActionCenter(msg.state);
@@ -233,7 +244,7 @@ export function useHostSocket(url: string): HostSocket {
   const revealFile = useCallback((token: string) => send({ type: "reveal_file", token }), [send]);
   const resolveFile = useCallback((key: string) => filesRef.current.get(key), []);
 
-  return { connected, state, messages, approvals, questions, actionCenter, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals, questions, usage, actionCenter, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {

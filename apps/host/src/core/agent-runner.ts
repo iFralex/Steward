@@ -118,6 +118,7 @@ export async function runTurn(config: HostConfig, session: Session, emit: Emit, 
       prompt: (t) => runtime.session.prompt(t),
       followUp: (t) => runtime.session.followUp(t),
       subscribe: runtime.session.subscribe.bind(runtime.session),
+      getStats: () => runtime.session.getSessionStats(),
       close: async () => { unsub(); await runtime.close(); },
     };
   }
@@ -129,6 +130,14 @@ export async function runTurn(config: HostConfig, session: Session, emit: Emit, 
   } catch (err) {
     emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
   } finally {
+    try {
+      const stats = session.pi?.getStats();
+      if (stats) {
+        const turnCostUsd = Math.max(0, stats.cost - session.lastCostUsd);
+        session.lastCostUsd = stats.cost;
+        emit({ type: "usage", sessionId: session.id, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
+      }
+    } catch { /* stats unavailable */ }
     emit({ type: "status", sessionId: session.id, state: "idle" });
   }
 }

@@ -17,11 +17,19 @@ export class Session {
    * Reused across turns so conversation memory is inherent. `pi.close()` tears
    * down the agent session and its MCP clients.
    */
-  pi?: { prompt(text: string): Promise<void>; followUp(text: string): Promise<void>; subscribe(l: (e: any) => void): () => void; close(): Promise<void> };
+  pi?: {
+    prompt(text: string): Promise<void>;
+    followUp(text: string): Promise<void>;
+    subscribe(l: (e: any) => void): () => void;
+    close(): Promise<void>;
+    getStats(): { cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } };
+  };
   /** Direct MCP bridge used by UI-triggered actions (same tools, same gates). */
   directBridge?: McpBridge;
   /** Set to true when the channel disconnects; prevents mid-build runtime leaks. */
   closed = false;
+  /** Cumulative gateway cost (USD) already reported, to compute per-turn deltas. */
+  lastCostUsd = 0;
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
   private readonly pendingQuestions = new Map<string, (selected: string[]) => void>();
 

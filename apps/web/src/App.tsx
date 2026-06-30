@@ -84,6 +84,14 @@ function App() {
       <header className="flex items-center justify-between border-b px-4 py-3">
         <h1 className="text-sm font-semibold">Personal Agent</h1>
         <div className="flex items-center gap-3">
+          {host.usage && (
+            <span
+              className="text-muted-foreground border-border rounded-md border px-2 py-0.5 text-xs tabular-nums"
+              title={`Ultimo turno: $${host.usage.turnCostUsd.toFixed(4)} · ${host.usage.tokens.total.toLocaleString("it-IT")} token (in ${host.usage.tokens.input.toLocaleString("it-IT")} / out ${host.usage.tokens.output.toLocaleString("it-IT")} / cache ${host.usage.tokens.cacheRead.toLocaleString("it-IT")})`}
+            >
+              ${host.usage.costUsd.toFixed(4)}
+            </span>
+          )}
           <span className="text-muted-foreground text-xs">
             {host.connected ? (host.state === "running" ? "thinking…" : "connected") : "disconnected"}
           </span>

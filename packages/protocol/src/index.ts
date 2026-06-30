@@ -99,6 +99,16 @@ export type ServerEvent =
       multiSelect: boolean;
     }
   | {
+      /** Cumulative session token usage + cost, emitted after each turn. */
+      type: "usage";
+      sessionId: string;
+      /** Cost (USD) of the turn that just finished. */
+      turnCostUsd: number;
+      /** Cumulative session cost (USD). */
+      costUsd: number;
+      tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+    }
+  | {
       /**
        * A tool finished. `toolCallId` matches the `tool_call`. `output` is the
        * tool's result (parsed JSON when the tool returned JSON, else a string),
