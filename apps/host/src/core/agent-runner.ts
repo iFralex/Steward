@@ -102,6 +102,9 @@ export async function runTurn(config: HostConfig, session: Session, emit: Emit, 
         const ok = !e.isError;
         const output = extractToolOutput(e.result);
         const files = filesFromOutput(output);
+        try {
+          usageStore().recordTool({ ts: Date.now(), sessionId: session.id, tool: e.toolName, durationMs, ok });
+        } catch { /* usage ledger unavailable — don't break the turn */ }
         emit({
           type: "tool_result",
           sessionId: session.id,

@@ -45,11 +45,26 @@ interface Rates {
   cacheRead: number;
   cacheWrite: number;
 }
+interface ToolRow {
+  tool: string;
+  calls: number;
+  errors: number;
+  totalMs: number;
+  avgMs: number;
+  maxMs: number;
+}
+interface ToolTotals {
+  calls: number;
+  errors: number;
+  totalMs: number;
+}
 interface UsageSummary {
   totals: Totals;
   byDay: DayRow[];
   byModel: ModelRow[];
   recent: TurnRow[];
+  byTool: ToolRow[];
+  toolTotals: ToolTotals;
   rates: Rates;
 }
 
@@ -65,6 +80,9 @@ const usd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 const intl = (n: number) => Math.round(n).toLocaleString("it-IT");
 const compact = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(Math.round(n));
+const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}s` : `${Math.round(n)}ms`);
+/** Strip the `mcp__server__` prefix so tool names read cleanly. */
+const bareTool = (name: string) => name.replace(/^mcp__[^_]+__/, "") || name;
 
 export function UsagePage({ httpBase }: { httpBase: string }) {
   const [data, setData] = useState<UsageSummary | null>(null);
@@ -200,6 +218,61 @@ export function UsagePage({ httpBase }: { httpBase: string }) {
           </CardContent>
         </Card>
       )}
+
+      {/* Tool usage */}
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>Tool</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {data.byTool.length === 0 ? (
+            <p className="text-muted-foreground text-sm">Nessuna invocazione registrata.</p>
+          ) : (
+            <>
+              <div className="text-muted-foreground mb-3 flex gap-4 text-xs">
+                <span><span className="text-foreground font-semibold tabular-nums">{intl(data.toolTotals.calls)}</span> chiamate</span>
+                <span><span className="text-foreground font-semibold tabular-nums">{intl(data.toolTotals.errors)}</span> errori</span>
+                <span><span className="text-foreground font-semibold tabular-nums">{ms(data.toolTotals.totalMs)}</span> totali</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-xs">
+                  <thead className="text-muted-foreground">
+                    <tr>
+                      <Th>Tool</Th>
+                      <Th right>Chiamate</Th>
+                      <Th right>Errori</Th>
+                      <Th right>Media</Th>
+                      <Th right>Max</Th>
+                      <Th right>Totale</Th>
+                      <Th>Frequenza</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const maxCalls = Math.max(...data.byTool.map((x) => x.calls), 1);
+                      return data.byTool.map((x) => (
+                        <tr key={x.tool} className="border-border border-t">
+                          <Td className="font-mono">{bareTool(x.tool)}</Td>
+                          <Td right>{intl(x.calls)}</Td>
+                          <Td right className={x.errors > 0 ? "text-destructive font-medium" : ""}>{intl(x.errors)}</Td>
+                          <Td right>{ms(x.avgMs)}</Td>
+                          <Td right>{ms(x.maxMs)}</Td>
+                          <Td right>{ms(x.totalMs)}</Td>
+                          <Td>
+                            <div className="bg-muted h-1.5 w-24 overflow-hidden rounded-full">
+                              <div className="bg-primary h-full rounded-full" style={{ width: `${(x.calls / maxCalls) * 100}%` }} />
+                            </div>
+                          </Td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Recent turns */}
       <Card size="sm">
