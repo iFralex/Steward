@@ -44,13 +44,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "run_command",
       description:
-        `Run ONE read-only command with an explicit argument array (no shell: pipes/redirects/globs are NOT interpreted). Allowed commands: ${[...READ_BINARIES].join(", ")}. Sensitive paths are blocked. Output and time are capped.`,
+        `Run ONE read-only command with an explicit argument array. There is NO shell: pipes/redirects/globs (| > * ; $()) are NOT interpreted, so you canNOT do "ls | head". Output is TRUNCATED to ~120 lines — narrow it with the command's own flags instead of dumping everything: e.g. newest file → "ls -t <dir>" (newest first, read the first line); recent files → "find <dir> -type f -mtime -7"; limited matches → "grep -m 20 …". Allowed commands: ${[...READ_BINARIES].join(", ")}. Sensitive paths are blocked.`,
       inputSchema: {
         type: "object",
         properties: {
           command: { type: "string", description: "The binary to run (must be in the allowed list)" },
           args: { type: "array", items: { type: "string" }, description: "Arguments as an array (each a separate argv element)" },
           cwd: { type: "string", description: "Working directory (absolute path or ~/…)" },
+          maxLines: { type: "number", description: "Max stdout lines to return (default 120). Only raise it when you truly need more; keep it small to save context." },
         },
         required: ["command"],
         additionalProperties: false,
@@ -84,7 +85,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     case "run_command": {
       const command = str(raw.command);
       if (!command) throw new Error("command is required");
-      return ok(await runCommand(command, strArr(raw.args), { mode: "read", cwd: str(raw.cwd) }));
+      const maxLines = typeof raw.maxLines === "number" ? raw.maxLines : undefined;
+      return ok(await runCommand(command, strArr(raw.args), { mode: "read", cwd: str(raw.cwd), maxLines }));
     }
     case "run_write_command": {
       const command = str(raw.command);

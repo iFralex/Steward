@@ -33,8 +33,22 @@ const SENSITIVE = [
   /\.pem$/, /\.p12$/, /(^|\/)\.aws\/credentials/,
 ];
 
-export const OUTPUT_CAP = 1024 * 1024; // 1 MB
+export const OUTPUT_CAP = 1024 * 1024; // 1 MB hard execFile buffer
 export const DEFAULT_TIMEOUT_MS = 15_000;
+/** How much output is returned to the model by default (keep context small). */
+export const DEFAULT_MAX_LINES = 120;
+export const DEFAULT_MAX_CHARS = 8_000;
+
+/** Clip text to a line + char budget, so a naive `ls` can't flood the context. */
+export function clip(text: string, maxLines: number, maxChars: number): { text: string; clipped: boolean; totalLines: number } {
+  const lines = text.split("\n");
+  const totalLines = lines.length;
+  let clipped = false;
+  let out = text;
+  if (lines.length > maxLines) { out = lines.slice(0, maxLines).join("\n"); clipped = true; }
+  if (out.length > maxChars) { out = out.slice(0, maxChars); clipped = true; }
+  return { text: out, clipped, totalLines };
+}
 
 /** Expand a leading `~/` (execFile does not do shell tilde expansion). */
 export function expandTilde(p: string): string {
@@ -66,7 +80,11 @@ export interface ExecResult {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  /** True if output was cut (by the line/char budget or the 1 MB buffer). */
   truncated: boolean;
+  /** Total stdout lines before clipping (so the model knows how much it missed). */
+  totalLines?: number;
+  hint?: string;
   error?: string;
 }
 
@@ -74,7 +92,7 @@ export interface ExecResult {
 export function runCommand(
   binary: string,
   args: string[],
-  opts: { mode: Mode; cwd?: string; timeoutMs?: number } = { mode: "read" },
+  opts: { mode: Mode; cwd?: string; timeoutMs?: number; maxLines?: number; maxChars?: number } = { mode: "read" },
 ): Promise<ExecResult> {
   const invalid = validate(binary, args, opts.mode);
   if (invalid) return Promise.resolve({ ok: false, exitCode: null, stdout: "", stderr: "", truncated: false, error: invalid });
@@ -83,21 +101,29 @@ export function runCommand(
     return Promise.resolve({ ok: false, exitCode: null, stdout: "", stderr: "", truncated: false, error: `cwd blocked (sensitive): ${cwd}` });
   }
   const resolvedArgs = args.map(expandTilde);
+  const maxLines = Math.min(Math.max(opts.maxLines ?? DEFAULT_MAX_LINES, 1), 5000);
+  const maxChars = Math.min(Math.max(opts.maxChars ?? DEFAULT_MAX_CHARS, 200), 200_000);
   return new Promise<ExecResult>((resolvePromise) => {
     execFile(
       binary, resolvedArgs,
       { cwd, timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBuffer: OUTPUT_CAP, encoding: "utf8", windowsHide: true },
       (err, stdout, stderr) => {
         const e = err as (NodeJS.ErrnoException & { code?: number | string; killed?: boolean }) | null;
-        const truncated = !!e && String(e.code) === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        const bufferOverflow = !!e && String(e.code) === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
         const timedOut = !!e?.killed;
+        const out = clip(stdout ?? "", maxLines, maxChars);
+        const truncated = out.clipped || bufferOverflow;
         resolvePromise({
-          ok: !e || truncated,
+          ok: !e || bufferOverflow,
           exitCode: typeof e?.code === "number" ? e.code : (e ? 1 : 0),
-          stdout: stdout ?? "",
-          stderr: stderr ?? "",
+          stdout: out.text,
+          stderr: clip(stderr ?? "", 40, 2_000).text,
           truncated,
-          error: timedOut ? `timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms` : (e && !truncated ? e.message : undefined),
+          totalLines: out.totalLines,
+          hint: truncated
+            ? `Output truncated (showing ${Math.min(maxLines, out.totalLines)} of ${out.totalLines} lines). Narrow with the command's flags (e.g. 'ls -t' for newest-first, 'find … -mtime -N', 'grep -m N') rather than listing everything; raise maxLines only if you truly need more.`
+            : undefined,
+          error: timedOut ? `timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms` : (e && !bufferOverflow ? e.message : undefined),
         });
       },
     );
