@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validate, runCommand, isSensitivePath, expandTilde, clip } from "../src/exec.ts";
+import { validate, runCommand, runPipeline, isSensitivePath, expandTilde, clip } from "../src/exec.ts";
 
 test("validate: read binary allowed, write binary denied in read mode", () => {
   assert.equal(validate("cat", ["/tmp/x"], "read"), null);
@@ -64,6 +64,48 @@ test("runCommand truncates a huge directory listing and hints", async () => {
   assert.ok((res.totalLines ?? 0) >= 400);
   assert.ok(res.stdout.split("\n").length <= 120);
   assert.match(res.hint ?? "", /truncated/i);
+});
+
+test("runPipeline wires stages: ls -t | head -1 returns the newest entry", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "shell-mcp-"));
+  writeFileSync(join(dir, "old.txt"), "x");
+  await new Promise((r) => setTimeout(r, 20));
+  writeFileSync(join(dir, "new.txt"), "x");
+  const res = await runPipeline([
+    { command: "ls", args: ["-t", dir] },
+    { command: "head", args: ["-1"] },
+  ]);
+  assert.equal(res.ok, true);
+  assert.equal(res.stdout.trim(), "new.txt");
+});
+
+test("runPipeline: grep filter + head compose", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "shell-mcp-"));
+  writeFileSync(join(dir, "a.pdf"), "x");
+  writeFileSync(join(dir, "b.txt"), "x");
+  writeFileSync(join(dir, "c.pdf"), "x");
+  const res = await runPipeline([
+    { command: "ls", args: ["-1", dir] },
+    { command: "grep", args: ["-i", "\\.pdf$"] },
+    { command: "wc", args: ["-l"] },
+  ]);
+  assert.equal(res.ok, true);
+  assert.equal(Number(res.stdout.trim()), 2);
+});
+
+test("runPipeline validates every stage against the read allowlist", async () => {
+  const res = await runPipeline([
+    { command: "ls", args: ["/tmp"] },
+    { command: "rm", args: ["-rf", "/tmp/x"] },
+  ]);
+  assert.equal(res.ok, false);
+  assert.match(res.error ?? "", /stage 'rm'.*not allowed/);
+});
+
+test("runPipeline blocks sensitive paths in any stage", async () => {
+  const res = await runPipeline([{ command: "cat", args: ["/Users/x/.ssh/id_rsa"] }]);
+  assert.equal(res.ok, false);
+  assert.match(res.error ?? "", /sensitive/);
 });
 
 test("runCommand: shell metacharacters are inert (no shell)", async () => {

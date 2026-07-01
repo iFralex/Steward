@@ -6,7 +6,7 @@
  * and time caps. Read binaries run freely; write binaries are a separate tool
  * the host gates behind user approval.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 
 /** Read-only inspection/search binaries — safe to run without approval. */
@@ -88,6 +88,11 @@ export interface ExecResult {
   error?: string;
 }
 
+const clampLines = (n?: number) => Math.min(Math.max(n ?? DEFAULT_MAX_LINES, 1), 5000);
+const clampChars = (n?: number) => Math.min(Math.max(n ?? DEFAULT_MAX_CHARS, 200), 200_000);
+const fail = (error: string): ExecResult => ({ ok: false, exitCode: null, stdout: "", stderr: "", truncated: false, error });
+const TRUNCATE_HINT = "Output truncated. Narrow it (command flags like 'ls -t' / 'find -mtime -N' / 'grep -m N', or a '| head' stage) or raise maxLines only if truly needed.";
+
 /** Run an allowlisted binary with execFile (no shell), capping time + output. */
 export function runCommand(
   binary: string,
@@ -95,14 +100,12 @@ export function runCommand(
   opts: { mode: Mode; cwd?: string; timeoutMs?: number; maxLines?: number; maxChars?: number } = { mode: "read" },
 ): Promise<ExecResult> {
   const invalid = validate(binary, args, opts.mode);
-  if (invalid) return Promise.resolve({ ok: false, exitCode: null, stdout: "", stderr: "", truncated: false, error: invalid });
+  if (invalid) return Promise.resolve(fail(invalid));
   const cwd = opts.cwd ? expandTilde(opts.cwd) : undefined;
-  if (cwd && isSensitivePath(cwd)) {
-    return Promise.resolve({ ok: false, exitCode: null, stdout: "", stderr: "", truncated: false, error: `cwd blocked (sensitive): ${cwd}` });
-  }
+  if (cwd && isSensitivePath(cwd)) return Promise.resolve(fail(`cwd blocked (sensitive): ${cwd}`));
   const resolvedArgs = args.map(expandTilde);
-  const maxLines = Math.min(Math.max(opts.maxLines ?? DEFAULT_MAX_LINES, 1), 5000);
-  const maxChars = Math.min(Math.max(opts.maxChars ?? DEFAULT_MAX_CHARS, 200), 200_000);
+  const maxLines = clampLines(opts.maxLines);
+  const maxChars = clampChars(opts.maxChars);
   return new Promise<ExecResult>((resolvePromise) => {
     execFile(
       binary, resolvedArgs,
@@ -120,12 +123,90 @@ export function runCommand(
           stderr: clip(stderr ?? "", 40, 2_000).text,
           truncated,
           totalLines: out.totalLines,
-          hint: truncated
-            ? `Output truncated (showing ${Math.min(maxLines, out.totalLines)} of ${out.totalLines} lines). Narrow with the command's flags (e.g. 'ls -t' for newest-first, 'find … -mtime -N', 'grep -m N') rather than listing everything; raise maxLines only if you truly need more.`
-            : undefined,
+          hint: truncated ? `Showing ${Math.min(maxLines, out.totalLines)} of ${out.totalLines} lines. ${TRUNCATE_HINT}` : undefined,
           error: timedOut ? `timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms` : (e && !bufferOverflow ? e.message : undefined),
         });
       },
     );
+  });
+}
+
+export interface Stage { command: string; args?: string[]; }
+
+/**
+ * Run a read-only pipeline: stage[i] stdout feeds stage[i+1] stdin, like a shell
+ * `|` — but NO shell is used. Each stage is spawned as an allowlisted binary
+ * with explicit argv and the streams are wired in Node, so metacharacters stay
+ * literal and every stage is validated independently. `head`/`tail` closing
+ * early (EPIPE upstream) is normal and ignored.
+ */
+export function runPipeline(
+  stages: Stage[],
+  opts: { cwd?: string; timeoutMs?: number; maxLines?: number; maxChars?: number } = {},
+): Promise<ExecResult> {
+  if (!stages.length) return Promise.resolve(fail("pipeline needs at least one stage"));
+  if (stages.length > 6) return Promise.resolve(fail("pipeline too long (max 6 stages)"));
+  const norm = stages.map((s) => ({ command: s.command, args: (s.args ?? []).map(expandTilde) }));
+  for (const s of norm) {
+    const invalid = validate(s.command, s.args, "read");
+    if (invalid) return Promise.resolve(fail(`stage '${s.command}': ${invalid}`));
+  }
+  const cwd = opts.cwd ? expandTilde(opts.cwd) : undefined;
+  if (cwd && isSensitivePath(cwd)) return Promise.resolve(fail(`cwd blocked (sensitive): ${cwd}`));
+  const maxLines = clampLines(opts.maxLines);
+  const maxChars = clampChars(opts.maxChars);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  return new Promise<ExecResult>((resolvePromise) => {
+    const procs = norm.map((s) => spawn(s.command, s.args, { cwd, stdio: ["pipe", "pipe", "pipe"] }));
+    let settled = false;
+    let outBytes = 0;
+    let errBytes = 0;
+    let overflow = false;
+    let spawnError: string | undefined;
+    const outChunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+
+    const finish = (timedOut: boolean, code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      for (const p of procs) { try { p.kill("SIGKILL"); } catch { /* already gone */ } }
+      const out = clip(Buffer.concat(outChunks).toString("utf8"), maxLines, maxChars);
+      const truncated = out.clipped || overflow;
+      resolvePromise({
+        ok: !spawnError && !timedOut,
+        exitCode: code,
+        stdout: out.text,
+        stderr: clip(Buffer.concat(errChunks).toString("utf8"), 40, 2_000).text,
+        truncated,
+        totalLines: out.totalLines,
+        hint: truncated ? `Showing ${Math.min(maxLines, out.totalLines)} of ${out.totalLines} lines. ${TRUNCATE_HINT}` : undefined,
+        error: spawnError ?? (timedOut ? `timed out after ${timeoutMs}ms` : undefined),
+      });
+    };
+    const timer = setTimeout(() => finish(true, null), timeoutMs);
+
+    // Wire stage i stdout → stage i+1 stdin; swallow EPIPE from early-closing sinks.
+    for (let i = 0; i < procs.length - 1; i++) {
+      procs[i].stdout?.on("error", () => {});
+      procs[i + 1].stdin?.on("error", () => {});
+      procs[i].stdout?.pipe(procs[i + 1].stdin!);
+    }
+    procs[0].stdin?.on("error", () => {});
+    procs[0].stdin?.end(); // first stage gets no external input
+
+    const last = procs[procs.length - 1];
+    last.stdout?.on("data", (c: Buffer) => {
+      if (overflow) return;
+      outBytes += c.length;
+      if (outBytes > OUTPUT_CAP) { overflow = true; finish(false, null); return; }
+      outChunks.push(c);
+    });
+    for (const p of procs) {
+      p.stderr?.on("data", (c: Buffer) => { if (errBytes < 8_000) { errBytes += c.length; errChunks.push(c); } });
+      p.on("error", (e: Error) => { spawnError ??= e.message; finish(false, null); });
+    }
+    last.on("close", (code) => finish(false, code));
   });
 }

@@ -14,7 +14,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { READ_BINARIES, WRITE_BINARIES, runCommand } from "./exec.ts";
+import { READ_BINARIES, WRITE_BINARIES, runCommand, runPipeline, type Stage } from "./exec.ts";
 import { findFiles, type FindArgs } from "./find.ts";
 
 const server = new Server({ name: "shell", version: "0.0.0" }, { capabilities: { tools: {} } });
@@ -58,6 +58,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "run_pipeline",
+      description:
+        `Run a read-only PIPELINE: each stage's stdout feeds the next stage's stdin, like a shell '|' — but there is NO shell, so it's safe and each stage must be an allowlisted read binary with explicit args. Use it to compose (filter/limit/count). Example — newest file in Downloads: {"stages":[{"command":"ls","args":["-t","~/Downloads"]},{"command":"head","args":["-1"]}]}. Newest PDF: add {"command":"grep","args":["-i","\\\\.pdf$"]} before head. Count: end with {"command":"wc","args":["-l"]}. Allowed commands: ${[...READ_BINARIES].join(", ")}. Max 6 stages; output truncated (~120 lines).`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          stages: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              properties: {
+                command: { type: "string", description: "Allowlisted read binary for this stage" },
+                args: { type: "array", items: { type: "string" }, description: "Arguments as an array" },
+              },
+              required: ["command"],
+              additionalProperties: false,
+            },
+            description: "Pipeline stages, left to right",
+          },
+          cwd: { type: "string", description: "Working directory (absolute path or ~/…)" },
+          maxLines: { type: "number", description: "Max stdout lines to return (default 120)" },
+        },
+        required: ["stages"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "run_write_command",
       description:
         `Run ONE file-mutating command (create/copy/move/delete). Requires user approval. Explicit argument array, no shell. Allowed commands: ${[...WRITE_BINARIES].join(", ")}. Sensitive paths are blocked.`,
@@ -87,6 +115,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!command) throw new Error("command is required");
       const maxLines = typeof raw.maxLines === "number" ? raw.maxLines : undefined;
       return ok(await runCommand(command, strArr(raw.args), { mode: "read", cwd: str(raw.cwd), maxLines }));
+    }
+    case "run_pipeline": {
+      const stages: Stage[] = Array.isArray(raw.stages)
+        ? raw.stages.filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
+            .map((s) => ({ command: String((s as Record<string, unknown>).command ?? ""), args: strArr((s as Record<string, unknown>).args) }))
+        : [];
+      const maxLines = typeof raw.maxLines === "number" ? raw.maxLines : undefined;
+      return ok(await runPipeline(stages, { cwd: str(raw.cwd), maxLines }));
     }
     case "run_write_command": {
       const command = str(raw.command);
