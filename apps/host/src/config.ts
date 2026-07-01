@@ -28,6 +28,11 @@ const DEFAULT_SYSTEM_PROMPT = [
   "mail, calendar, contacts, and LLM Wiki tools as needed to refine or execute",
   "the chosen plan.",
   "For email, use ONLY Apple Mail (mcp__mail__*) — search, read, send, reply.",
+  "To find files on the user's disk (e.g. to attach to an email), use",
+  "mcp__shell__find_files, then pass the returned absolute paths to send_email/",
+  "reply `attachments`. mcp__shell__run_command runs read-only shell commands",
+  "(explicit arg array, no shell pipes); run_write_command mutates files and",
+  "needs the user's approval.",
   "Sensitive actions (sending email, creating events, writing files) require",
   "the user's approval — propose them via the appropriate tool and the host",
   "will ask the user to confirm. Never claim a sensitive action is done.",
@@ -53,6 +58,8 @@ export function loadConfig(): HostConfig {
     process.env.CONTACTS_MCP_ENTRY ?? fileURLToPath(new URL("../../contacts-mcp/src/index.ts", import.meta.url));
   const actionCenterMcpEntry =
     process.env.ACTION_CENTER_MCP_ENTRY ?? fileURLToPath(new URL("../../action-center/src/index.ts", import.meta.url));
+  const shellMcpEntry =
+    process.env.SHELL_MCP_ENTRY ?? fileURLToPath(new URL("../../shell-mcp/src/index.ts", import.meta.url));
 
   return {
     port: Number(process.env.HOST_PORT ?? 4317),
@@ -71,6 +78,7 @@ export function loadConfig(): HostConfig {
       calendar: { command: process.execPath, args: ["--import", "tsx", calendarMcpEntry] },
       contacts: { command: process.execPath, args: ["--import", "tsx", contactsMcpEntry] },
       "action-center": { command: process.execPath, args: ["--import", "tsx", actionCenterMcpEntry] },
+      shell: { command: process.execPath, args: ["--import", "tsx", shellMcpEntry] },
     },
   };
 }

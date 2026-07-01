@@ -90,5 +90,9 @@ export const defaultPolicy: ToolPolicy = {
     // through to gated default because it changes item state.
     "mcp__action-center__list_actions": "allow",
     "mcp__action-center__read_action": "allow",
+    // Shell MCP — read-only search/inspection runs freely; the mutating
+    // run_write_command falls through to the gated default (needs approval).
+    "mcp__shell__find_files": "allow",
+    "mcp__shell__run_command": "allow",
   },
 };
