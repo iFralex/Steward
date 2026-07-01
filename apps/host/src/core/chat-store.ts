@@ -8,7 +8,31 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ChatSummary, PersistedMessage } from "@llm-wiki/protocol";
+import type { ChannelFile, ChatSummary, PersistedMessage } from "@llm-wiki/protocol";
+
+/**
+ * Build a tool-result transcript message. Shared by the agent turn loop and the
+ * Action Center executor so both render/persist tool cards identically. (No
+ * createdAt: addMessage stamps the row's created_at column.)
+ */
+export function toolMessage(a: {
+  tool: string;
+  input: unknown;
+  toolCallId: string;
+  ok: boolean;
+  output: unknown;
+  durationMs: number;
+  error?: string;
+  files?: ChannelFile[];
+}): PersistedMessage {
+  return {
+    id: randomUUID(), role: "tool", text: a.tool,
+    toolInput: a.input, toolCallId: a.toolCallId, toolStatus: a.ok ? "ok" : "error",
+    toolOutput: a.output, toolDurationMs: a.durationMs,
+    ...(a.error ? { toolError: a.error } : {}),
+    ...(a.files && a.files.length ? { toolFiles: a.files } : {}),
+  };
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS chats (

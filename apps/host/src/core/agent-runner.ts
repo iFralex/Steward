@@ -14,7 +14,7 @@ import { gateToolDefinition, type FollowUpSink } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
-import { chatStore } from "./chat-store.ts";
+import { chatStore, toolMessage } from "./chat-store.ts";
 import { usageStore } from "./usage-store.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
@@ -202,12 +202,9 @@ export class ChatManager {
       const error = ok ? undefined : (typeof output === "string" ? output : JSON.stringify(output));
       try { usageStore().recordTool({ ts: Date.now(), sessionId: runtime.chatId, tool: e.toolName, durationMs, ok }); } catch { /* ledger optional */ }
       try {
-        store.addMessage(runtime.chatId, {
-          id: randomUUID(), role: "tool", text: e.toolName,
-          toolInput: input, toolCallId: e.toolCallId ?? "", toolStatus: ok ? "ok" : "error",
-          toolOutput: output, toolDurationMs: durationMs,
-          ...(error ? { toolError: error } : {}), ...(files.length ? { toolFiles: files } : {}),
-        });
+        store.addMessage(runtime.chatId, toolMessage({
+          tool: e.toolName, input, toolCallId: e.toolCallId ?? "", ok, output, durationMs, error, files,
+        }));
       } catch { /* transcript optional */ }
       this.emit({
         type: "tool_result", sessionId: this.session.id, toolCallId: e.toolCallId ?? "", tool: e.toolName,

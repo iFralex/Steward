@@ -6,7 +6,7 @@ import type {
   PersistedMessage,
   ServerEvent,
 } from "@llm-wiki/protocol";
-import { chatStore } from "./chat-store.ts";
+import { chatStore, toolMessage } from "./chat-store.ts";
 import { randomUUID } from "node:crypto";
 import { ActionStore } from "../../../action-center/src/store.ts";
 import { actionDbPath } from "../../../action-center/src/paths.ts";
@@ -82,7 +82,7 @@ export async function executeActionProposal(args: {
   if (!proposal) throw new Error(`Proposal not found: ${args.proposalId}`);
   const bridge = await ensureDirectBridge(args.config, args.session);
   const record = (msg: PersistedMessage) => { if (args.chatId) chatStore().addMessage(args.chatId, msg); };
-  record({ id: randomUUID(), role: "user", text: `Esegui: ${proposal.label}`, createdAt: Date.now() });
+  record({ id: randomUUID(), role: "user", text: `Esegui: ${proposal.label}` });
 
   for (const step of proposal.steps) {
     const decision = decideTool(args.config.policy, step.tool);
@@ -113,7 +113,7 @@ export async function executeActionProposal(args: {
         ok: true, output, durationMs,
         ...(files.length ? { files } : {}),
       });
-      record({ id: toolCallId, role: "tool", text: step.tool, toolInput: input, toolCallId, toolStatus: "ok", toolOutput: output, toolDurationMs: durationMs, createdAt: Date.now(), ...(files.length ? { toolFiles: files } : {}) });
+      record(toolMessage({ tool: step.tool, input, toolCallId, ok: true, output, durationMs, files }));
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const error = err instanceof Error ? err.message : String(err);
@@ -121,12 +121,12 @@ export async function executeActionProposal(args: {
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
         ok: false, output: null, durationMs, error,
       });
-      record({ id: toolCallId, role: "tool", text: step.tool, toolInput: input, toolCallId, toolStatus: "error", toolError: error, toolDurationMs: durationMs, createdAt: Date.now() });
+      record(toolMessage({ tool: step.tool, input, toolCallId, ok: false, output: null, durationMs, error }));
       throw err;
     }
   }
 
-  record({ id: randomUUID(), role: "assistant", text: `✓ Proposta "${proposal.label}" eseguita.`, createdAt: Date.now() });
+  record({ id: randomUUID(), role: "assistant", text: `✓ Proposta "${proposal.label}" eseguita.` });
   return markAction(args.actionId, "done");
 }
 
