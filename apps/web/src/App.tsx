@@ -39,7 +39,7 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile };
+  const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile, register: host.registerPath };
   const selectedAction =
     host.actionCenter?.items.find((a) => a.id === selectedActionId)
     ?? host.actionCenter?.items[0]

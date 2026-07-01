@@ -11,6 +11,14 @@ import type { ChannelFile } from "@llm-wiki/protocol";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? join(homedir(), "Library", "Application Support", "llmwiki-uploads");
 
+/** Paths never exposed for serving/opening, even if a card references them. */
+const SENSITIVE = [
+  /(^|\/)\.ssh(\/|$)/, /(^|\/)\.aws(\/|$)/, /(^|\/)\.gnupg(\/|$)/,
+  /\/Library\/Keychains(\/|$)/, /(^|\/)\.netrc$/, /(^|\/)Cookies(\/|$)/,
+  /id_rsa/, /id_ed25519/, /(^|\/)\.env(\.[\w-]+)?$/, /credentials/i, /\.pem$/, /\.p12$/,
+];
+const isSensitivePath = (p: string): boolean => SENSITIVE.some((re) => re.test(p));
+
 const MIME: Record<string, string> = {
   ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
   ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".heic": "image/heic",
@@ -48,6 +56,18 @@ export function registerFile(path: string): ChannelFile | null {
 /** Resolve a token to its { path, ref }, or null if unknown. */
 export function resolveToken(token: string): { ref: ChannelFile; path: string } | null {
   return byToken.get(token) ?? null;
+}
+
+/**
+ * Register a path the UI wants to make actionable (e.g. a file card the agent
+ * emitted). Expands a leading `~/`, refuses sensitive paths, and only registers
+ * real files. This is how a card becomes openable without the path having to
+ * come through a tool's output.
+ */
+export function registerUserPath(path: string): ChannelFile | null {
+  const abs = path.startsWith("~/") || path === "~" ? path.replace(/^~/, homedir()) : path;
+  if (!abs.startsWith("/") || isSensitivePath(abs)) return null;
+  return registerFile(abs);
 }
 
 /**

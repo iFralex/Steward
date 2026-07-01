@@ -3,7 +3,7 @@
  * renders a card from a typed payload, used both by ToolCard (per-tool views)
  * and by the markdown renderer for ```card fenced blocks the model emits.
  */
-import { type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { FileChip } from "@/components/file-chip";
 import type { ChannelFile } from "@llm-wiki/protocol";
 
@@ -11,6 +11,8 @@ export interface FileApi {
   open: (token: string) => void;
   reveal: (token: string) => void;
   resolve: (key: string) => ChannelFile | undefined;
+  /** Register a path/name on demand (host /resolve) so a card becomes actionable. */
+  register?: (key: string) => Promise<ChannelFile | undefined>;
 }
 
 function fmtDate(v: unknown): string {
@@ -119,9 +121,25 @@ function SearchResultsList({ results }: { results: Dict[] }) {
 }
 
 function FileCardInline({ data, fileApi }: { data: Dict; fileApi: FileApi }) {
-  const f = fileApi.resolve(str(data.path)) ?? fileApi.resolve(str(data.name));
-  if (f) return <div className="my-1"><FileChip file={f} onOpen={fileApi.open} onReveal={fileApi.reveal} /></div>;
-  return <div className="bg-muted/60 my-1 rounded-md border px-2 py-1.5 text-xs">📎 {str(data.name) || str(data.path)}</div>;
+  const path = str(data.path);
+  const name = str(data.name);
+  const local = fileApi.resolve(path) ?? fileApi.resolve(name);
+  const [file, setFile] = useState<ChannelFile | undefined>(local);
+
+  // If the path wasn't surfaced by a tool, register it on demand so the card
+  // gets buttons + drag (not just a static chip).
+  useEffect(() => {
+    if (file || !fileApi.register) return;
+    let alive = true;
+    void (async () => {
+      const r = (path ? await fileApi.register!(path) : undefined) ?? (name ? await fileApi.register!(name) : undefined);
+      if (alive && r) setFile(r);
+    })();
+    return () => { alive = false; };
+  }, [path, name, file, fileApi]);
+
+  if (file) return <div className="my-1"><FileChip file={file} onOpen={fileApi.open} onReveal={fileApi.reveal} /></div>;
+  return <div className="bg-muted/60 my-1 rounded-md border px-2 py-1.5 text-xs">📎 {name || path}</div>;
 }
 
 export function CardView({ type, data, files, fileApi }: { type: string; data: unknown; files?: ChannelFile[]; fileApi: FileApi }) {

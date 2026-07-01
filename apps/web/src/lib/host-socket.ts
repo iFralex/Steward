@@ -79,6 +79,7 @@ export interface HostSocket {
   openFile: (token: string) => void;
   revealFile: (token: string) => void;
   resolveFile: (key: string) => ChannelFile | undefined;
+  registerPath: (key: string) => Promise<ChannelFile | undefined>;
   refreshActions: (includeDone?: boolean) => void;
   markAction: (id: number, status: ActionStatus) => void;
   executeProposal: (id: number, proposalId: string) => void;
@@ -285,8 +286,23 @@ export function useHostSocket(url: string): HostSocket {
   const openFile = useCallback((token: string) => send({ type: "open_file", token }), [send]);
   const revealFile = useCallback((token: string) => send({ type: "reveal_file", token }), [send]);
   const resolveFile = useCallback((key: string) => filesRef.current.get(key), []);
+  const registerPath = useCallback(async (key: string): Promise<ChannelFile | undefined> => {
+    const cached = filesRef.current.get(key);
+    if (cached) return cached;
+    try {
+      const httpBase = url.replace(/^ws/, "http");
+      const res = await fetch(`${httpBase}/resolve?path=${encodeURIComponent(key)}`);
+      if (!res.ok) return undefined;
+      const file = (await res.json()) as ChannelFile;
+      if (file.path) filesRef.current.set(file.path, file);
+      filesRef.current.set(file.name, file);
+      return file;
+    } catch {
+      return undefined;
+    }
+  }, [url]);
 
-  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, uploadFile, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, uploadFile, sendMessage, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */

@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 import type { ClientEvent } from "@llm-wiki/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
 import { ActionRevisionRequestedError, executeActionProposal, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
-import { resolveToken, saveUpload } from "./core/file-registry.ts";
+import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageStore } from "./core/usage-store.ts";
 import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
@@ -47,6 +47,15 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
     const body = JSON.stringify({ ...(usageStore().summary() as object), rates: config.gateway.cost });
     res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
     res.end(body);
+    return;
+  }
+  // Make a file-card path actionable on demand (register → return its ref).
+  if (url.startsWith("/resolve")) {
+    const path = new URL(url, "http://x").searchParams.get("path") ?? "";
+    const ref = registerUserPath(path);
+    if (!ref) { res.writeHead(404, CORS); res.end("not found or blocked"); return; }
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify(ref));
     return;
   }
   const m = url.match(/^\/file\/([\w-]+)/);
