@@ -98,6 +98,7 @@ export interface HostSocket {
 }
 
 export function useHostSocket(url: string): HostSocket {
+  const httpBase = url.replace(/^ws/, "http"); // host's HTTP origin (upload/resolve/file)
   const wsRef = useRef<WebSocket | null>(null);
   const sessionRef = useRef<string>("");
   const [connected, setConnected] = useState(false);
@@ -216,7 +217,6 @@ export function useHostSocket(url: string): HostSocket {
   const stop = useCallback(() => send({ type: "stop", chatId: activeChatId ?? undefined }), [send, activeChatId]);
 
   const uploadFile = useCallback(async (file: File): Promise<ChannelFile> => {
-    const httpBase = url.replace(/^ws/, "http");
     const res = await fetch(`${httpBase}/upload?name=${encodeURIComponent(file.name)}`, {
       method: "POST",
       headers: { "Content-Type": file.type || "application/octet-stream" },
@@ -224,7 +224,7 @@ export function useHostSocket(url: string): HostSocket {
     });
     if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`);
     return (await res.json()) as ChannelFile;
-  }, [url]);
+  }, [httpBase]);
 
   const createChat = useCallback(() => send({ type: "chat_create" }), [send]);
   const selectChat = useCallback((chatId: string) => send({ type: "chat_select", chatId }), [send]);
@@ -296,7 +296,6 @@ export function useHostSocket(url: string): HostSocket {
     const cached = filesRef.current.get(key);
     if (cached) return cached;
     try {
-      const httpBase = url.replace(/^ws/, "http");
       const res = await fetch(`${httpBase}/resolve?path=${encodeURIComponent(key)}`);
       if (!res.ok) return undefined;
       const file = (await res.json()) as ChannelFile;
@@ -306,7 +305,7 @@ export function useHostSocket(url: string): HostSocket {
     } catch {
       return undefined;
     }
-  }, [url]);
+  }, [httpBase]);
 
   return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }

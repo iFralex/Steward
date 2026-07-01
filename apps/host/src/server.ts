@@ -46,7 +46,7 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
   }
   if (url.startsWith("/usage")) {
     const body = JSON.stringify({ ...(usageStore().summary() as object), rates: config.gateway.cost });
-    res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
     res.end(body);
     return;
   }
