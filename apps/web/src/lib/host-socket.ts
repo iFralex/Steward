@@ -9,7 +9,9 @@ import type {
   ActionStatus,
   ApprovalDecision,
   ChannelFile,
+  ChatSummary,
   ClientEvent,
+  PersistedMessage,
   ServerEvent,
   SessionState,
 } from "@llm-wiki/protocol";
@@ -63,6 +65,12 @@ export interface HostSocket {
   questions: PendingQuestion[];
   usage: SessionUsage | null;
   actionCenter: ActionCenterState | null;
+  chats: ChatSummary[];
+  activeChatId: string | null;
+  createChat: () => void;
+  selectChat: (chatId: string) => void;
+  renameChat: (chatId: string, title: string) => void;
+  deleteChat: (chatId: string) => void;
   sendMessage: (text: string) => void;
   respondQuestion: (requestId: string, selected: string[]) => void;
   openFile: (token: string) => void;
@@ -90,6 +98,8 @@ export function useHostSocket(url: string): HostSocket {
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [usage, setUsage] = useState<SessionUsage | null>(null);
   const [actionCenter, setActionCenter] = useState<ActionCenterState | null>(null);
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   /** Files seen in tool results, keyed by both absolute path and name — lets inline `card:file` resolve to an openable file. */
   const filesRef = useRef<Map<string, ChannelFile>>(new Map());
 
@@ -152,6 +162,16 @@ export function useHostSocket(url: string): HostSocket {
         case "usage":
           setUsage({ turnCostUsd: msg.turnCostUsd, costUsd: msg.costUsd, tokens: msg.tokens });
           break;
+        case "chat_list":
+          setChats(msg.chats);
+          setActiveChatId(msg.activeChatId);
+          break;
+        case "chat_history":
+          setActiveChatId(msg.chatId);
+          setMessages(msg.messages.map(persistedToChat));
+          setApprovals([]);
+          setQuestions([]);
+          break;
         case "action_center_state":
           setActionCenter(msg.state);
           break;
@@ -179,10 +199,18 @@ export function useHostSocket(url: string): HostSocket {
         ...prev,
         { id: crypto.randomUUID(), role: "user", text: trimmed },
       ]);
-      send({ type: "user_message", sessionId: sessionRef.current, text: trimmed });
+      send({ type: "user_message", sessionId: sessionRef.current, text: trimmed, chatId: activeChatId ?? undefined });
     },
-    [send],
+    [send, activeChatId],
   );
+
+  const createChat = useCallback(() => send({ type: "chat_create" }), [send]);
+  const selectChat = useCallback((chatId: string) => send({ type: "chat_select", chatId }), [send]);
+  const renameChat = useCallback((chatId: string, title: string) => {
+    const trimmed = title.trim();
+    if (trimmed) send({ type: "chat_rename", chatId, title: trimmed });
+  }, [send]);
+  const deleteChat = useCallback((chatId: string) => send({ type: "chat_delete", chatId }), [send]);
 
   const refreshActions = useCallback(
     (includeDone = false) => send({ type: "action_center_refresh", sessionId: sessionRef.current, includeDone, limit: 100 }),
@@ -244,7 +272,12 @@ export function useHostSocket(url: string): HostSocket {
   const revealFile = useCallback((token: string) => send({ type: "reveal_file", token }), [send]);
   const resolveFile = useCallback((key: string) => filesRef.current.get(key), []);
 
-  return { connected, state, messages, approvals, questions, usage, actionCenter, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+}
+
+/** Map a persisted transcript message back into a renderable chat message. */
+function persistedToChat(m: PersistedMessage): ChatMessage {
+  return { ...m, open: false };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {

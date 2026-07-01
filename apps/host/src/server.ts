@@ -8,10 +8,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createReadStream } from "node:fs";
 import { execFile } from "node:child_process";
 import type { ClientEvent } from "@llm-wiki/protocol";
-import { runTurn } from "./core/agent-runner.ts";
+import { ChatManager } from "./core/agent-runner.ts";
 import { ActionRevisionRequestedError, executeActionProposal, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
 import { resolveToken } from "./core/file-registry.ts";
 import { usageStore } from "./core/usage-store.ts";
+import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import type { HostConfig } from "./config.ts";
 
@@ -45,12 +46,29 @@ export function startServer(config: HostConfig): WebSocketServer {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(event));
     };
     const session = new Session(emit, config.approvalTimeoutMs);
+    const chats = new ChatManager(config, session, emit);
+    const store = chatStore();
+
+    const sendChatList = () => {
+      emit({ type: "chat_list", chats: store.listChats(), activeChatId: session.activeChatId });
+    };
+    const selectChat = (chatId: string) => {
+      if (!store.exists(chatId)) return;
+      session.activeChatId = chatId;
+      emit({ type: "chat_history", chatId, messages: store.getMessages(chatId) });
+      sendChatList();
+    };
+
     emit({ type: "status", sessionId: session.id, state: "idle" });
     emit({ type: "action_center_state", sessionId: session.id, state: loadActionCenterState() });
+    // Restore (or seed) the chat list; focus the most-recent chat.
+    const existing = store.listChats();
+    const focus = existing[0] ?? store.createChat();
+    selectChat(focus.id);
 
     ws.on("close", () => {
       session.closed = true;
-      void session.pi?.close();
+      void chats.close();
       void session.directBridge?.close();
     });
 
@@ -63,9 +81,39 @@ export function startServer(config: HostConfig): WebSocketServer {
         return;
       }
       switch (msg.type) {
-        case "user_message":
-          void runTurn(config, session, emit, msg.text);
+        case "user_message": {
+          const chatId = msg.chatId ?? session.activeChatId;
+          if (!chatId || !store.exists(chatId)) { emit({ type: "error", sessionId: session.id, message: "no active chat" }); break; }
+          session.activeChatId = chatId;
+          void chats.runTurn(chatId, msg.text).then(sendChatList);
           break;
+        }
+        case "chat_list":
+          sendChatList();
+          break;
+        case "chat_create": {
+          const chat = store.createChat(msg.title);
+          selectChat(chat.id);
+          break;
+        }
+        case "chat_select":
+          selectChat(msg.chatId);
+          break;
+        case "chat_rename":
+          store.rename(msg.chatId, msg.title);
+          sendChatList();
+          break;
+        case "chat_delete": {
+          store.deleteChat(msg.chatId);
+          if (session.activeChatId === msg.chatId) {
+            const remaining = store.listChats();
+            const next = remaining[0] ?? store.createChat();
+            selectChat(next.id);
+          } else {
+            sendChatList();
+          }
+          break;
+        }
         case "approval_decision":
           session.resolveApproval(msg.requestId, {
             decision: msg.decision,
@@ -110,7 +158,7 @@ export function startServer(config: HostConfig): WebSocketServer {
               emit({ type: "action_center_state", sessionId: session.id, state });
             } catch (err) {
               if (err instanceof ActionRevisionRequestedError) {
-                await runTurn(config, session, emit, err.prompt);
+                if (session.activeChatId) await chats.runTurn(session.activeChatId, err.prompt);
               } else {
                 emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
               }

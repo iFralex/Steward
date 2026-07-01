@@ -1,66 +1,23 @@
 /**
- * Pi-based agent runner. One live AgentSession per host Session, reused across
- * turns (memory is inherent). Tools = the MCP servers bridged in and
- * gate-wrapped; model = the gateway tier. Pi events map to channel events.
+ * Multi-chat agent runner. One ChatManager per channel connection owns a single
+ * shared MCP bridge (the heavy part) and one Pi AgentSession per chat — each
+ * with its own file-backed memory (persisted by Pi) and its own usage stats.
+ * Switching chats swaps the live session, not the bridge, so it's instant.
+ * Every turn's transcript (user / assistant / tool) is persisted to chat-store
+ * so conversations survive reloads and host restarts.
  */
+import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { buildMcpBridge, type McpBridge } from "@llm-wiki/mcp-bridge";
-import { gateToolDefinition } from "./permission-gate.ts";
+import { gateToolDefinition, type FollowUpSink } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
+import { chatStore } from "./chat-store.ts";
 import { usageStore } from "./usage-store.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
-
-export interface PiRuntime {
-  session: AgentSession;
-  bridge: McpBridge;
-  close(): Promise<void>;
-}
-
-/** Build the Pi runtime (provider + bridge + gate-wrapped tools + session). */
-export async function buildPiRuntime(config: HostConfig, hostSession: Session): Promise<PiRuntime> {
-  const { modelRegistry, model } = registerGatewayModel(config.gateway);
-  const bridge = await buildMcpBridge(config.mcpServers);
-
-  let piSession: AgentSession;
-  const tools = [
-    ...bridge.tools.map((def) =>
-      gateToolDefinition(def, config.policy, hostSession.requestApproval, () => piSession),
-    ),
-    // Host-native question tool — not bridged, not gated.
-    buildAskUserTool(hostSession.askQuestion),
-  ];
-
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: process.cwd(),
-    agentDir: process.cwd(),
-    systemPromptOverride: () => config.systemPrompt,
-    noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true, noExtensions: true,
-  });
-  await resourceLoader.reload();
-
-  let created;
-  try {
-    created = await createAgentSession({
-      model, modelRegistry, resourceLoader,
-      sessionManager: SessionManager.inMemory(),
-      noTools: "builtin",
-      customTools: tools,
-    });
-  } catch (err) {
-    await bridge.close();
-    throw err;
-  }
-  piSession = created.session;
-
-  return {
-    session: piSession,
-    bridge,
-    close: async () => { piSession.dispose(); await bridge.close(); },
-  };
-}
 
 /**
  * Turn Pi's tool result into a UI-friendly `output`: pull the text out of the
@@ -83,85 +40,227 @@ export function extractToolOutput(result: unknown): unknown {
   return text;
 }
 
-/** Run one user turn through the agent, emitting channel events. */
-export async function runTurn(config: HostConfig, session: Session, emit: Emit, prompt: string): Promise<void> {
-  if (!session.pi) {
-    const runtime = await buildPiRuntime(config, session);
-    if (session.closed) { await runtime.close(); return; }
-    const toolStarts = new Map<string, number>();
-    const unsub = runtime.session.subscribe((e: any) => {
-      if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
-        if (e.assistantMessageEvent.delta) emit({ type: "assistant_token", sessionId: session.id, text: e.assistantMessageEvent.delta });
-      } else if (e.type === "tool_execution_start") {
-        if (e.toolCallId) toolStarts.set(e.toolCallId, Date.now());
-        emit({ type: "tool_call", sessionId: session.id, toolCallId: e.toolCallId ?? "", tool: e.toolName, input: e.args ?? {} });
-      } else if (e.type === "tool_execution_end") {
-        const startedAt = e.toolCallId ? toolStarts.get(e.toolCallId) : undefined;
-        if (e.toolCallId) toolStarts.delete(e.toolCallId);
-        const durationMs = startedAt != null ? Date.now() - startedAt : 0;
-        const ok = !e.isError;
-        const output = extractToolOutput(e.result);
-        const files = filesFromOutput(output);
-        try {
-          usageStore().recordTool({ ts: Date.now(), sessionId: session.id, tool: e.toolName, durationMs, ok });
-        } catch { /* usage ledger unavailable — don't break the turn */ }
-        emit({
-          type: "tool_result",
-          sessionId: session.id,
-          toolCallId: e.toolCallId ?? "",
-          tool: e.toolName,
-          ok,
-          output,
-          durationMs,
-          ...(files.length ? { files } : {}),
-          ...(ok ? {} : { error: typeof output === "string" ? output : JSON.stringify(output) }),
-        });
-      }
+export interface PiRuntime {
+  session: AgentSession;
+  bridge: McpBridge;
+  close(): Promise<void>;
+}
+
+/**
+ * Build a single standalone Pi runtime (one bridge + one in-memory session).
+ * Used by tests / one-off callers; production uses {@link ChatManager}, which
+ * shares one bridge across many file-backed chat sessions.
+ */
+export async function buildPiRuntime(config: HostConfig, hostSession: Session): Promise<PiRuntime> {
+  const { modelRegistry, model } = registerGatewayModel(config.gateway);
+  const bridge = await buildMcpBridge(config.mcpServers);
+  let piSession: AgentSession;
+  const tools = [
+    ...bridge.tools.map((def) =>
+      gateToolDefinition(def, config.policy, hostSession.requestApproval, () => ({ followUp: (t: string) => piSession.followUp(t) })),
+    ),
+    buildAskUserTool(hostSession.askQuestion),
+  ];
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: process.cwd(), agentDir: process.cwd(),
+    systemPromptOverride: () => config.systemPrompt,
+    noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true, noExtensions: true,
+  });
+  await resourceLoader.reload();
+  let created;
+  try {
+    created = await createAgentSession({
+      model, modelRegistry, resourceLoader,
+      sessionManager: SessionManager.inMemory(), noTools: "builtin", customTools: tools,
     });
-    session.pi = {
-      prompt: (t) => runtime.session.prompt(t),
-      followUp: (t) => runtime.session.followUp(t),
-      subscribe: runtime.session.subscribe.bind(runtime.session),
-      getStats: () => runtime.session.getSessionStats(),
-      close: async () => { unsub(); await runtime.close(); },
-    };
+  } catch (err) {
+    await bridge.close();
+    throw err;
+  }
+  piSession = created.session;
+  return { session: piSession, bridge, close: async () => { piSession.dispose(); await bridge.close(); } };
+}
+
+interface BridgeRuntime {
+  bridge: McpBridge;
+  modelRegistry: ReturnType<typeof registerGatewayModel>["modelRegistry"];
+  model: ReturnType<typeof registerGatewayModel>["model"];
+  resourceLoader: DefaultResourceLoader;
+  tools: ReturnType<typeof gateToolDefinition>[];
+}
+
+interface ChatRuntime {
+  chatId: string;
+  session: AgentSession;
+  unsub: () => void;
+  lastCostUsd: number;
+  lastTokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** Assistant text accumulated during the current turn (flushed to transcript on done). */
+  assistantBuffer: string;
+  /** toolCallId → start time (for durations) and input (for the transcript). */
+  starts: Map<string, number>;
+  toolInputs: Map<string, unknown>;
+}
+
+export class ChatManager {
+  private bridge?: BridgeRuntime;
+  private readonly chats = new Map<string, ChatRuntime>();
+  /** The followUp sink the gate uses — points at the chat currently running. */
+  private activeFollowUp: FollowUpSink = { followUp: async () => {} };
+
+  constructor(
+    private readonly config: HostConfig,
+    private readonly session: Session,
+    private readonly emit: Emit,
+  ) {}
+
+  private async ensureBridge(): Promise<BridgeRuntime> {
+    if (this.bridge) return this.bridge;
+    const { modelRegistry, model } = registerGatewayModel(this.config.gateway);
+    const bridge = await buildMcpBridge(this.config.mcpServers);
+    const tools = [
+      ...bridge.tools.map((def) =>
+        gateToolDefinition(def, this.config.policy, this.session.requestApproval, () => this.activeFollowUp),
+      ),
+      buildAskUserTool(this.session.askQuestion),
+    ];
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: process.cwd(),
+      agentDir: process.cwd(),
+      systemPromptOverride: () => this.config.systemPrompt,
+      noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true, noExtensions: true,
+    });
+    await resourceLoader.reload();
+    this.bridge = { bridge, modelRegistry, model, resourceLoader, tools };
+    return this.bridge;
   }
 
-  emit({ type: "status", sessionId: session.id, state: "running" });
-  try {
-    await session.pi.prompt(prompt);
-    emit({ type: "assistant_done", sessionId: session.id });
-  } catch (err) {
-    emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
-  } finally {
+  /** Build (or reopen) the Pi session for a chat, restoring memory from its file. */
+  private async ensureChat(chatId: string): Promise<ChatRuntime> {
+    const existing = this.chats.get(chatId);
+    if (existing) return existing;
+    const b = await this.ensureBridge();
+    const store = chatStore();
+
+    const file = store.getSessionFile(chatId);
+    let sessionManager: SessionManager;
+    if (file && existsSync(file)) {
+      try {
+        sessionManager = SessionManager.open(file, store.sessionDir);
+      } catch {
+        sessionManager = SessionManager.create(process.cwd(), store.sessionDir);
+        store.setSessionFile(chatId, sessionManager.getSessionFile() ?? file);
+      }
+    } else {
+      sessionManager = SessionManager.create(process.cwd(), store.sessionDir);
+      const created = sessionManager.getSessionFile();
+      if (created) store.setSessionFile(chatId, created);
+    }
+
+    const { session: piSession } = await createAgentSession({
+      model: b.model, modelRegistry: b.modelRegistry, resourceLoader: b.resourceLoader,
+      sessionManager, noTools: "builtin", customTools: b.tools,
+    });
+
+    const runtime: ChatRuntime = {
+      chatId, session: piSession, unsub: () => {},
+      lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      assistantBuffer: "", starts: new Map(), toolInputs: new Map(),
+    };
+    runtime.unsub = piSession.subscribe((e: any) => this.onPiEvent(runtime, e));
+    this.chats.set(chatId, runtime);
+    return runtime;
+  }
+
+  /** Map a Pi session event to channel events + transcript persistence. */
+  private onPiEvent(runtime: ChatRuntime, e: any): void {
+    const store = chatStore();
+    if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
+      const delta = e.assistantMessageEvent.delta;
+      if (delta) {
+        runtime.assistantBuffer += delta;
+        this.emit({ type: "assistant_token", sessionId: this.session.id, text: delta });
+      }
+      return;
+    }
+    if (e.type === "tool_execution_start") {
+      if (e.toolCallId) { runtime.starts.set(e.toolCallId, Date.now()); runtime.toolInputs.set(e.toolCallId, e.args ?? {}); }
+      this.emit({ type: "tool_call", sessionId: this.session.id, toolCallId: e.toolCallId ?? "", tool: e.toolName, input: e.args ?? {} });
+      return;
+    }
+    if (e.type === "tool_execution_end") {
+      const startedAt = e.toolCallId ? runtime.starts.get(e.toolCallId) : undefined;
+      const input = e.toolCallId ? runtime.toolInputs.get(e.toolCallId) : undefined;
+      if (e.toolCallId) { runtime.starts.delete(e.toolCallId); runtime.toolInputs.delete(e.toolCallId); }
+      const durationMs = startedAt != null ? Date.now() - startedAt : 0;
+      const ok = !e.isError;
+      const output = extractToolOutput(e.result);
+      const files = filesFromOutput(output);
+      const error = ok ? undefined : (typeof output === "string" ? output : JSON.stringify(output));
+      try { usageStore().recordTool({ ts: Date.now(), sessionId: runtime.chatId, tool: e.toolName, durationMs, ok }); } catch { /* ledger optional */ }
+      try {
+        store.addMessage(runtime.chatId, {
+          id: randomUUID(), role: "tool", text: e.toolName,
+          toolInput: input, toolCallId: e.toolCallId ?? "", toolStatus: ok ? "ok" : "error",
+          toolOutput: output, toolDurationMs: durationMs,
+          ...(error ? { toolError: error } : {}), ...(files.length ? { toolFiles: files } : {}),
+        });
+      } catch { /* transcript optional */ }
+      this.emit({
+        type: "tool_result", sessionId: this.session.id, toolCallId: e.toolCallId ?? "", tool: e.toolName,
+        ok, output, durationMs, ...(files.length ? { files } : {}), ...(error ? { error } : {}),
+      });
+    }
+  }
+
+  /** Run one user turn against a chat, persisting the transcript + usage. */
+  async runTurn(chatId: string, prompt: string): Promise<void> {
+    const store = chatStore();
+    store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt });
+    store.maybeAutoTitle(chatId, prompt);
+
+    const runtime = await this.ensureChat(chatId);
+    if (this.session.closed) return;
+    runtime.assistantBuffer = "";
+    this.activeFollowUp = { followUp: (t: string) => runtime.session.followUp(t) };
+
+    this.emit({ type: "status", sessionId: this.session.id, state: "running" });
     try {
-      const stats = session.pi?.getStats();
-      if (stats) {
-        const turnCostUsd = Math.max(0, stats.cost - session.lastCostUsd);
-        const prev = session.lastTokens;
+      await runtime.session.prompt(prompt);
+      const text = runtime.assistantBuffer.trim();
+      if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
+      this.emit({ type: "assistant_done", sessionId: this.session.id });
+    } catch (err) {
+      this.emit({ type: "error", sessionId: this.session.id, message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      try {
+        const stats = runtime.session.getSessionStats();
+        const turnCostUsd = Math.max(0, stats.cost - runtime.lastCostUsd);
+        const prev = runtime.lastTokens;
         const turn = {
           input: Math.max(0, stats.tokens.input - prev.input),
           output: Math.max(0, stats.tokens.output - prev.output),
           cacheRead: Math.max(0, stats.tokens.cacheRead - prev.cacheRead),
           cacheWrite: Math.max(0, stats.tokens.cacheWrite - prev.cacheWrite),
         };
-        session.lastCostUsd = stats.cost;
-        session.lastTokens = { input: stats.tokens.input, output: stats.tokens.output, cacheRead: stats.tokens.cacheRead, cacheWrite: stats.tokens.cacheWrite };
+        runtime.lastCostUsd = stats.cost;
+        runtime.lastTokens = { input: stats.tokens.input, output: stats.tokens.output, cacheRead: stats.tokens.cacheRead, cacheWrite: stats.tokens.cacheWrite };
         try {
           usageStore().record({
-            ts: Date.now(),
-            sessionId: session.id,
-            model: config.gateway.tier,
-            inputTokens: turn.input,
-            outputTokens: turn.output,
-            cacheReadTokens: turn.cacheRead,
-            cacheWriteTokens: turn.cacheWrite,
+            ts: Date.now(), sessionId: runtime.chatId, model: this.config.gateway.tier,
+            inputTokens: turn.input, outputTokens: turn.output, cacheReadTokens: turn.cacheRead, cacheWriteTokens: turn.cacheWrite,
             costUsd: turnCostUsd,
           });
-        } catch { /* usage ledger unavailable — don't break the turn */ }
-        emit({ type: "usage", sessionId: session.id, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
-      }
-    } catch { /* stats unavailable */ }
-    emit({ type: "status", sessionId: session.id, state: "idle" });
+        } catch { /* ledger optional */ }
+        this.emit({ type: "usage", sessionId: this.session.id, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
+      } catch { /* stats unavailable */ }
+      this.emit({ type: "status", sessionId: this.session.id, state: "idle" });
+    }
+  }
+
+  async close(): Promise<void> {
+    for (const r of this.chats.values()) { r.unsub(); r.session.dispose(); }
+    this.chats.clear();
+    await this.bridge?.bridge.close();
   }
 }

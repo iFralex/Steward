@@ -22,9 +22,40 @@ export interface ChannelFile {
   path?: string;
 }
 
+/**
+ * A persisted transcript message (chat history). Mirrors the renderable shape
+ * of a chat message so the channel can restore a conversation verbatim.
+ */
+export interface PersistedMessage {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  text: string;
+  toolInput?: unknown;
+  toolCallId?: string;
+  toolStatus?: "running" | "ok" | "error";
+  toolOutput?: unknown;
+  toolDurationMs?: number;
+  toolError?: string;
+  toolFiles?: ChannelFile[];
+}
+
+/** Summary of a persisted chat, for the chat list. */
+export interface ChatSummary {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
 /** Messages a channel sends INTO the core. */
 export type ClientEvent =
-  | { type: "user_message"; sessionId: string; text: string }
+  | { type: "user_message"; sessionId: string; text: string; chatId?: string }
+  | { type: "chat_list" }
+  | { type: "chat_create"; title?: string }
+  | { type: "chat_select"; chatId: string }
+  | { type: "chat_rename"; chatId: string; title: string }
+  | { type: "chat_delete"; chatId: string }
   | { type: "open_file"; token: string }
   | { type: "reveal_file"; token: string }
   | { type: "action_center_refresh"; sessionId: string; includeDone?: boolean; limit?: number }
@@ -126,6 +157,8 @@ export type ServerEvent =
       files?: ChannelFile[];
     }
   | { type: "action_center_state"; sessionId: string; state: ActionCenterState }
+  | { type: "chat_list"; chats: ChatSummary[]; activeChatId: string | null }
+  | { type: "chat_history"; chatId: string; messages: PersistedMessage[] }
   | { type: "status"; sessionId: string; state: SessionState }
   | { type: "error"; sessionId?: string; message: string };
 

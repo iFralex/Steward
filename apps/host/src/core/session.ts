@@ -12,26 +12,12 @@ export type Emit = (event: ServerEvent) => void;
 
 export class Session {
   readonly id = randomUUID();
-  /**
-   * The live Pi runtime for this connection (built lazily on the first turn).
-   * Reused across turns so conversation memory is inherent. `pi.close()` tears
-   * down the agent session and its MCP clients.
-   */
-  pi?: {
-    prompt(text: string): Promise<void>;
-    followUp(text: string): Promise<void>;
-    subscribe(l: (e: any) => void): () => void;
-    close(): Promise<void>;
-    getStats(): { cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } };
-  };
   /** Direct MCP bridge used by UI-triggered actions (same tools, same gates). */
   directBridge?: McpBridge;
   /** Set to true when the channel disconnects; prevents mid-build runtime leaks. */
   closed = false;
-  /** Cumulative gateway cost (USD) already reported, to compute per-turn deltas. */
-  lastCostUsd = 0;
-  /** Cumulative token counts already reported, to compute per-turn token deltas. */
-  lastTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  /** The chat the connection is currently focused on (per-connection routing). */
+  activeChatId: string | null = null;
   private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
   private readonly pendingQuestions = new Map<string, (selected: string[]) => void>();
 

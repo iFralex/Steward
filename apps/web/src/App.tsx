@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { ToolCard } from "@/components/tool-card";
 import { CardView, type FileApi } from "@/components/cards";
 import { UsagePage } from "@/components/usage-page";
-import type { ActionCenterItem } from "@llm-wiki/protocol";
+import type { ActionCenterItem, ChatSummary } from "@llm-wiki/protocol";
 
 const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
 const HTTP_BASE = HOST_URL.replace(/^ws/, "http");
@@ -133,7 +133,17 @@ function App() {
           <UsagePage httpBase={HTTP_BASE} />
         </div>
       ) : (
-      <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)_minmax(360px,0.9fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-[210px_330px_minmax(0,1fr)_minmax(330px,0.85fr)]">
+        <aside className="min-h-0 border-r">
+          <ChatSidebar
+            chats={host.chats}
+            activeChatId={host.activeChatId}
+            onSelect={host.selectChat}
+            onCreate={host.createChat}
+            onRename={host.renameChat}
+            onDelete={host.deleteChat}
+          />
+        </aside>
         <aside className="min-h-0 border-r">
           <ActionCenterPanel
             items={host.actionCenter?.items ?? []}
@@ -217,6 +227,76 @@ function App() {
 }
 
 export default App;
+
+function ChatSidebar({
+  chats,
+  activeChatId,
+  onSelect,
+  onCreate,
+  onRename,
+  onDelete,
+}: {
+  chats: ChatSummary[];
+  activeChatId: string | null;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between gap-2 border-b p-3">
+        <h2 className="text-sm font-semibold">Chat</h2>
+        <Button size="sm" onClick={onCreate} title="Nuova chat">+ Nuova</Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {chats.length === 0 ? (
+          <p className="text-muted-foreground p-3 text-xs">Nessuna chat.</p>
+        ) : (
+          chats.map((c) => (
+            <div
+              key={c.id}
+              className={cn(
+                "group hover:bg-muted relative rounded-lg p-2.5 transition",
+                activeChatId === c.id && "bg-muted",
+              )}
+            >
+              <button type="button" onClick={() => onSelect(c.id)} className="block w-full text-left">
+                <div className="truncate pr-10 text-sm font-medium">{c.title}</div>
+                <div className="text-muted-foreground mt-0.5 text-xs">
+                  {c.messageCount} {c.messageCount === 1 ? "messaggio" : "messaggi"} · {formatWhen(Math.floor(c.updatedAt / 1000))}
+                </div>
+              </button>
+              <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
+                <button
+                  type="button"
+                  title="Rinomina"
+                  className="hover:bg-background text-muted-foreground rounded p-1 text-xs"
+                  onClick={() => {
+                    const title = window.prompt("Rinomina chat", c.title);
+                    if (title != null) onRename(c.id, title);
+                  }}
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  title="Elimina"
+                  className="hover:bg-background text-muted-foreground hover:text-destructive rounded p-1 text-xs"
+                  onClick={() => {
+                    if (window.confirm(`Eliminare la chat "${c.title}"? L'azione è irreversibile.`)) onDelete(c.id);
+                  }}
+                >
+                  🗑
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ThinkingIndicator() {
   return (
