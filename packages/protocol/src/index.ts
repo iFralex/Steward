@@ -50,6 +50,8 @@ export interface ChatSummary {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
+  /** A scratch chat opened for an action; removed on reconnect unless saved. */
+  temporary?: boolean;
 }
 
 /** Messages a channel sends INTO the core. */
@@ -57,14 +59,16 @@ export type ClientEvent =
   | { type: "user_message"; sessionId: string; text: string; chatId?: string; attachments?: ChannelFile[] }
   | { type: "stop"; chatId?: string }
   | { type: "chat_list" }
-  | { type: "chat_create"; title?: string }
+  | { type: "chat_create"; title?: string; temporary?: boolean }
   | { type: "chat_select"; chatId: string }
   | { type: "chat_rename"; chatId: string; title: string }
   | { type: "chat_delete"; chatId: string }
+  | { type: "chat_save"; chatId: string }
   | { type: "open_file"; token: string }
   | { type: "reveal_file"; token: string }
   | { type: "action_center_refresh"; sessionId: string; includeDone?: boolean; limit?: number }
   | { type: "action_center_mark"; sessionId: string; id: number; status: ActionStatus }
+  | { type: "action_open_in_chat"; id: number }
   | { type: "action_center_execute"; sessionId: string; id: number; proposalId: string }
   | { type: "action_center_revise"; sessionId: string; id: number; proposalId: string; instruction: string }
   | {

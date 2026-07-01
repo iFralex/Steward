@@ -159,7 +159,8 @@ function App() {
   const openActionInChat = (action: ActionCenterItem) => {
     setSelectedActionId(action.id);
     host.markAction(action.id, "read");
-    host.sendMessage(`Apri l'action-center item ${action.id}. Leggilo con read_action, riassumimi il contesto e aiutami a decidere cosa fare.`);
+    // Runs in a temporary chat dedicated to this action (server-side).
+    host.openActionChat(action.id);
   };
 
   return (
@@ -227,6 +228,7 @@ function App() {
             onCreate={host.createChat}
             onRename={host.renameChat}
             onDelete={host.deleteChat}
+            onSave={host.saveChat}
           />
         </aside>
         <aside className="min-h-0 border-r">
@@ -386,6 +388,7 @@ function ChatSidebar({
   onCreate,
   onRename,
   onDelete,
+  onSave,
 }: {
   chats: ChatSummary[];
   activeChatId: string | null;
@@ -393,6 +396,7 @@ function ChatSidebar({
   onCreate: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onSave: (id: string) => void;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -410,15 +414,29 @@ function ChatSidebar({
               className={cn(
                 "group hover:bg-muted relative rounded-lg p-2.5 transition",
                 activeChatId === c.id && "bg-muted",
+                c.temporary && "border-primary/30 border border-dashed",
               )}
             >
               <button type="button" onClick={() => onSelect(c.id)} className="block w-full text-left">
-                <div className="truncate pr-10 text-sm font-medium">{c.title}</div>
+                <div className="flex items-center gap-1.5 pr-10">
+                  {c.temporary && <span className="bg-primary/15 text-primary rounded px-1 py-px text-[10px] font-medium uppercase">temp</span>}
+                  <span className="truncate text-sm font-medium">{c.title}</span>
+                </div>
                 <div className="text-muted-foreground mt-0.5 text-xs">
                   {c.messageCount} {c.messageCount === 1 ? "messaggio" : "messaggi"} · {formatWhen(Math.floor(c.updatedAt / 1000))}
                 </div>
               </button>
               <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
+                {c.temporary && (
+                  <button
+                    type="button"
+                    title="Salva questa chat (rendila permanente)"
+                    className="hover:bg-background text-muted-foreground hover:text-primary rounded p-1 text-xs"
+                    onClick={() => onSave(c.id)}
+                  >
+                    💾
+                  </button>
+                )}
                 <button
                   type="button"
                   title="Rinomina"

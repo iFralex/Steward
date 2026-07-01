@@ -41,6 +41,8 @@ export class ChatStore {
     this.sessionDir = sessionDir;
     this.raw.pragma("journal_mode = WAL");
     this.raw.exec(SCHEMA);
+    // Migration: temporary chats (action scratch space) — added after first ship.
+    try { this.raw.exec(`ALTER TABLE chats ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0`); } catch { /* already present */ }
   }
 
   static open(): ChatStore {
@@ -51,20 +53,33 @@ export class ChatStore {
   }
 
   listChats(): ChatSummary[] {
-    return this.raw.prepare(
-      `SELECT c.id, c.title, c.created_at createdAt, c.updated_at updatedAt,
+    const rows = this.raw.prepare(
+      `SELECT c.id, c.title, c.created_at createdAt, c.updated_at updatedAt, c.temporary temporary,
               (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) messageCount
        FROM chats c ORDER BY c.updated_at DESC`,
-    ).all() as ChatSummary[];
+    ).all() as (Omit<ChatSummary, "temporary"> & { temporary: number })[];
+    return rows.map((r) => ({ ...r, temporary: !!r.temporary }));
   }
 
-  createChat(title?: string): ChatSummary {
+  createChat(title?: string, opts: { temporary?: boolean } = {}): ChatSummary {
     const now = Date.now();
     const id = randomUUID();
+    const title2 = title?.trim() || DEFAULT_CHAT_TITLE;
     this.raw.prepare(
-      `INSERT INTO chats (id, title, session_file, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)`,
-    ).run(id, title?.trim() || DEFAULT_CHAT_TITLE, now, now);
-    return { id, title: title?.trim() || DEFAULT_CHAT_TITLE, createdAt: now, updatedAt: now, messageCount: 0 };
+      `INSERT INTO chats (id, title, session_file, created_at, updated_at, temporary) VALUES (?, ?, NULL, ?, ?, ?)`,
+    ).run(id, title2, now, now, opts.temporary ? 1 : 0);
+    return { id, title: title2, createdAt: now, updatedAt: now, messageCount: 0, temporary: !!opts.temporary };
+  }
+
+  /** Promote a temporary chat to a permanent one (the "Save" button). */
+  setTemporary(chatId: string, temporary: boolean): void {
+    this.raw.prepare(`UPDATE chats SET temporary = ?, updated_at = ? WHERE id = ?`).run(temporary ? 1 : 0, Date.now(), chatId);
+  }
+
+  /** Delete all still-temporary (unsaved) chats — called on a fresh connection. */
+  purgeTemporary(): void {
+    this.raw.prepare(`DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE temporary = 1)`).run();
+    this.raw.prepare(`DELETE FROM chats WHERE temporary = 1`).run();
   }
 
   exists(chatId: string): boolean {

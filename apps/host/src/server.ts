@@ -9,7 +9,8 @@ import { createReadStream } from "node:fs";
 import { execFile } from "node:child_process";
 import type { ClientEvent } from "@llm-wiki/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
-import { ActionRevisionRequestedError, executeActionProposal, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
+import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
+import type { ActionCenterItem } from "@llm-wiki/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageStore } from "./core/usage-store.ts";
 import { chatStore } from "./core/chat-store.ts";
@@ -92,8 +93,20 @@ export function startServer(config: HostConfig): WebSocketServer {
       sendChatList();
     };
 
+    // Per-action temporary "scratch" chats (open-in-chat / execute go here).
+    const actionChats = new Map<number, string>();
+    const ensureActionChat = (action: ActionCenterItem): string => {
+      const existing = actionChats.get(action.id);
+      if (existing && store.exists(existing)) return existing;
+      const chat = store.createChat(`⚡ ${action.title}`.slice(0, 60), { temporary: true });
+      actionChats.set(action.id, chat.id);
+      return chat.id;
+    };
+
     emit({ type: "status", sessionId: session.id, state: "idle" });
     emit({ type: "action_center_state", sessionId: session.id, state: loadActionCenterState() });
+    // Fresh connection: drop unsaved temporary chats from the previous session.
+    store.purgeTemporary();
     // Restore (or seed) the chat list; focus the most-recent chat.
     const existing = store.listChats();
     const focus = existing[0] ?? store.createChat();
@@ -128,10 +141,14 @@ export function startServer(config: HostConfig): WebSocketServer {
           sendChatList();
           break;
         case "chat_create": {
-          const chat = store.createChat(msg.title);
+          const chat = store.createChat(msg.title, { temporary: msg.temporary });
           selectChat(chat.id);
           break;
         }
+        case "chat_save":
+          store.setTemporary(msg.chatId, false);
+          sendChatList();
+          break;
         case "chat_select":
           selectChat(msg.chatId);
           break;
@@ -180,8 +197,20 @@ export function startServer(config: HostConfig): WebSocketServer {
         case "action_center_mark":
           emit({ type: "action_center_state", sessionId: session.id, state: markAction(msg.id, msg.status) });
           break;
+        case "action_open_in_chat": {
+          const action = getActionItem(msg.id);
+          if (!action) { emit({ type: "error", sessionId: session.id, message: `Action not found: ${msg.id}` }); break; }
+          const chatId = ensureActionChat(action);
+          selectChat(chatId);
+          const prompt = `Apri l'action-center item ${action.id} "${action.title}". Leggilo con read_action, riassumimi il contesto e aiutami a decidere cosa fare.`;
+          void chats.runTurn(chatId, prompt).then(sendChatList);
+          break;
+        }
         case "action_center_execute":
           void (async () => {
+            const action = getActionItem(msg.id);
+            const chatId = action ? ensureActionChat(action) : session.activeChatId ?? undefined;
+            if (chatId) selectChat(chatId);
             emit({ type: "status", sessionId: session.id, state: "running" });
             try {
               const state = await executeActionProposal({
@@ -190,16 +219,18 @@ export function startServer(config: HostConfig): WebSocketServer {
                 emit,
                 actionId: msg.id,
                 proposalId: msg.proposalId,
+                chatId,
               });
               emit({ type: "action_center_state", sessionId: session.id, state });
             } catch (err) {
               if (err instanceof ActionRevisionRequestedError) {
-                if (session.activeChatId) await chats.runTurn(session.activeChatId, err.prompt);
+                if (chatId) await chats.runTurn(chatId, err.prompt);
               } else {
                 emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
               }
             } finally {
               emit({ type: "status", sessionId: session.id, state: "idle" });
+              sendChatList();
             }
           })();
           break;

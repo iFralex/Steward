@@ -75,6 +75,8 @@ export interface HostSocket {
   selectChat: (chatId: string) => void;
   renameChat: (chatId: string, title: string) => void;
   deleteChat: (chatId: string) => void;
+  saveChat: (chatId: string) => void;
+  openActionChat: (id: number) => void;
   uploadFile: (file: File) => Promise<ChannelFile>;
   sendMessage: (text: string, attachments?: ChannelFile[]) => void;
   stop: () => void;
@@ -242,6 +244,9 @@ export function useHostSocket(url: string): HostSocket {
     [send],
   );
 
+  const openActionChat = useCallback((id: number) => send({ type: "action_open_in_chat", id }), [send]);
+  const saveChat = useCallback((chatId: string) => send({ type: "chat_save", chatId }), [send]);
+
   const executeProposal = useCallback(
     (id: number, proposalId: string) => send({ type: "action_center_execute", sessionId: sessionRef.current, id, proposalId }),
     [send],
@@ -251,10 +256,6 @@ export function useHostSocket(url: string): HostSocket {
     (id: number, proposalId: string, instruction: string) => {
       const trimmed = instruction.trim();
       if (!trimmed) return;
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "user", text: `Revise proposal ${proposalId}: ${trimmed}` },
-      ]);
       send({ type: "action_center_revise", sessionId: sessionRef.current, id, proposalId, instruction: trimmed });
     },
     [send],
@@ -307,7 +308,7 @@ export function useHostSocket(url: string): HostSocket {
     }
   }, [url]);
 
-  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */

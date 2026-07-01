@@ -3,8 +3,10 @@ import type {
   ActionCenterItem,
   ActionCenterState,
   ActionStatus,
+  PersistedMessage,
   ServerEvent,
 } from "@llm-wiki/protocol";
+import { chatStore } from "./chat-store.ts";
 import { randomUUID } from "node:crypto";
 import { ActionStore } from "../../../action-center/src/store.ts";
 import { actionDbPath } from "../../../action-center/src/paths.ts";
@@ -71,12 +73,16 @@ export async function executeActionProposal(args: {
   emit: Emit;
   actionId: number;
   proposalId: string;
+  /** When set, the execution transcript is persisted into this chat. */
+  chatId?: string;
 }): Promise<ActionCenterState> {
   const action = loadAction(args.actionId);
   if (!action) throw new Error(`Action not found: ${args.actionId}`);
   const proposal = findProposal(action, args.proposalId);
   if (!proposal) throw new Error(`Proposal not found: ${args.proposalId}`);
   const bridge = await ensureDirectBridge(args.config, args.session);
+  const record = (msg: PersistedMessage) => { if (args.chatId) chatStore().addMessage(args.chatId, msg); };
+  record({ id: randomUUID(), role: "user", text: `Esegui: ${proposal.label}`, createdAt: Date.now() });
 
   for (const step of proposal.steps) {
     const decision = decideTool(args.config.policy, step.tool);
@@ -101,21 +107,26 @@ export async function executeActionProposal(args: {
       const result = await bridge.callTool(step.tool, input);
       const output = extractToolOutput(result);
       const files = filesFromOutput(output);
+      const durationMs = Date.now() - startedAt;
       args.emit({
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
-        ok: true, output, durationMs: Date.now() - startedAt,
+        ok: true, output, durationMs,
         ...(files.length ? { files } : {}),
       });
+      record({ id: toolCallId, role: "tool", text: step.tool, toolInput: input, toolCallId, toolStatus: "ok", toolOutput: output, toolDurationMs: durationMs, createdAt: Date.now(), ...(files.length ? { toolFiles: files } : {}) });
     } catch (err) {
+      const durationMs = Date.now() - startedAt;
+      const error = err instanceof Error ? err.message : String(err);
       args.emit({
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
-        ok: false, output: null, durationMs: Date.now() - startedAt,
-        error: err instanceof Error ? err.message : String(err),
+        ok: false, output: null, durationMs, error,
       });
+      record({ id: toolCallId, role: "tool", text: step.tool, toolInput: input, toolCallId, toolStatus: "error", toolError: error, toolDurationMs: durationMs, createdAt: Date.now() });
       throw err;
     }
   }
 
+  record({ id: randomUUID(), role: "assistant", text: `✓ Proposta "${proposal.label}" eseguita.`, createdAt: Date.now() });
   return markAction(args.actionId, "done");
 }
 
@@ -164,6 +175,10 @@ export class ActionRevisionRequestedError extends Error {
 async function ensureDirectBridge(config: HostConfig, session: Session) {
   if (!session.directBridge) session.directBridge = await buildMcpBridge(config.mcpServers);
   return session.directBridge;
+}
+
+export function getActionItem(id: number): ActionCenterItem | null {
+  return loadAction(id);
 }
 
 function loadAction(id: number): ActionCenterItem | null {
