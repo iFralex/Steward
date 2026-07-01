@@ -3,23 +3,24 @@
  * Shell MCP — limited, safe shell access for the agent.
  *
  * Tools:
- *  - find_files       (read)  locate files on disk (Spotlight) to attach/inspect
- *  - run_command      (read)  run one allowlisted read-only binary (no shell)
- *  - run_write_command (write) run one allowlisted mutating binary — the HOST
- *                             gates this behind user approval (see tool-policy)
+ *  - find_files        (read)  locate files on disk (Spotlight) to attach/inspect
+ *  - run_command       (read)  a read-only command line, pipes allowed
+ *  - run_write_command (write) a file-mutating command line — the HOST gates it
+ *                              behind user approval (see tool-policy)
  *
- * No shell is ever spawned: args are an explicit array, so `|`, `>`, `;`, `$()`
- * are inert. See ./exec.ts for the binary allowlist + sensitive-path guard.
+ * The command line uses normal shell syntax (words, quotes, `|` pipes), but NO
+ * shell is ever spawned: we parse it ourselves and spawn each stage as an
+ * allowlisted binary with explicit argv — so `;`, `>`, `$()`, backticks never
+ * execute. See ./exec.ts for the parser, binary allowlist + sensitive-path guard.
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { READ_BINARIES, WRITE_BINARIES, runCommand, runPipeline, type Stage } from "./exec.ts";
+import { READ_BINARIES, WRITE_BINARIES, runCommandLine } from "./exec.ts";
 import { findFiles, type FindArgs } from "./find.ts";
 
 const server = new Server({ name: "shell", version: "0.0.0" }, { capabilities: { tools: {} } });
 
-const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -44,56 +45,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "run_command",
       description:
-        `Run ONE read-only command with an explicit argument array. There is NO shell: pipes/redirects/globs (| > * ; $()) are NOT interpreted, so you canNOT do "ls | head". Output is TRUNCATED to ~120 lines — narrow it with the command's own flags instead of dumping everything: e.g. newest file → "ls -t <dir>" (newest first, read the first line); recent files → "find <dir> -type f -mtime -7"; limited matches → "grep -m 20 …". Allowed commands: ${[...READ_BINARIES].join(", ")}. Sensitive paths are blocked.`,
+        `Run a read-only command line, written in NORMAL shell syntax with pipes — e.g. "ls -t ~/Downloads | head -1" (newest file), "ls -1 ~/Downloads | grep -i '\\.pdf$' | head -1" (newest PDF), "find ~/Documents -name '*.log' | wc -l" (count). Only '|' is supported (no ; && > < redirects, no $()/backticks, no glob/$VAR expansion — quote patterns and let find/grep handle them). No shell is spawned; each stage must be an allowed command: ${[...READ_BINARIES].join(", ")}. Sensitive paths blocked; output truncated to ~120 lines (compose "| head -N" to get exactly what you need).`,
       inputSchema: {
         type: "object",
         properties: {
-          command: { type: "string", description: "The binary to run (must be in the allowed list)" },
-          args: { type: "array", items: { type: "string" }, description: "Arguments as an array (each a separate argv element)" },
+          command: { type: "string", description: "A command line, e.g. \"ls -t ~/Downloads | head -1\"" },
           cwd: { type: "string", description: "Working directory (absolute path or ~/…)" },
-          maxLines: { type: "number", description: "Max stdout lines to return (default 120). Only raise it when you truly need more; keep it small to save context." },
+          maxLines: { type: "number", description: "Max stdout lines to return (default 120)" },
         },
         required: ["command"],
         additionalProperties: false,
       },
     },
     {
-      name: "run_pipeline",
-      description:
-        `Run a read-only PIPELINE: each stage's stdout feeds the next stage's stdin, like a shell '|' — but there is NO shell, so it's safe and each stage must be an allowlisted read binary with explicit args. Use it to compose (filter/limit/count). Example — newest file in Downloads: {"stages":[{"command":"ls","args":["-t","~/Downloads"]},{"command":"head","args":["-1"]}]}. Newest PDF: add {"command":"grep","args":["-i","\\\\.pdf$"]} before head. Count: end with {"command":"wc","args":["-l"]}. Allowed commands: ${[...READ_BINARIES].join(", ")}. Max 6 stages; output truncated (~120 lines).`,
-      inputSchema: {
-        type: "object",
-        properties: {
-          stages: {
-            type: "array",
-            minItems: 1,
-            items: {
-              type: "object",
-              properties: {
-                command: { type: "string", description: "Allowlisted read binary for this stage" },
-                args: { type: "array", items: { type: "string" }, description: "Arguments as an array" },
-              },
-              required: ["command"],
-              additionalProperties: false,
-            },
-            description: "Pipeline stages, left to right",
-          },
-          cwd: { type: "string", description: "Working directory (absolute path or ~/…)" },
-          maxLines: { type: "number", description: "Max stdout lines to return (default 120)" },
-        },
-        required: ["stages"],
-        additionalProperties: false,
-      },
-    },
-    {
       name: "run_write_command",
       description:
-        `Run ONE file-mutating command (create/copy/move/delete). Requires user approval. Explicit argument array, no shell. Allowed commands: ${[...WRITE_BINARIES].join(", ")}. Sensitive paths are blocked.`,
+        `Run a file-mutating command line (create/copy/move/delete). Requires user approval. Normal shell syntax with '|' pipes, but no shell is spawned. Mutating commands allowed: ${[...WRITE_BINARIES].join(", ")} (read commands may also appear as earlier stages). Sensitive paths are blocked. E.g. "mkdir -p ~/Documents/archive", "mv ~/Downloads/report.pdf ~/Documents/".`,
       inputSchema: {
         type: "object",
         properties: {
-          command: { type: "string", description: "The mutating binary (must be in the allowed write list)" },
-          args: { type: "array", items: { type: "string" }, description: "Arguments as an array" },
+          command: { type: "string", description: "A command line, e.g. \"mv ~/Downloads/a.pdf ~/Documents/\"" },
           cwd: { type: "string", description: "Working directory (absolute path or ~/…)" },
         },
         required: ["command"],
@@ -114,20 +85,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       const command = str(raw.command);
       if (!command) throw new Error("command is required");
       const maxLines = typeof raw.maxLines === "number" ? raw.maxLines : undefined;
-      return ok(await runCommand(command, strArr(raw.args), { mode: "read", cwd: str(raw.cwd), maxLines }));
-    }
-    case "run_pipeline": {
-      const stages: Stage[] = Array.isArray(raw.stages)
-        ? raw.stages.filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
-            .map((s) => ({ command: String((s as Record<string, unknown>).command ?? ""), args: strArr((s as Record<string, unknown>).args) }))
-        : [];
-      const maxLines = typeof raw.maxLines === "number" ? raw.maxLines : undefined;
-      return ok(await runPipeline(stages, { cwd: str(raw.cwd), maxLines }));
+      return ok(await runCommandLine(command, "read", { cwd: str(raw.cwd), maxLines }));
     }
     case "run_write_command": {
       const command = str(raw.command);
       if (!command) throw new Error("command is required");
-      return ok(await runCommand(command, strArr(raw.args), { mode: "write", cwd: str(raw.cwd) }));
+      return ok(await runCommandLine(command, "write", { cwd: str(raw.cwd) }));
     }
     default:
       throw new Error(`unknown tool: ${req.params.name}`);

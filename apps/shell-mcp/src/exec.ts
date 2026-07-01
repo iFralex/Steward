@@ -64,8 +64,12 @@ export type Mode = "read" | "write";
 
 /** Validate a binary + argv for a mode. Returns an error string, or null if OK. */
 export function validate(binary: string, args: string[], mode: Mode): string | null {
-  const allowed = mode === "read" ? READ_BINARIES : WRITE_BINARIES;
+  // Write mode also permits read binaries (e.g. `find … | … ` feeding a write).
+  const allowed = mode === "read" ? READ_BINARIES : new Set([...READ_BINARIES, ...WRITE_BINARIES]);
   if (!allowed.has(binary)) {
+    if (mode === "read" && WRITE_BINARIES.has(binary)) {
+      return `command '${binary}' changes files — use run_write_command (needs approval), not run_command.`;
+    }
     return `command '${binary}' is not allowed in ${mode} mode. Allowed: ${[...allowed].join(", ")}`;
   }
   for (const a of args) {
@@ -142,13 +146,14 @@ export interface Stage { command: string; args?: string[]; }
  */
 export function runPipeline(
   stages: Stage[],
-  opts: { cwd?: string; timeoutMs?: number; maxLines?: number; maxChars?: number } = {},
+  opts: { mode?: Mode; cwd?: string; timeoutMs?: number; maxLines?: number; maxChars?: number } = {},
 ): Promise<ExecResult> {
   if (!stages.length) return Promise.resolve(fail("pipeline needs at least one stage"));
   if (stages.length > 6) return Promise.resolve(fail("pipeline too long (max 6 stages)"));
+  const mode = opts.mode ?? "read";
   const norm = stages.map((s) => ({ command: s.command, args: (s.args ?? []).map(expandTilde) }));
   for (const s of norm) {
-    const invalid = validate(s.command, s.args, "read");
+    const invalid = validate(s.command, s.args, mode);
     if (invalid) return Promise.resolve(fail(`stage '${s.command}': ${invalid}`));
   }
   const cwd = opts.cwd ? expandTilde(opts.cwd) : undefined;
@@ -209,4 +214,68 @@ export function runPipeline(
     }
     last.on("close", (code) => finish(false, code));
   });
+}
+
+/**
+ * Parse a natural shell-style command line into pipeline stages WITHOUT a shell.
+ * Supports: words, single/double quotes, backslash escapes, and `|` between
+ * stages. Everything else stays literal — and the genuinely shell-only operators
+ * (`;` `&` `<` `>` backtick `$(`) are rejected with a clear message rather than
+ * silently mis-behaving. No glob/`$VAR`/substitution expansion happens.
+ */
+export function parsePipeline(line: string): { stages: Stage[] } | { error: string } {
+  const stages: Stage[] = [];
+  let tokens: string[] = [];
+  let cur = "";
+  let hasTok = false;
+  let quote: '"' | "'" | null = null;
+
+  const endToken = () => { if (hasTok) { tokens.push(cur); cur = ""; hasTok = false; } };
+  const endStage = (): string | null => {
+    endToken();
+    if (tokens.length === 0) return "empty pipeline stage (a stray '|'?)";
+    stages.push({ command: tokens[0], args: tokens.slice(1) });
+    tokens = [];
+    return null;
+  };
+
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === "\\" && quote === '"' && i + 1 < line.length) { cur += line[++i]; hasTok = true; continue; }
+      if (c === quote) { quote = null; hasTok = true; continue; }
+      cur += c; hasTok = true; continue;
+    }
+    if (c === "'" || c === '"') { quote = c; hasTok = true; continue; }
+    if (c === "\\" && i + 1 < line.length) { cur += line[++i]; hasTok = true; continue; }
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") { endToken(); continue; }
+    if (c === "|") { const e = endStage(); if (e) return { error: e }; continue; }
+    if (c === "$" && line[i + 1] === "(") return { error: "command substitution $(…) is not supported (no shell)." };
+    if (c === ";" || c === "&" || c === "<" || c === ">" || c === "`") {
+      return { error: `unsupported shell operator '${c}'. Only '|' (pipe) works here — no ; && || > < redirects or backticks.` };
+    }
+    cur += c; hasTok = true;
+  }
+  if (quote) return { error: "unbalanced quote in command" };
+  const e = endStage();
+  if (e) return { error: e };
+  if (stages.length === 0) return { error: "empty command" };
+  return { stages };
+}
+
+/**
+ * Run a natural command line (`cmd -a | cmd2 …`): parse it safely into stages
+ * then execute via execFile (single) or the wired pipeline (multi). `mode`
+ * decides which binaries are allowed (read vs write).
+ */
+export function runCommandLine(
+  line: string,
+  mode: Mode,
+  opts: { cwd?: string; timeoutMs?: number; maxLines?: number; maxChars?: number } = {},
+): Promise<ExecResult> {
+  const parsed = parsePipeline(line);
+  if ("error" in parsed) return Promise.resolve(fail(parsed.error));
+  const { stages } = parsed;
+  if (stages.length === 1) return runCommand(stages[0].command, stages[0].args ?? [], { mode, ...opts });
+  return runPipeline(stages, { mode, ...opts });
 }

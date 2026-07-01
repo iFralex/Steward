@@ -3,16 +3,17 @@ import { test } from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validate, runCommand, runPipeline, isSensitivePath, expandTilde, clip } from "../src/exec.ts";
+import { validate, runCommand, runPipeline, runCommandLine, parsePipeline, isSensitivePath, expandTilde, clip } from "../src/exec.ts";
 
 test("validate: read binary allowed, write binary denied in read mode", () => {
   assert.equal(validate("cat", ["/tmp/x"], "read"), null);
-  assert.match(validate("rm", ["/tmp/x"], "read") ?? "", /not allowed in read/);
+  assert.match(validate("rm", ["/tmp/x"], "read") ?? "", /run_write_command/);
 });
 
-test("validate: write binary allowed only in write mode", () => {
+test("validate: write mode allows write + read binaries but not others", () => {
   assert.equal(validate("mv", ["/tmp/a", "/tmp/b"], "write"), null);
-  assert.match(validate("cat", ["/tmp/x"], "write") ?? "", /not allowed in write/);
+  assert.equal(validate("cat", ["/tmp/x"], "write"), null); // read binaries ok as pipeline stages
+  assert.match(validate("python3", [], "write") ?? "", /not allowed in write/);
 });
 
 test("validate: dangerous flags (find -exec/-delete) are rejected", () => {
@@ -99,13 +100,48 @@ test("runPipeline validates every stage against the read allowlist", async () =>
     { command: "rm", args: ["-rf", "/tmp/x"] },
   ]);
   assert.equal(res.ok, false);
-  assert.match(res.error ?? "", /stage 'rm'.*not allowed/);
+  assert.match(res.error ?? "", /stage 'rm'.*run_write_command/);
 });
 
 test("runPipeline blocks sensitive paths in any stage", async () => {
   const res = await runPipeline([{ command: "cat", args: ["/Users/x/.ssh/id_rsa"] }]);
   assert.equal(res.ok, false);
   assert.match(res.error ?? "", /sensitive/);
+});
+
+test("parsePipeline: words, quotes, and pipe splitting", () => {
+  const r = parsePipeline(`ls -t "my dir" | grep -i '\\.pdf$' | head -1`);
+  assert.ok("stages" in r);
+  if ("stages" in r) {
+    assert.deepEqual(r.stages[0], { command: "ls", args: ["-t", "my dir"] });
+    assert.deepEqual(r.stages[1], { command: "grep", args: ["-i", "\\.pdf$"] });
+    assert.deepEqual(r.stages[2], { command: "head", args: ["-1"] });
+  }
+});
+
+test("parsePipeline rejects shell operators and empty stages", () => {
+  for (const bad of ["cat a; rm b", "cat a > b", "cat a && cat b", "echo `id`", "cat $(whoami)"]) {
+    const r = parsePipeline(bad);
+    assert.ok("error" in r, `expected error for: ${bad}`);
+  }
+  assert.ok("error" in parsePipeline("ls | | wc -l"));
+  assert.ok("error" in parsePipeline('cat "unbalanced'));
+});
+
+test("runCommandLine parses natural syntax: ls -t | head -1", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "shell-mcp-"));
+  writeFileSync(join(dir, "old.txt"), "x");
+  await new Promise((r) => setTimeout(r, 20));
+  writeFileSync(join(dir, "new.txt"), "x");
+  const res = await runCommandLine(`ls -t ${dir} | head -1`, "read");
+  assert.equal(res.ok, true);
+  assert.equal(res.stdout.trim(), "new.txt");
+});
+
+test("runCommandLine read mode refuses a write binary with a helpful message", async () => {
+  const res = await runCommandLine("rm -rf /tmp/whatever", "read");
+  assert.equal(res.ok, false);
+  assert.match(res.error ?? "", /run_write_command/);
 });
 
 test("runCommand: shell metacharacters are inert (no shell)", async () => {

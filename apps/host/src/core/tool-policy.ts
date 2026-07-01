@@ -94,6 +94,5 @@ export const defaultPolicy: ToolPolicy = {
     // run_write_command falls through to the gated default (needs approval).
     "mcp__shell__find_files": "allow",
     "mcp__shell__run_command": "allow",
-    "mcp__shell__run_pipeline": "allow",
   },
 };
