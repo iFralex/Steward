@@ -178,7 +178,6 @@ test("scanMailForActions can include read mail for rebuilds", async () => {
   const res = await scanMailForActions({
     mail,
     actions,
-    includeRead: true,
     chat: async (system) => {
       called = true;
       if (system.includes("Analyze")) {
@@ -274,7 +273,6 @@ test("scanMailForActions plans once per thread using aggregated thread context",
   const res = await scanMailForActions({
     mail,
     actions,
-    includeRead: true,
     userAddrs: ["me@example.com"],
     chat: async (system, prompt) => {
       if (system.includes("Analyze")) {
@@ -316,6 +314,52 @@ test("scanMailForActions plans once per thread using aggregated thread context",
   assert.equal(item.sourceKey, "mail:thread:77");
   assert.equal(item.payload.triggerMessageId, "colleague-1");
   assert.equal(item.payload.messageId, "giulia-2");
+  mail.close();
+  actions.close();
+});
+
+const noActionChat = async (system: string) =>
+  system.includes("Analyze")
+    ? JSON.stringify({ needsAction: false, kind: "admin-task", priority: "normal", summary: "x", dueDateTime: null, scheduling: null, replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null }, reasoning: "x" })
+    : JSON.stringify({ proposedActions: [] });
+
+test("does not re-evaluate already-seen mail on the next scan", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  mail.upsertMessage(row());
+  mail.setThreadId("m1", 1);
+  let analyzeCalls = 0;
+  const chat = async (system: string, prompt: string) => { if (system.includes("Analyze")) analyzeCalls++; return noActionChat(system); };
+
+  const r1 = await scanMailForActions({ mail, actions, chat });
+  assert.equal(r1.considered, 1);
+  assert.equal(analyzeCalls, 1);
+
+  const r2 = await scanMailForActions({ mail, actions, chat });
+  assert.equal(r2.considered, 0); // already seen → not reconsidered
+  assert.equal(analyzeCalls, 1); // planner not called again
+  mail.close();
+  actions.close();
+});
+
+test("seedIfEmpty marks the current window seen without evaluating; new mail is then picked up", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  mail.upsertMessage(row({ messageId: "old" }));
+  mail.setThreadId("old", 1);
+  let analyzeCalls = 0;
+  const chat = async (system: string, prompt: string) => { if (system.includes("Analyze")) analyzeCalls++; return noActionChat(system); };
+
+  const seed = await scanMailForActions({ mail, actions, chat, seedIfEmpty: true });
+  assert.equal(seed.considered, 0);
+  assert.ok((seed.seeded ?? 0) >= 1);
+  assert.equal(analyzeCalls, 0); // clean start evaluates nothing
+
+  mail.upsertMessage(row({ messageId: "new", date: Math.floor(Date.now() / 1000) }));
+  mail.setThreadId("new", 2);
+  const res = await scanMailForActions({ mail, actions, chat, seedIfEmpty: true });
+  assert.equal(res.considered, 1); // only the new one
+  assert.equal(analyzeCalls, 1);
   mail.close();
   actions.close();
 });

@@ -6,6 +6,8 @@ import type { ReadToolExecutor } from "./tool-context.ts";
 
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|mailer|newsletter|bounce|postmaster)\b/i;
 const LOW_VALUE_SURVEY = /\b(survey|questionario|soddisfazione|feedback|post[-\s]?result survey)\b/i;
+/** How many recent messages to pull before filtering out already-seen ones. */
+const SCAN_QUERY_LIMIT = 300;
 
 export interface MailScanResult {
   considered: number;
@@ -14,6 +16,8 @@ export interface MailScanResult {
   skipped: number;
   deferred: number;
   deferredReasons: Record<string, number>;
+  /** Set on the first (clean-start) run: how many existing messages were marked seen. */
+  seeded?: number;
 }
 
 export async function scanMailForActions(deps: {
@@ -25,31 +29,47 @@ export async function scanMailForActions(deps: {
   limit?: number;
   userAddrs?: string[];
   readTool?: ReadToolExecutor;
-  includeRead?: boolean;
-  includeAnswered?: boolean;
+  /** First run: mark the whole current window as already-seen (clean start). */
+  seedIfEmpty?: boolean;
   threadId?: number;
 }): Promise<MailScanResult> {
   const now = deps.now ?? Math.floor(Date.now() / 1000);
   const since = now - (deps.recentDays ?? 14) * 86400;
   const limit = deps.limit ?? 50;
-  const unreadClause = deps.includeRead ? "" : "AND unread=1";
-  const answeredClause = deps.includeAnswered ? "" : "AND answered=0";
-  // thread_id is the mirror's canonical surrogate thread id. Do NOT also match
-  // apple_thrid: it's a different id namespace (Apple's conversation id) and
-  // collides with unrelated threads, pulling years-old mail into recent ones.
-  const threadClause = typeof deps.threadId === "number" ? "AND thread_id=?" : "";
+  const manual = typeof deps.threadId === "number";
+  const seen = deps.actions.loadSeen();
+
+  // Clean start: on first activation mark the whole current window as seen, so we
+  // never re-evaluate the existing backlog — only mail arriving from now on.
+  if (deps.seedIfEmpty && seen.size === 0 && !manual) {
+    const ids = (deps.mail.raw.prepare(
+      `SELECT message_id FROM messages
+       WHERE deleted=0 AND junk=0 AND date>=? AND length(trim(coalesce(body_text,'')))>0`,
+    ).all(since) as { message_id: string }[]).map((r) => r.message_id);
+    deps.actions.markSeen(ids);
+    return { considered: 0, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {}, seeded: ids.length };
+  }
+
+  // No unread/answered filters: consider ALL recent mail (incl. read, and threads
+  // you replied to). The seen-ledger is what prevents re-evaluating the same mail.
+  // thread_id is the mirror's canonical thread id — never mix in apple_thrid (a
+  // different id namespace that collides across unrelated threads).
+  const threadClause = manual ? "AND thread_id=?" : "";
   const params: unknown[] = [since];
-  if (typeof deps.threadId === "number") params.push(deps.threadId);
-  params.push(limit);
+  if (manual) params.push(deps.threadId);
+  params.push(manual ? limit : SCAN_QUERY_LIMIT);
   const rows = deps.mail.raw.prepare(
     `SELECT * FROM messages
-     WHERE deleted=0 AND date>=? ${unreadClause} ${answeredClause} ${threadClause} AND junk=0
+     WHERE deleted=0 AND date>=? ${threadClause} AND junk=0
        AND length(trim(coalesce(body_text,'')))>0
      ORDER BY date DESC
      LIMIT ?`,
   ).all(...params) as Record<string, unknown>[];
   const messages = rows.map(rowToMessageForAction);
-  const candidates = buildThreadCandidates(deps.mail, messages, deps.userAddrs ?? []);
+  // Only genuinely new (not-yet-evaluated) messages trigger work; a new reply in
+  // an old thread is a new message → re-evaluates (and reopens) that thread.
+  const fresh = manual ? messages : messages.filter((m) => !seen.has(m.messageId));
+  const candidates = buildThreadCandidates(deps.mail, fresh, deps.userAddrs ?? []).slice(0, limit);
   const result: MailScanResult = { considered: candidates.length, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {} };
 
   for (const candidate of candidates) {
@@ -105,6 +125,9 @@ export async function scanMailForActions(deps: {
     if (upsert.inserted) result.created++;
     else if (upsert.updated) result.updated++;
   }
+  // Mark every message that fed a processed candidate as seen, so it isn't
+  // re-evaluated next run (only a new message in the thread will re-trigger it).
+  if (!manual) deps.actions.markSeen(candidates.flatMap((c) => c.batchIds));
   return result;
 }
 
@@ -113,6 +136,8 @@ interface ThreadCandidate {
   message: MessageForAction;
   trigger: MessageForAction;
   threadMessages: MessageForAction[];
+  /** Ids of the fresh (queried) messages that formed this candidate's thread group. */
+  batchIds: string[];
 }
 
 function buildActionChatPrompt(title: string): string {
@@ -146,7 +171,7 @@ function buildThreadCandidates(mail: Store, messages: MessageForAction[], userAd
       : group;
     const representative = chooseRepresentativeMessage(threadMessages, userAddrs) ?? latestTrigger;
     const merged = mergeThreadForPlanning(representative, latestTrigger, threadMessages, userAddrs);
-    candidates.push({ message: merged, trigger: latestTrigger, threadMessages });
+    candidates.push({ message: merged, trigger: latestTrigger, threadMessages, batchIds: group.map((m) => m.messageId) });
   }
   return candidates.sort((a, b) => b.trigger.date - a.trigger.date);
 }

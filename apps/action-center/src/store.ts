@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS seen_messages (
+  message_id TEXT PRIMARY KEY,
+  seen_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_seen_at ON seen_messages(seen_at);
 `;
 
 export class ActionStore {
@@ -150,6 +155,33 @@ export class ActionStore {
     } catch {
       return null;
     }
+  }
+
+  // --- "already evaluated" ledger: mail we've run the planner on, so scans work
+  //     only on genuinely new mail (or new replies) instead of re-evaluating. ---
+
+  /** Message ids already evaluated (optionally only those seen at/after `sinceTs`). */
+  loadSeen(sinceTs?: number): Set<string> {
+    const rows = (typeof sinceTs === "number"
+      ? this.raw.prepare("SELECT message_id FROM seen_messages WHERE seen_at >= ?").all(sinceTs)
+      : this.raw.prepare("SELECT message_id FROM seen_messages").all()) as { message_id: string }[];
+    return new Set(rows.map((r) => r.message_id));
+  }
+
+  markSeen(messageIds: string[], seenAt = Math.floor(Date.now() / 1000)): void {
+    if (messageIds.length === 0) return;
+    const stmt = this.raw.prepare("INSERT OR IGNORE INTO seen_messages(message_id, seen_at) VALUES (?, ?)");
+    const tx = this.raw.transaction((ids: string[]) => { for (const id of ids) if (id) stmt.run(id, seenAt); });
+    tx(messageIds);
+  }
+
+  hasAnySeen(): boolean {
+    return !!this.raw.prepare("SELECT 1 FROM seen_messages LIMIT 1").get();
+  }
+
+  /** Drop old ledger rows (outside the scan window) to keep the table bounded. */
+  pruneSeen(beforeTs: number): void {
+    this.raw.prepare("DELETE FROM seen_messages WHERE seen_at < ?").run(beforeTs);
   }
 
   close(): void { this.raw.close(); }

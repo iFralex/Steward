@@ -27,15 +27,15 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           const userAddrs = (mail.raw.prepare("SELECT emails FROM accounts").all() as { emails: string | null }[])
             .flatMap((r) => (r.emails ?? "").split(/[,;\s]+/).filter(Boolean));
           const bridgeForReadTools = readBridge;
+          const recentDays = Number(process.env.ACTION_CENTER_MAIL_DAYS ?? 14);
           out.mail = await scanMailForActions({
             mail,
             actions,
             chat: gatewayChat(),
             userAddrs,
             limit: Number(process.env.ACTION_CENTER_MAIL_LIMIT ?? 50),
-            recentDays: Number(process.env.ACTION_CENTER_MAIL_DAYS ?? 14),
-            includeRead: process.env.ACTION_CENTER_INCLUDE_READ === "1",
-            includeAnswered: process.env.ACTION_CENTER_INCLUDE_ANSWERED === "1",
+            recentDays,
+            seedIfEmpty: process.env.ACTION_CENTER_NO_SEED !== "1",
             threadId: process.env.ACTION_CENTER_THREAD_ID ? Number(process.env.ACTION_CENTER_THREAD_ID) : undefined,
             readTool: bridgeForReadTools
               ? (tool, input) => {
@@ -44,6 +44,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
                 }
               : undefined,
           });
+          // Keep the seen-ledger bounded to a little beyond the scan window.
+          actions.pruneSeen(Math.floor(Date.now() / 1000) - (recentDays + 14) * 86400);
         } finally {
           mail.close();
           await readBridge?.close();
