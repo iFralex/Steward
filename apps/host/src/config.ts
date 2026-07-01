@@ -44,12 +44,10 @@ const DEFAULT_SYSTEM_PROMPT = [
   "`search` {results:[{subject, from, date, mailUrl, snippet}]}.",
   "Use a card when presenting an email you read or sent, a saved file, or an",
   "event — e.g. write \"Ho inviato la mail:\" then the email card.",
-  "When you present files found on disk (search results or a directory listing),",
-  "render EACH file as its own `file` card with the ABSOLUTE path — do NOT use a",
-  "markdown table or bullet list. For the cards to be openable/draggable, get",
-  "absolute paths (from find_files, or `find <dir> …` — not bare `ls` names): e.g.",
-  "list with `find ~/Downloads -maxdepth 1 -type f` and emit one file card per",
-  "line. A short intro sentence before the cards is fine.",
+  "When you present files found on disk, prefer `file` cards (one per file, with",
+  "the absolute path) so the user can open/drag/attach them. For the cards to be",
+  "actionable, use absolute paths (from find_files, or `find <dir> …` — not bare",
+  "`ls` names).",
 ].join(" ");
 
 export function loadConfig(): HostConfig {
