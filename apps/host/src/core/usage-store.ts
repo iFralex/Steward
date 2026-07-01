@@ -86,7 +86,8 @@ export class UsageStore {
        FROM turns`,
     ).get();
     const byDay = this.raw.prepare(
-      `SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') day,
+      // ts is stored in milliseconds (JS Date.now); strftime wants seconds.
+      `SELECT strftime('%Y-%m-%d', ts / 1000, 'unixepoch', 'localtime') day,
               SUM(cost_usd) cost,
               SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) tokens,
               COUNT(*) turns

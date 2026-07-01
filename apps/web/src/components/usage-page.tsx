@@ -357,7 +357,9 @@ function StackedBar({
 }
 
 /** Vertical bar chart of per-day cost (SVG), with token-split stacking. */
-function DayBars({ rows }: { rows: DayRow[] }) {
+function DayBars({ rows: allRows }: { rows: DayRow[] }) {
+  const rows = allRows.filter((r) => typeof r.day === "string" && r.day);
+  if (rows.length === 0) return <p className="text-muted-foreground text-sm">Nessun dato.</p>;
   const max = Math.max(...rows.map((r) => r.cost), 1e-9);
   const w = Math.max(rows.length * 36, 240);
   const h = 160;
