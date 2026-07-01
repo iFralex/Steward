@@ -44,8 +44,10 @@ export function FileChip({
         // Chrome/Edge: copies the file to Finder on drop.
         e.dataTransfer.setData("DownloadURL", `${file.mime}:${file.name}:${url}`);
         e.dataTransfer.setData("text/uri-list", url);
-        // Internal: lets the approval form attach this file by its local path.
+        // Internal: lets the approval form / composer attach this file by its
+        // local path (path string + full ref as JSON, no re-upload needed).
         if (file.path) e.dataTransfer.setData("application/x-llmwiki-path", file.path);
+        e.dataTransfer.setData("application/x-llmwiki-file", JSON.stringify(file));
         e.dataTransfer.effectAllowed = "copy";
       }}
       className="bg-muted/60 hover:bg-muted flex items-center gap-2 rounded-md border px-2 py-1.5"

@@ -18,6 +18,7 @@ import { chatStore } from "./chat-store.ts";
 import { usageStore } from "./usage-store.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
+import type { ChannelFile } from "@llm-wiki/protocol";
 
 /**
  * Turn Pi's tool result into a UI-friendly `output`: pull the text out of the
@@ -214,9 +215,10 @@ export class ChatManager {
   }
 
   /** Run one user turn against a chat, persisting the transcript + usage. */
-  async runTurn(chatId: string, prompt: string): Promise<void> {
+  async runTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
     const store = chatStore();
-    store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt });
+    const attached = (attachments ?? []).filter((a) => a.path);
+    store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
     store.maybeAutoTitle(chatId, prompt);
 
     const runtime = await this.ensureChat(chatId);
@@ -224,9 +226,15 @@ export class ChatManager {
     runtime.assistantBuffer = "";
     this.activeFollowUp = { followUp: (t: string) => runtime.session.followUp(t) };
 
+    // Surface user-attached files to the agent as absolute paths it can pass to
+    // send_email/reply (which attach by path).
+    const piPrompt = attached.length
+      ? `${prompt}\n\n[Files the user attached — absolute paths on disk. If the user wants them sent by email, pass these in the send_email/reply "attachments" array:]\n${attached.map((a) => `- ${a.name}: ${a.path}`).join("\n")}`
+      : prompt;
+
     this.emit({ type: "status", sessionId: this.session.id, state: "running" });
     try {
-      await runtime.session.prompt(prompt);
+      await runtime.session.prompt(piPrompt);
       const text = runtime.assistantBuffer.trim();
       if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
       this.emit({ type: "assistant_done", sessionId: this.session.id });

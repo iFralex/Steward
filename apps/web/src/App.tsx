@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useHostSocket } from "@/lib/host-socket";
@@ -20,8 +20,9 @@ import {
 import { cn } from "@/lib/utils";
 import { ToolCard } from "@/components/tool-card";
 import { CardView, type FileApi } from "@/components/cards";
+import { FileChip } from "@/components/file-chip";
 import { UsagePage } from "@/components/usage-page";
-import type { ActionCenterItem, ChatSummary } from "@llm-wiki/protocol";
+import type { ActionCenterItem, ChannelFile, ChatSummary } from "@llm-wiki/protocol";
 
 const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
 const HTTP_BASE = HOST_URL.replace(/^ws/, "http");
@@ -33,6 +34,10 @@ function App() {
   const [view, setView] = useState<"chat" | "usage">("chat");
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
+  const [attachments, setAttachments] = useState<ChannelFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile };
   const selectedAction =
@@ -72,8 +77,39 @@ function App() {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    host.sendMessage(draft);
+    if (!draft.trim() && attachments.length === 0) return;
+    host.sendMessage(draft, attachments);
     setDraft("");
+    setAttachments([]);
+  };
+
+  const uploadFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    setUploading(true);
+    try {
+      const refs = await Promise.all(list.map((f) => host.uploadFile(f)));
+      setAttachments((prev) => [...prev, ...refs]);
+    } catch {
+      /* upload failed — surface nothing loud; the chip just won't appear */
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onComposerDrop = (e: ReactDragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    // A file dragged from an existing chat chip → already on the host, no re-upload.
+    const internal = e.dataTransfer.getData("application/x-llmwiki-file");
+    if (internal) {
+      try {
+        const file = JSON.parse(internal) as ChannelFile;
+        setAttachments((prev) => (prev.some((p) => p.token === file.token) ? prev : [...prev, file]));
+        return;
+      } catch { /* fall through to OS files */ }
+    }
+    if (e.dataTransfer.files.length) void uploadFiles(e.dataTransfer.files);
   };
 
   const openActionInChat = (action: ActionCenterItem) => {
@@ -183,6 +219,13 @@ function App() {
                       m.text || (m.open ? "…" : "")
                     )}
                   </div>
+                  {m.attachments && m.attachments.length > 0 && (
+                    <div className="mt-1.5 flex flex-col items-end gap-1.5 text-xs">
+                      {m.attachments.map((f) => (
+                        <FileChip key={f.token} file={f} onOpen={host.openFile} onReveal={host.revealFile} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               ),
             )}
@@ -199,15 +242,59 @@ function App() {
             })()}
           </div>
 
-          <form onSubmit={submit} className="flex gap-2 border-t p-3">
-            <Input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Message your agent…"
-            />
-            <Button type="submit" disabled={!host.connected}>
-              Send
-            </Button>
+          <form
+            onSubmit={submit}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onComposerDrop}
+            className={cn("border-t p-3", dragOver && "bg-primary/5 ring-primary/40 ring-2 ring-inset")}
+          >
+            {attachments.length > 0 && (
+              <div className="mb-2 flex flex-col gap-1.5">
+                {attachments.map((f) => (
+                  <div key={f.token} className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <FileChip file={f} onOpen={host.openFile} onReveal={host.revealFile} />
+                    </div>
+                    <button
+                      type="button"
+                      title="Rimuovi allegato"
+                      className="text-muted-foreground hover:text-destructive shrink-0 rounded p-1"
+                      onClick={() => setAttachments((prev) => prev.filter((p) => p.token !== f.token))}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => { if (e.target.files) void uploadFiles(e.target.files); e.target.value = ""; }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="Allega file"
+                disabled={!host.connected || uploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {uploading ? "…" : "📎"}
+              </Button>
+              <Input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (trascina file per allegarli)"}
+              />
+              <Button type="submit" disabled={!host.connected || (!draft.trim() && attachments.length === 0)}>
+                Send
+              </Button>
+            </div>
           </form>
         </main>
 

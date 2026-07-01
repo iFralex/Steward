@@ -10,15 +10,39 @@ import { execFile } from "node:child_process";
 import type { ClientEvent } from "@llm-wiki/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
 import { ActionRevisionRequestedError, executeActionProposal, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
-import { resolveToken } from "./core/file-registry.ts";
+import { resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageStore } from "./core/usage-store.ts";
 import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import type { HostConfig } from "./config.ts";
 
-/** HTTP routes: GET /usage (JSON cost/token stats) and GET /file/<token>. */
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "*",
+};
+const MAX_UPLOAD = 25 * 1024 * 1024;
+
+/** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
 function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
+  if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
+  if (req.method === "POST" && url.startsWith("/upload")) {
+    const name = new URL(url, "http://x").searchParams.get("name") ?? "file";
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let tooBig = false;
+    req.on("data", (c: Buffer) => { size += c.length; if (size > MAX_UPLOAD) tooBig = true; else chunks.push(c); });
+    req.on("error", () => { res.writeHead(500, CORS); res.end("upload error"); });
+    req.on("end", () => {
+      if (tooBig) { res.writeHead(413, CORS); res.end("file too large"); return; }
+      const ref = saveUpload(name, Buffer.concat(chunks));
+      if (!ref) { res.writeHead(500, CORS); res.end("upload failed"); return; }
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(ref));
+    });
+    return;
+  }
   if (url.startsWith("/usage")) {
     const body = JSON.stringify({ ...(usageStore().summary() as object), rates: config.gateway.cost });
     res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
@@ -85,7 +109,7 @@ export function startServer(config: HostConfig): WebSocketServer {
           const chatId = msg.chatId ?? session.activeChatId;
           if (!chatId || !store.exists(chatId)) { emit({ type: "error", sessionId: session.id, message: "no active chat" }); break; }
           session.activeChatId = chatId;
-          void chats.runTurn(chatId, msg.text).then(sendChatList);
+          void chats.runTurn(chatId, msg.text, msg.attachments).then(sendChatList);
           break;
         }
         case "chat_list":

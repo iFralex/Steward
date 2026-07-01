@@ -4,9 +4,12 @@
  * files explicitly registered here (because a tool returned them) are reachable.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
-import { basename, extname } from "node:path";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, extname, join } from "node:path";
 import type { ChannelFile } from "@llm-wiki/protocol";
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR ?? join(homedir(), "Library", "Application Support", "llmwiki-uploads");
 
 const MIME: Record<string, string> = {
   ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -45,6 +48,24 @@ export function registerFile(path: string): ChannelFile | null {
 /** Resolve a token to its { path, ref }, or null if unknown. */
 export function resolveToken(token: string): { ref: ChannelFile; path: string } | null {
   return byToken.get(token) ?? null;
+}
+
+/**
+ * Persist an uploaded file (bytes from the browser) to disk under a unique
+ * folder that preserves its original filename (Mail attaches by filename), then
+ * register it. Returns the ref, or null on failure.
+ */
+export function saveUpload(name: string, bytes: Buffer): ChannelFile | null {
+  try {
+    const safe = basename(name || "file").replace(/[/\\]/g, "_").trim() || "file";
+    const dir = join(UPLOAD_DIR, randomUUID());
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const path = join(dir, safe);
+    writeFileSync(path, bytes);
+    return registerFile(path);
+  } catch {
+    return null;
+  }
 }
 
 /**

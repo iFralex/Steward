@@ -34,6 +34,8 @@ export interface ChatMessage {
   toolError?: string;
   /** For role "tool": on-disk files the tool produced (openable/draggable). */
   toolFiles?: ChannelFile[];
+  /** For role "user": files the user attached to this message. */
+  attachments?: ChannelFile[];
   /** True while the assistant is still streaming into this message. */
   open?: boolean;
 }
@@ -71,7 +73,8 @@ export interface HostSocket {
   selectChat: (chatId: string) => void;
   renameChat: (chatId: string, title: string) => void;
   deleteChat: (chatId: string) => void;
-  sendMessage: (text: string) => void;
+  uploadFile: (file: File) => Promise<ChannelFile>;
+  sendMessage: (text: string, attachments?: ChannelFile[]) => void;
   respondQuestion: (requestId: string, selected: string[]) => void;
   openFile: (token: string) => void;
   revealFile: (token: string) => void;
@@ -192,17 +195,28 @@ export function useHostSocket(url: string): HostSocket {
   }, []);
 
   const sendMessage = useCallback(
-    (text: string) => {
+    (text: string, attachments?: ChannelFile[]) => {
       const trimmed = text.trim();
       if (!trimmed) return;
       setMessages((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: "user", text: trimmed },
+        { id: crypto.randomUUID(), role: "user", text: trimmed, ...(attachments?.length ? { attachments } : {}) },
       ]);
-      send({ type: "user_message", sessionId: sessionRef.current, text: trimmed, chatId: activeChatId ?? undefined });
+      send({ type: "user_message", sessionId: sessionRef.current, text: trimmed, chatId: activeChatId ?? undefined, attachments });
     },
     [send, activeChatId],
   );
+
+  const uploadFile = useCallback(async (file: File): Promise<ChannelFile> => {
+    const httpBase = url.replace(/^ws/, "http");
+    const res = await fetch(`${httpBase}/upload?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`);
+    return (await res.json()) as ChannelFile;
+  }, [url]);
 
   const createChat = useCallback(() => send({ type: "chat_create" }), [send]);
   const selectChat = useCallback((chatId: string) => send({ type: "chat_select", chatId }), [send]);
@@ -272,7 +286,7 @@ export function useHostSocket(url: string): HostSocket {
   const revealFile = useCallback((token: string) => send({ type: "reveal_file", token }), [send]);
   const resolveFile = useCallback((key: string) => filesRef.current.get(key), []);
 
-  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, uploadFile, sendMessage, respondQuestion, openFile, revealFile, resolveFile, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */
