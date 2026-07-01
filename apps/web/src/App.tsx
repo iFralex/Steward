@@ -97,25 +97,34 @@ function App() {
     if (next && next.id !== host.activeChatId) host.selectChat(next.id);
   };
 
-  // Global keyboard shortcuts.
+  // Global keyboard shortcuts. Single-key (no Cmd/Ctrl) so they don't clash with
+  // the browser's reserved combos (⌘N, ⌘⇧N, ⌘1-9, …). Plain keys only fire when
+  // you are NOT typing; Esc works everywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
       const el = e.target as HTMLElement | null;
       const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
-      if (e.key === "Escape") { if (host.state === "running") { host.stop(); e.preventDefault(); } return; }
-      if (mod && e.key === "Enter") { doSend(); e.preventDefault(); return; }
-      if (mod && (e.key === "k" || e.key === "K")) { focusComposer(); e.preventDefault(); return; }
-      if (mod && e.shiftKey && (e.key === "n" || e.key === "N")) { host.createChat(); e.preventDefault(); return; }
-      if (mod && (e.key === "u" || e.key === "U")) { setView((v) => (v === "chat" ? "usage" : "chat")); e.preventDefault(); return; }
-      if (e.altKey && e.key === "ArrowDown") { stepChat(1); e.preventDefault(); return; }
-      if (e.altKey && e.key === "ArrowUp") { stepChat(-1); e.preventDefault(); return; }
-      if (!typing && e.key === "?") { setShowShortcuts((s) => !s); e.preventDefault(); return; }
-      if (!typing && e.key === "n") { host.createChat(); e.preventDefault(); return; }
+      if (e.key === "Escape") {
+        if (host.state === "running") { host.stop(); e.preventDefault(); }
+        else if (typing) (el as HTMLElement).blur();
+        return;
+      }
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return; // don't hijack typing or browser combos
+
+      switch (e.key) {
+        case "/": focusComposer(); e.preventDefault(); break;
+        case "c": host.createChat(); e.preventDefault(); break;
+        case "j": stepChat(1); e.preventDefault(); break;
+        case "k": stepChat(-1); e.preventDefault(); break;
+        case "u": setView((v) => (v === "chat" ? "usage" : "chat")); e.preventDefault(); break;
+        case "?": setShowShortcuts((s) => !s); e.preventDefault(); break;
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture phase: reach the handler before an input/component can swallow the
+    // key (e.g. base-ui Input stopping Escape) — this is why Esc "didn't work".
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   });
 
   const uploadFiles = async (files: FileList | File[]) => {
@@ -338,7 +347,7 @@ function App() {
                 id="composer-input"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (⌘K per focus, trascina file per allegarli)"}
+                placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (/ per focus, trascina file per allegarli)"}
               />
               {host.state === "running" ? (
                 <Button type="button" variant="destructive" onClick={host.stop} title="Stop generazione (Esc)">
@@ -483,12 +492,12 @@ function DateDivider({ ts }: { ts: number }) {
 }
 
 const SHORTCUTS: [string, string][] = [
-  ["Invio / ⌘↵", "Invia messaggio"],
-  ["Esc", "Ferma la generazione"],
-  ["⌘K", "Vai al campo messaggio"],
-  ["⌘⇧N  ·  n", "Nuova chat"],
-  ["⌥↑ / ⌥↓", "Chat precedente / successiva"],
-  ["⌘U", "Chat ⇄ Usage"],
+  ["Invio", "Invia messaggio"],
+  ["Esc", "Ferma la generazione (o esci dal campo)"],
+  ["/", "Vai al campo messaggio"],
+  ["c", "Nuova chat"],
+  ["j / k", "Chat successiva / precedente"],
+  ["u", "Chat ⇄ Usage"],
   ["?", "Mostra/nascondi questa guida"],
 ];
 
