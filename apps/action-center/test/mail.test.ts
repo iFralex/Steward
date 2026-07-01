@@ -92,7 +92,8 @@ test("scanMailForActions creates reply-needed action with draft", async () => {
 test("scanMailForActions keys actions by thread when available", async () => {
   const mail = Store.open(":memory:");
   const actions = ActionStore.open(":memory:");
-  mail.upsertMessage(row({ appleThrid: 99 }));
+  mail.upsertMessage(row());
+  mail.setThreadId("m1", 99);
   const res = await scanMailForActions({
     mail,
     actions,
@@ -204,8 +205,10 @@ test("scanMailForActions can include read mail for rebuilds", async () => {
 test("scanMailForActions can target a single thread", async () => {
   const mail = Store.open(":memory:");
   const actions = ActionStore.open(":memory:");
-  mail.upsertMessage(row({ messageId: "m1", appleThrid: 10 }));
-  mail.upsertMessage(row({ messageId: "m2", appleThrid: 20 }));
+  mail.upsertMessage(row({ messageId: "m1" }));
+  mail.upsertMessage(row({ messageId: "m2" }));
+  mail.setThreadId("m1", 10);
+  mail.setThreadId("m2", 20);
   const seen: string[] = [];
   const res = await scanMailForActions({
     mail,
@@ -240,7 +243,6 @@ test("scanMailForActions plans once per thread using aggregated thread context",
   const now = Math.floor(Date.now() / 1000);
   mail.upsertMessage(row({
     messageId: "giulia-1",
-    appleThrid: 77,
     fromName: "Giulia",
     fromAddr: "giulia@example.com",
     to: ["me@example.com"],
@@ -250,7 +252,6 @@ test("scanMailForActions plans once per thread using aggregated thread context",
   }));
   mail.upsertMessage(row({
     messageId: "giulia-2",
-    appleThrid: 77,
     fromName: "Giulia",
     fromAddr: "giulia@example.com",
     to: ["me@example.com"],
@@ -260,7 +261,6 @@ test("scanMailForActions plans once per thread using aggregated thread context",
   }));
   mail.upsertMessage(row({
     messageId: "colleague-1",
-    appleThrid: 77,
     fromName: "Collega",
     fromAddr: "colleague@example.com",
     to: ["giulia@example.com"],
@@ -268,6 +268,7 @@ test("scanMailForActions plans once per thread using aggregated thread context",
     date: now - 10,
     bodyText: "Per me il 1 giugno è ROL.\n\nFrom: Giulia\nVi ricordo che dovete comunicare come scaricare il ponte del 1 giugno.",
   }));
+  for (const id of ["giulia-1", "giulia-2", "colleague-1"]) mail.setThreadId(id, 77);
   let analyzeCalls = 0;
   const prompts: string[] = [];
   const res = await scanMailForActions({

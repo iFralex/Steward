@@ -34,9 +34,12 @@ export async function scanMailForActions(deps: {
   const limit = deps.limit ?? 50;
   const unreadClause = deps.includeRead ? "" : "AND unread=1";
   const answeredClause = deps.includeAnswered ? "" : "AND answered=0";
-  const threadClause = typeof deps.threadId === "number" ? "AND (thread_id=? OR apple_thrid=?)" : "";
+  // thread_id is the mirror's canonical surrogate thread id. Do NOT also match
+  // apple_thrid: it's a different id namespace (Apple's conversation id) and
+  // collides with unrelated threads, pulling years-old mail into recent ones.
+  const threadClause = typeof deps.threadId === "number" ? "AND thread_id=?" : "";
   const params: unknown[] = [since];
-  if (typeof deps.threadId === "number") params.push(deps.threadId, deps.threadId);
+  if (typeof deps.threadId === "number") params.push(deps.threadId);
   params.push(limit);
   const rows = deps.mail.raw.prepare(
     `SELECT * FROM messages
@@ -149,12 +152,14 @@ function buildThreadCandidates(mail: Store, messages: MessageForAction[], userAd
 }
 
 function loadThreadMessages(mail: Store, threadId: number): MessageForAction[] {
+  // Match by the canonical thread_id only — mixing in apple_thrid conflates two
+  // id namespaces and wrongly joins unrelated (often years-old) messages.
   const rows = mail.raw.prepare(
     `SELECT * FROM messages
-     WHERE deleted=0 AND junk=0 AND (thread_id=? OR apple_thrid=?)
+     WHERE deleted=0 AND junk=0 AND thread_id=?
        AND length(trim(coalesce(body_text,'')))>0
      ORDER BY date ASC`,
-  ).all(threadId, threadId) as Record<string, unknown>[];
+  ).all(threadId) as Record<string, unknown>[];
   return rows.map(rowToMessageForAction);
 }
 
@@ -260,6 +265,8 @@ function rowToMessageForAction(m: Record<string, unknown>): MessageForAction {
     junk: !!(m.junk as number),
     flagColor: (m.flag_color as number) ?? null,
     appleThrid: (m.apple_thrid as number) ?? null,
-    threadId: (m.thread_id as number) ?? (m.apple_thrid as number) ?? null,
+    // Canonical mirror thread id only (always populated). Never fall back to
+    // apple_thrid — it's a different id namespace and collides across threads.
+    threadId: (m.thread_id as number) ?? null,
   };
 }
