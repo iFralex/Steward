@@ -36,6 +36,8 @@ export interface ChatMessage {
   toolFiles?: ChannelFile[];
   /** For role "user": files the user attached to this message. */
   attachments?: ChannelFile[];
+  /** When the message was created (epoch ms). */
+  ts?: number;
   /** True while the assistant is still streaming into this message. */
   open?: boolean;
 }
@@ -75,6 +77,7 @@ export interface HostSocket {
   deleteChat: (chatId: string) => void;
   uploadFile: (file: File) => Promise<ChannelFile>;
   sendMessage: (text: string, attachments?: ChannelFile[]) => void;
+  stop: () => void;
   respondQuestion: (requestId: string, selected: string[]) => void;
   openFile: (token: string) => void;
   revealFile: (token: string) => void;
@@ -133,7 +136,7 @@ export function useHostSocket(url: string): HostSocket {
         case "tool_call":
           setMessages((prev) => [
             ...prev,
-            { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running" },
+            { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
           ]);
           break;
         case "tool_result":
@@ -201,12 +204,14 @@ export function useHostSocket(url: string): HostSocket {
       if (!trimmed) return;
       setMessages((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: "user", text: trimmed, ...(attachments?.length ? { attachments } : {}) },
+        { id: crypto.randomUUID(), role: "user", text: trimmed, ts: Date.now(), ...(attachments?.length ? { attachments } : {}) },
       ]);
       send({ type: "user_message", sessionId: sessionRef.current, text: trimmed, chatId: activeChatId ?? undefined, attachments });
     },
     [send, activeChatId],
   );
+
+  const stop = useCallback(() => send({ type: "stop", chatId: activeChatId ?? undefined }), [send, activeChatId]);
 
   const uploadFile = useCallback(async (file: File): Promise<ChannelFile> => {
     const httpBase = url.replace(/^ws/, "http");
@@ -302,12 +307,12 @@ export function useHostSocket(url: string): HostSocket {
     }
   }, [url]);
 
-  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, uploadFile, sendMessage, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */
 function persistedToChat(m: PersistedMessage): ChatMessage {
-  return { ...m, open: false };
+  return { ...m, ts: m.createdAt, open: false };
 }
 
 function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {
@@ -315,7 +320,7 @@ function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {
   if (last && last.role === "assistant" && last.open) {
     return [...prev.slice(0, -1), { ...last, text: last.text + text }];
   }
-  return [...prev, { id: crypto.randomUUID(), role: "assistant", text, open: true }];
+  return [...prev, { id: crypto.randomUUID(), role: "assistant", text, ts: Date.now(), open: true }];
 }
 
 function closeAssistant(prev: ChatMessage[]): ChatMessage[] {

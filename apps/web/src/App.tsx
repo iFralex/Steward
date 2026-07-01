@@ -37,8 +37,10 @@ function App() {
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const focusComposer = () => document.getElementById("composer-input")?.focus();
   const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile, register: host.registerPath };
   const selectedAction =
     host.actionCenter?.items.find((a) => a.id === selectedActionId)
@@ -75,13 +77,46 @@ function App() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [host.messages, host.approvals, host.questions, host.state]);
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const doSend = () => {
     if (!draft.trim() && attachments.length === 0) return;
     host.sendMessage(draft, attachments);
     setDraft("");
     setAttachments([]);
   };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    doSend();
+  };
+
+  // Move focus between chats relative to the active one.
+  const stepChat = (delta: number) => {
+    const list = host.chats;
+    if (list.length === 0) return;
+    const idx = list.findIndex((c) => c.id === host.activeChatId);
+    const next = list[Math.min(Math.max((idx < 0 ? 0 : idx) + delta, 0), list.length - 1)];
+    if (next && next.id !== host.activeChatId) host.selectChat(next.id);
+  };
+
+  // Global keyboard shortcuts.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+
+      if (e.key === "Escape") { if (host.state === "running") { host.stop(); e.preventDefault(); } return; }
+      if (mod && e.key === "Enter") { doSend(); e.preventDefault(); return; }
+      if (mod && (e.key === "k" || e.key === "K")) { focusComposer(); e.preventDefault(); return; }
+      if (mod && e.shiftKey && (e.key === "n" || e.key === "N")) { host.createChat(); e.preventDefault(); return; }
+      if (mod && (e.key === "u" || e.key === "U")) { setView((v) => (v === "chat" ? "usage" : "chat")); e.preventDefault(); return; }
+      if (e.altKey && e.key === "ArrowDown") { stepChat(1); e.preventDefault(); return; }
+      if (e.altKey && e.key === "ArrowUp") { stepChat(-1); e.preventDefault(); return; }
+      if (!typing && e.key === "?") { setShowShortcuts((s) => !s); e.preventDefault(); return; }
+      if (!typing && e.key === "n") { host.createChat(); e.preventDefault(); return; }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   const uploadFiles = async (files: FileList | File[]) => {
     const list = Array.from(files);
@@ -153,6 +188,9 @@ function App() {
           <span className="text-muted-foreground text-xs">
             {host.connected ? (host.state === "running" ? "thinking…" : "connected") : "disconnected"}
           </span>
+          <Button size="sm" variant="ghost" className="px-2" title="Scorciatoie da tastiera (?)" onClick={() => setShowShortcuts(true)}>
+            ⌨
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -163,6 +201,8 @@ function App() {
           </Button>
         </div>
       </header>
+
+      {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
 
       {view === "usage" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -200,35 +240,43 @@ function App() {
 
         <main className="flex min-h-0 flex-col">
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
-            {host.messages.map((m) =>
-              m.role === "tool" ? (
-                <ToolCard key={m.id} m={m} fileApi={fileApi} />
-              ) : (
-                <div key={m.id} className={m.role === "user" ? "text-right" : "text-left"}>
-                  <div
-                    className={cn(
-                      "inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
-                      m.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-foreground",
-                    )}
-                  >
-                    {m.role === "assistant" ? (
-                      m.text ? <MarkdownMessage text={m.text} fileApi={fileApi} /> : (m.open ? "…" : "")
-                    ) : (
-                      m.text || (m.open ? "…" : "")
-                    )}
-                  </div>
-                  {m.attachments && m.attachments.length > 0 && (
-                    <div className="mt-1.5 flex flex-col items-end gap-1.5 text-xs">
-                      {m.attachments.map((f) => (
-                        <FileChip key={f.token} file={f} onOpen={host.openFile} onReveal={host.revealFile} />
-                      ))}
+            {host.messages.map((m, i) => {
+              const prev = host.messages[i - 1];
+              const divider = m.ts && (!prev?.ts || !sameDay(prev.ts, m.ts)) ? <DateDivider ts={m.ts} /> : null;
+              return (
+                <div key={m.id}>
+                  {divider}
+                  {m.role === "tool" ? (
+                    <ToolCard m={m} fileApi={fileApi} />
+                  ) : (
+                    <div className={m.role === "user" ? "text-right" : "text-left"}>
+                      <div
+                        className={cn(
+                          "inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
+                          m.role === "user"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-foreground",
+                        )}
+                      >
+                        {m.role === "assistant" ? (
+                          m.text ? <MarkdownMessage text={m.text} fileApi={fileApi} /> : (m.open ? "…" : "")
+                        ) : (
+                          m.text || (m.open ? "…" : "")
+                        )}
+                      </div>
+                      {m.attachments && m.attachments.length > 0 && (
+                        <div className="mt-1.5 flex flex-col items-end gap-1.5 text-xs">
+                          {m.attachments.map((f) => (
+                            <FileChip key={f.token} file={f} onOpen={host.openFile} onReveal={host.revealFile} />
+                          ))}
+                        </div>
+                      )}
+                      {m.ts && <div className="text-muted-foreground mt-0.5 text-[10px] tabular-nums">{fmtTime(m.ts)}</div>}
                     </div>
                   )}
                 </div>
-              ),
-            )}
+              );
+            })}
             {host.approvals.map((a) => (
               <ApprovalCard key={a.requestId} approval={a} onDecision={host.respondApproval} fileApi={fileApi} />
             ))}
@@ -287,13 +335,20 @@ function App() {
                 {uploading ? "…" : "📎"}
               </Button>
               <Input
+                id="composer-input"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (trascina file per allegarli)"}
+                placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (⌘K per focus, trascina file per allegarli)"}
               />
-              <Button type="submit" disabled={!host.connected || (!draft.trim() && attachments.length === 0)}>
-                Send
-              </Button>
+              {host.state === "running" ? (
+                <Button type="button" variant="destructive" onClick={host.stop} title="Stop generazione (Esc)">
+                  ■ Stop
+                </Button>
+              ) : (
+                <Button type="submit" title="Invia (Invio / ⌘↵)" disabled={!host.connected || (!draft.trim() && attachments.length === 0)}>
+                  Send
+                </Button>
+              )}
             </div>
           </form>
         </main>
@@ -392,6 +447,68 @@ function ThinkingIndicator() {
         <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
         <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
         <span className="size-1.5 animate-bounce rounded-full bg-current" />
+      </div>
+    </div>
+  );
+}
+
+function sameDay(a: number, b: number): boolean {
+  const x = new Date(a);
+  const y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+function fmtTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtDay(ts: number): string {
+  const now = new Date();
+  const d = new Date(ts);
+  const today = sameDay(now.getTime(), ts);
+  const yesterday = sameDay(now.getTime() - 86400_000, ts);
+  if (today) return "Oggi";
+  if (yesterday) return "Ieri";
+  return d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+}
+
+function DateDivider({ ts }: { ts: number }) {
+  return (
+    <div className="my-2 flex items-center gap-3">
+      <div className="border-border flex-1 border-t" />
+      <span className="text-muted-foreground text-[10px] uppercase tracking-wide">{fmtDay(ts)}</span>
+      <div className="border-border flex-1 border-t" />
+    </div>
+  );
+}
+
+const SHORTCUTS: [string, string][] = [
+  ["Invio / ⌘↵", "Invia messaggio"],
+  ["Esc", "Ferma la generazione"],
+  ["⌘K", "Vai al campo messaggio"],
+  ["⌘⇧N  ·  n", "Nuova chat"],
+  ["⌥↑ / ⌥↓", "Chat precedente / successiva"],
+  ["⌘U", "Chat ⇄ Usage"],
+  ["?", "Mostra/nascondi questa guida"],
+];
+
+function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-background w-full max-w-sm rounded-lg border p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Scorciatoie da tastiera</h2>
+          <button type="button" className="text-muted-foreground hover:text-foreground text-sm" onClick={onClose}>✕</button>
+        </div>
+        <dl className="space-y-1.5">
+          {SHORTCUTS.map(([keys, desc]) => (
+            <div key={keys} className="flex items-center justify-between gap-4 text-sm">
+              <dt className="text-muted-foreground">{desc}</dt>
+              <dd className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs tabular-nums">{keys}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-muted-foreground mt-3 text-[11px]">⌘ = Ctrl su Windows/Linux.</p>
       </div>
     </div>
   );

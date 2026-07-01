@@ -98,6 +98,8 @@ interface ChatRuntime {
   lastTokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** Assistant text accumulated during the current turn (flushed to transcript on done). */
   assistantBuffer: string;
+  /** Set while a user-requested stop is in flight, to suppress the abort error. */
+  aborted: boolean;
   /** toolCallId → start time (for durations) and input (for the transcript). */
   starts: Map<string, number>;
   toolInputs: Map<string, unknown>;
@@ -166,7 +168,7 @@ export class ChatManager {
     const runtime: ChatRuntime = {
       chatId, session: piSession, unsub: () => {},
       lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      assistantBuffer: "", starts: new Map(), toolInputs: new Map(),
+      assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
     };
     runtime.unsub = piSession.subscribe((e: any) => this.onPiEvent(runtime, e));
     this.chats.set(chatId, runtime);
@@ -224,6 +226,7 @@ export class ChatManager {
     const runtime = await this.ensureChat(chatId);
     if (this.session.closed) return;
     runtime.assistantBuffer = "";
+    runtime.aborted = false;
     this.activeFollowUp = { followUp: (t: string) => runtime.session.followUp(t) };
 
     // Surface user-attached files to the agent as absolute paths it can pass to
@@ -239,7 +242,14 @@ export class ChatManager {
       if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
       this.emit({ type: "assistant_done", sessionId: this.session.id });
     } catch (err) {
-      this.emit({ type: "error", sessionId: this.session.id, message: err instanceof Error ? err.message : String(err) });
+      // A user-requested stop surfaces as an abort here — not a real error.
+      if (runtime.aborted) {
+        const text = runtime.assistantBuffer.trim();
+        if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
+        this.emit({ type: "assistant_done", sessionId: this.session.id });
+      } else {
+        this.emit({ type: "error", sessionId: this.session.id, message: err instanceof Error ? err.message : String(err) });
+      }
     } finally {
       try {
         const stats = runtime.session.getSessionStats();
@@ -264,6 +274,15 @@ export class ChatManager {
       } catch { /* stats unavailable */ }
       this.emit({ type: "status", sessionId: this.session.id, state: "idle" });
     }
+  }
+
+  /** Stop the in-flight turn of a chat (defaults to the active one). */
+  async abort(chatId?: string): Promise<void> {
+    const id = chatId ?? this.session.activeChatId ?? undefined;
+    const runtime = id ? this.chats.get(id) : undefined;
+    if (!runtime) return;
+    runtime.aborted = true;
+    try { await runtime.session.abort(); } catch { /* already idle */ }
   }
 
   async close(): Promise<void> {

@@ -104,11 +104,11 @@ export class ChatStore {
 
   getMessages(chatId: string): PersistedMessage[] {
     const rows = this.raw.prepare(
-      `SELECT id, role, text, payload FROM messages WHERE chat_id = ? ORDER BY seq ASC`,
-    ).all(chatId) as { id: string; role: string; text: string; payload: string | null }[];
+      `SELECT id, role, text, payload, created_at FROM messages WHERE chat_id = ? ORDER BY seq ASC`,
+    ).all(chatId) as { id: string; role: string; text: string; payload: string | null; created_at: number }[];
     return rows.map((r) => {
       const extra = r.payload ? (JSON.parse(r.payload) as Record<string, unknown>) : {};
-      return { id: r.id, role: r.role as PersistedMessage["role"], text: r.text, ...extra } as PersistedMessage;
+      return { id: r.id, role: r.role as PersistedMessage["role"], text: r.text, createdAt: r.created_at, ...extra } as PersistedMessage;
     });
   }
 

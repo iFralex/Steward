@@ -39,6 +39,8 @@ export interface PersistedMessage {
   toolFiles?: ChannelFile[];
   /** For role "user": files the user attached (available to the agent by path). */
   attachments?: ChannelFile[];
+  /** When the message was created (epoch ms). */
+  createdAt?: number;
 }
 
 /** Summary of a persisted chat, for the chat list. */
@@ -53,6 +55,7 @@ export interface ChatSummary {
 /** Messages a channel sends INTO the core. */
 export type ClientEvent =
   | { type: "user_message"; sessionId: string; text: string; chatId?: string; attachments?: ChannelFile[] }
+  | { type: "stop"; chatId?: string }
   | { type: "chat_list" }
   | { type: "chat_create"; title?: string }
   | { type: "chat_select"; chatId: string }

@@ -121,6 +121,9 @@ export function startServer(config: HostConfig): WebSocketServer {
           void chats.runTurn(chatId, msg.text, msg.attachments).then(sendChatList);
           break;
         }
+        case "stop":
+          void chats.abort(msg.chatId ?? session.activeChatId ?? undefined);
+          break;
         case "chat_list":
           sendChatList();
           break;
