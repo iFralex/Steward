@@ -39,11 +39,17 @@ const DEFAULT_SYSTEM_PROMPT = [
   "To show a rich card inline in your reply, emit a fenced code block with",
   "language `card` containing JSON with a `type` field. Types:",
   "`email` {from, subject, date, body, mailUrl};",
-  "`file` {path} (a file you saved on disk — the user can open/drag it);",
+  "`file` {path, name?} (a file on disk — the user can open/drag/attach it);",
   "`event` {summary, start, end, location, calendar, url};",
   "`search` {results:[{subject, from, date, mailUrl, snippet}]}.",
   "Use a card when presenting an email you read or sent, a saved file, or an",
   "event — e.g. write \"Ho inviato la mail:\" then the email card.",
+  "When you present files found on disk (search results or a directory listing),",
+  "render EACH file as its own `file` card with the ABSOLUTE path — do NOT use a",
+  "markdown table or bullet list. For the cards to be openable/draggable, get",
+  "absolute paths (from find_files, or `find <dir> …` — not bare `ls` names): e.g.",
+  "list with `find ~/Downloads -maxdepth 1 -type f` and emit one file card per",
+  "line. A short intro sentence before the cards is fine.",
 ].join(" ");
 
 export function loadConfig(): HostConfig {

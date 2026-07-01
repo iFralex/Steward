@@ -70,18 +70,27 @@ export function saveUpload(name: string, bytes: Buffer): ChannelFile | null {
 
 /**
  * Walk a tool's output and register every absolute path that points to a real
- * file (e.g. save_attachment's `{ path }`), returning the file refs.
+ * file (e.g. save_attachment's `{ path }`, or the lines of a `find …` listing),
+ * returning the file refs so the UI can render them as openable/draggable chips.
+ * Multi-line strings are scanned line-by-line; capped so a big listing or a
+ * file's contents can't register unbounded work.
  */
+const MAX_REGISTERED = 100;
+
 export function filesFromOutput(output: unknown): ChannelFile[] {
   const refs: ChannelFile[] = [];
   const seen = new Set<string>();
+  const tryRegister = (candidate: string): void => {
+    const p = candidate.trim();
+    if (!p.startsWith("/") || seen.has(p) || refs.length >= MAX_REGISTERED) return;
+    seen.add(p);
+    const ref = registerFile(p);
+    if (ref) refs.push(ref);
+  };
   const walk = (v: unknown): void => {
     if (typeof v === "string") {
-      if (v.startsWith("/") && !seen.has(v)) {
-        seen.add(v);
-        const ref = registerFile(v);
-        if (ref) refs.push(ref);
-      }
+      if (v.includes("\n")) { for (const line of v.split("\n")) tryRegister(line); }
+      else tryRegister(v);
     } else if (Array.isArray(v)) {
       v.forEach(walk);
     } else if (v && typeof v === "object") {

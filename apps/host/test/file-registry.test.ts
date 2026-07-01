@@ -33,6 +33,18 @@ test("filesFromOutput registers on-disk absolute paths found in the output (dedu
   assert.equal(refs[0].mime, "image/png");
 });
 
+test("filesFromOutput registers absolute-path lines from a multi-line listing (e.g. find output)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "freg-"));
+  const a = join(dir, "one.pdf");
+  const b = join(dir, "two.txt");
+  writeFileSync(a, "x");
+  writeFileSync(b, "y");
+  // Shape like a shell tool result: stdout is one multi-line string of paths.
+  const refs = filesFromOutput({ ok: true, stdout: `${a}\n${b}\n/no/such/file\n` });
+  const names = refs.map((r) => r.name).sort();
+  assert.deepEqual(names, ["one.pdf", "two.txt"]);
+});
+
 test("resolveToken returns null for an unknown token", () => {
   assert.equal(resolveToken("nope"), null);
 });
