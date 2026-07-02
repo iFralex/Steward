@@ -39,7 +39,14 @@ Installs two macOS Services into `~/Library/Services`:
 - **Aggiungi a LLM Wiki** — add the selection.
 - **Aggiungi a LLM Wiki — Scegli…** — pick which files from a folder.
 
-Right-click a file/folder in Finder → **Quick Actions**. Assign keyboard
-shortcuts in **System Settings → Keyboard → Keyboard Shortcuts → Services**.
+Right-click a file/folder in Finder → **Quick Actions**.
+
+**Keyboard shortcut (one-time, manual):** System Settings → Keyboard → Keyboard
+Shortcuts → **Services** → General → tick each item and set a shortcut (e.g.
+⌃⌥⌘L). macOS stores Service shortcuts in a `pbs` preference whose key format
+(`(null) - <name> - runWorkflowAsService`) both `defaults` and `PlistBuddy`
+refuse to write, and it needs a re-login to take effect — so it can't be set
+reliably from a script.
+
 Override the invocation baked into the scripts with `WIKI_ADD_CMD` (e.g. the
 bundled build's `node` + compiled entry).

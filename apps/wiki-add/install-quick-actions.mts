@@ -130,15 +130,19 @@ function installWorkflow(menuName: string, command: string): string {
   return bundle;
 }
 
-const installed = [
-  installWorkflow("Aggiungi a LLM Wiki", BASE_CMD),
-  installWorkflow("Aggiungi a LLM Wiki — Scegli…", `${BASE_CMD} --pick`),
+const services: { name: string; cmd: string }[] = [
+  { name: "Aggiungi a LLM Wiki", cmd: BASE_CMD },
+  { name: "Aggiungi a LLM Wiki — Scegli…", cmd: `${BASE_CMD} --pick` },
 ];
 
-// Refresh the Services database so the items appear without logout.
+for (const s of services) installWorkflow(s.name, s.cmd);
+
+// Rebuild the Services database so the items appear (and pick up removed ones).
 try { execFileSync("/System/Library/CoreServices/pbs", ["-flush"], { stdio: "pipe" }); } catch { /* best-effort */ }
 
-console.log("Installed Quick Actions (valid plists):");
-for (const b of installed) console.log(`  ${b}`);
-console.log("\nRight-click a file/folder in Finder → Quick Actions. Assign shortcuts in");
-console.log("System Settings → Keyboard → Keyboard Shortcuts → Services.");
+console.log("Installed Finder Quick Actions:");
+for (const s of services) console.log(`  ${s.name}`);
+console.log("\nUse: right-click a file/folder → Quick Actions.");
+console.log("\nKeyboard shortcut (one-time): System Settings → Keyboard → Keyboard Shortcuts →");
+console.log("Services → General → tick each item and set a shortcut (e.g. ⌃⌥⌘L).");
+console.log("(macOS does not allow assigning a Service shortcut reliably from a script.)");
