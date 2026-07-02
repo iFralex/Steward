@@ -1,5 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { Store } from "../../mail-mirror/src/store.ts";
 import { blobsDir, dbPath } from "../../mail-mirror/src/paths.ts";
 import { LlmWikiApiClient } from "../../llm-wiki/mcp-server/src/api-client.ts";
@@ -15,8 +16,9 @@ import { syncThreadAttachments } from "./attachments.ts";
 import { syncPromotedThreadAttachments } from "./sync-promoted-attachments.ts";
 
 // resolveSourcesDir now lives in the wiki mcp-server (shared with the file
-// "add to wiki" CLI). Re-exported here for existing importers.
-export { resolveSourcesDir } from "../../llm-wiki/mcp-server/src/project-path.ts";
+// "add to wiki" CLI). Imported for local use and re-exported for existing importers.
+import { resolveSourcesDir } from "../../llm-wiki/mcp-server/src/project-path.ts";
+export { resolveSourcesDir };
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
