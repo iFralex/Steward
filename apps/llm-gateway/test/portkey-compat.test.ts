@@ -1,0 +1,70 @@
+import assert from "node:assert/strict";
+import { createServer, type IncomingMessage } from "node:http";
+import test from "node:test";
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk: Buffer) => {
+      data += chunk.toString("utf8");
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
+test("non-streaming routes direct to the provider, forwards tools, and falls back across tiers", async () => {
+  const seen: { model: string; hasTools: boolean; auth: string | undefined }[] = [];
+  let calls = 0;
+
+  // Stand-in for the provider's OpenAI-compatible endpoint (DEEPSEEK_BASE_URL).
+  const provider = createServer(async (req, res) => {
+    calls++;
+    const body = JSON.parse(await readBody(req)) as { model: string; tools?: unknown[] };
+    seen.push({ model: body.model, hasTools: Array.isArray(body.tools), auth: req.headers["authorization"] as string | undefined });
+    if (calls === 1) { // first tier fails → sweep to the next
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "try next" } }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      choices: [{ message: { role: "assistant", tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "get_time", arguments: "{}" } }] }, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
+    }));
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const providerPort = (provider.address() as { port: number }).port;
+
+  // Portkey must NOT be hit for tool calls; point it somewhere that would fail loudly.
+  process.env.PORTKEY_URL = "http://127.0.0.1:1/v1";
+  process.env.DEEPSEEK_BASE_URL = `http://127.0.0.1:${providerPort}/v1`;
+  process.env.DEEPSEEK_API_KEY = "sk-test";
+  const { startCompatGateway } = await import("../src/portkey-compat.ts");
+  const compat = startCompatGateway(0);
+  await new Promise<void>((resolve) => compat.once("listening", resolve));
+  const compatPort = (compat.address() as { port: number }).port;
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${compatPort}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "tier-5",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ type: "function", function: { name: "get_time", parameters: { type: "object", properties: {} } } }],
+        tool_choice: "auto",
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.choices[0].message.tool_calls[0].function.name, "get_time");
+    // Went direct to the provider (not Portkey), swept flash → pro, and forwarded tools.
+    assert.deepEqual(seen.map((s) => s.model), ["deepseek-v4-flash", "deepseek-v4-pro"]);
+    assert.ok(seen[0].hasTools, "tools forwarded to the provider");
+    assert.equal(seen[1].auth, "Bearer sk-test");
+  } finally {
+    await new Promise<void>((resolve) => compat.close(() => resolve()));
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+  }
+});

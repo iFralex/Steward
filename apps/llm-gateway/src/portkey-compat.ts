@@ -1,0 +1,362 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+type Json = Record<string, unknown>;
+type GatewayModel = {
+  provider: string;
+  model: string;
+  apiKey?: string;
+  customHost?: string;
+};
+
+loadDotEnv(new URL("../.env", import.meta.url));
+
+const PORT = Number(process.env.GATEWAY_PORT ?? 4000);
+const PORTKEY_URL = process.env.PORTKEY_URL ?? "http://127.0.0.1:4002/v1";
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+
+function loadDotEnv(url: URL): void {
+  const path = fileURLToPath(url);
+  if (!existsSync(path)) return;
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const raw = trimmed.slice(eq + 1).trim();
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = raw.replace(/^(['"])(.*)\1$/, "$2");
+  }
+}
+
+export const models: Record<string, GatewayModel> = {
+  "tier-1": { provider: "ollama", model: "llama3.2:1b", customHost: "http://127.0.0.1:11434" },
+  "tier-2": { provider: "deepseek", model: "deepseek-v4-flash", apiKey: DEEPSEEK_API_KEY },
+  "tier-3": { provider: "deepseek", model: "deepseek-v4-flash", apiKey: DEEPSEEK_API_KEY },
+  "tier-4": { provider: "deepseek", model: "deepseek-v4-flash", apiKey: DEEPSEEK_API_KEY },
+  "tier-5": { provider: "deepseek", model: "deepseek-v4-flash", apiKey: DEEPSEEK_API_KEY },
+  "tier-6": { provider: "deepseek", model: "deepseek-v4-pro", apiKey: DEEPSEEK_API_KEY },
+  "local-embed": { provider: "ollama", model: "bge-m3", customHost: "http://127.0.0.1:11434" },
+};
+
+export const fallbackOrder: Record<string, string[]> = {
+  "tier-2": ["tier-2", "tier-3", "tier-4", "tier-5", "tier-6"],
+  "tier-3": ["tier-3", "tier-4", "tier-5", "tier-6", "tier-2"],
+  "tier-4": ["tier-4", "tier-5", "tier-6", "tier-3", "tier-2"],
+  "tier-5": ["tier-5", "tier-6", "tier-4", "tier-3", "tier-2"],
+  "tier-6": ["tier-6", "tier-5", "tier-4", "tier-3", "tier-2"],
+};
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+function portkeyConfig(target: GatewayModel): Json {
+  const cfg: Json = {
+    provider: target.provider,
+    retry: { attempts: Number(process.env.GATEWAY_RETRIES ?? 3) },
+    request_timeout: Number(process.env.GATEWAY_REQUEST_TIMEOUT_MS ?? 120_000),
+  };
+  if (target.apiKey) cfg.api_key = target.apiKey;
+  if (target.customHost) cfg.custom_host = target.customHost;
+  return cfg;
+}
+
+export function attemptsFor(model: string): GatewayModel[] {
+  const names = fallbackOrder[model] ?? [model];
+  return names.map((name) => models[name]).filter(Boolean);
+}
+
+async function callPortkey(path: string, body: Json, target: GatewayModel): Promise<Response> {
+  return fetch(`${PORTKEY_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-portkey-config": JSON.stringify(portkeyConfig(target)),
+    },
+    body: JSON.stringify({ ...body, model: target.model }),
+  });
+}
+
+async function proxyJson(path: string, body: Json, res: ServerResponse): Promise<void> {
+  const requestedModel = typeof body.model === "string" ? body.model : "";
+  const attempts = attemptsFor(requestedModel);
+  if (attempts.length === 0) {
+    json(res, 400, { error: { message: `Unknown gateway model: ${requestedModel}`, type: "invalid_request_error" } });
+    return;
+  }
+
+  let lastStatus = 502;
+  let lastText = "";
+  const forward = (upstream: Response, text: string) => {
+    res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+    res.end(text);
+  };
+  for (const target of attempts) {
+    // Prefer the provider's own OpenAI-compatible endpoint: Portkey's provider
+    // transform drops tools/tool_choice, so tool-calling must not go through it.
+    const direct = directOpenAIBaseUrl(target);
+    if (direct) {
+      try {
+        const upstream = await callDirectOpenAI(direct, path, body, target);
+        const text = await upstream.text();
+        if (upstream.ok) { forward(upstream, text); return; }
+        lastStatus = upstream.status;
+        lastText = text;
+      } catch (err) {
+        lastStatus = 502;
+        lastText = err instanceof Error ? err.message : String(err);
+      }
+    }
+    // Fallback: Portkey (providers without a direct OpenAI-compatible base URL).
+    try {
+      const upstream = await callPortkey(path, body, target);
+      const text = await upstream.text();
+      if (upstream.ok) { forward(upstream, text); return; }
+      lastStatus = upstream.status;
+      lastText = text;
+    } catch (err) {
+      lastStatus = 502;
+      lastText = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  json(res, lastStatus, {
+    error: {
+      message: `All gateway attempts failed for ${requestedModel}: ${lastText.slice(0, 500)}`,
+      type: "gateway_error",
+    },
+  });
+}
+
+async function proxyStream(path: string, body: Json, res: ServerResponse): Promise<void> {
+  const requestedModel = typeof body.model === "string" ? body.model : "";
+  const attempts = attemptsFor(requestedModel);
+  if (attempts.length === 0) {
+    json(res, 400, { error: { message: `Unknown gateway model: ${requestedModel}`, type: "invalid_request_error" } });
+    return;
+  }
+
+  let lastStatus = 502;
+  let lastText = "";
+  for (const target of attempts) {
+    const direct = directOpenAIBaseUrl(target);
+    if (direct) {
+      try {
+        const upstream = await callDirectOpenAI(direct, path, body, target);
+        if (upstream.ok) {
+          await pipeStreamingResponse(upstream, res);
+          return;
+        }
+        lastStatus = upstream.status;
+        lastText = await upstream.text();
+      } catch (err) {
+        lastStatus = 502;
+        lastText = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    try {
+      const upstream = await callPortkey(path, { ...body, stream: false }, target);
+      const text = await upstream.text();
+      if (!upstream.ok) {
+        lastStatus = upstream.status;
+        lastText = text;
+        continue;
+      }
+      writeSyntheticSse(text, res);
+      return;
+    } catch (err) {
+      lastStatus = 502;
+      lastText = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  json(res, lastStatus, {
+    error: {
+      message: `All gateway streaming attempts failed for ${requestedModel}: ${lastText.slice(0, 500)}`,
+      type: "gateway_error",
+    },
+  });
+}
+
+function directOpenAIBaseUrl(target: GatewayModel): string | undefined {
+  if (target.provider === "deepseek") return process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1";
+  if (target.customHost) return `${target.customHost.replace(/\/$/, "")}/v1`;
+  return undefined;
+}
+
+async function callDirectOpenAI(baseUrl: string, path: string, body: Json, target: GatewayModel): Promise<Response> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (target.apiKey) headers.authorization = `Bearer ${target.apiKey}`;
+  // Portkey enforced a request timeout; keep the same guarantee on the direct path.
+  const timeoutMs = Number(process.env.GATEWAY_REQUEST_TIMEOUT_MS ?? 120_000);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...body, model: target.model }),
+      signal: ac.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pipeStreamingResponse(upstream: Response, res: ServerResponse): Promise<void> {
+  res.writeHead(upstream.status, {
+    "content-type": upstream.headers.get("content-type") ?? "text/event-stream",
+    "cache-control": upstream.headers.get("cache-control") ?? "no-cache",
+  });
+  if (!upstream.body) {
+    res.end();
+    return;
+  }
+  const reader = upstream.body.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    res.write(Buffer.from(value));
+  }
+  res.end();
+}
+
+function writeSyntheticSse(upstreamText: string, res: ServerResponse): void {
+  let completion: any;
+  try {
+    completion = JSON.parse(upstreamText);
+  } catch {
+    json(res, 502, { error: { message: `Invalid upstream JSON: ${upstreamText.slice(0, 500)}`, type: "gateway_error" } });
+    return;
+  }
+
+  const choice = Array.isArray(completion.choices) ? completion.choices[0] : undefined;
+  const message = choice?.message ?? {};
+  const model = completion.model ?? "unknown";
+  const id = completion.id ?? `chatcmpl-${Date.now()}`;
+  const created = completion.created ?? Math.floor(Date.now() / 1000);
+  const finishReason = choice?.finish_reason ?? (message.tool_calls ? "tool_calls" : "stop");
+
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model,
+    choices: [{ index: 0, delta: { role: message.role ?? "assistant" }, finish_reason: null }],
+  });
+
+  if (typeof message.content === "string" && message.content.length > 0) {
+    writeSse(res, {
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{ index: 0, delta: { content: message.content }, finish_reason: null }],
+    });
+  }
+
+  if (Array.isArray(message.tool_calls)) {
+    for (const [index, toolCall] of message.tool_calls.entries()) {
+      writeSse(res, {
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index,
+              id: toolCall.id,
+              type: toolCall.type ?? "function",
+              function: {
+                name: toolCall.function?.name,
+                arguments: toolCall.function?.arguments ?? "",
+              },
+            }],
+          },
+          finish_reason: null,
+        }],
+      });
+    }
+  }
+
+  writeSse(res, {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model,
+    choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+    ...(completion.usage ? { usage: completion.usage } : {}),
+  });
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+function writeSse(res: ServerResponse, body: unknown): void {
+  res.write(`data: ${JSON.stringify(body)}\n\n`);
+}
+
+async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = req.url ?? "/";
+  if (req.method === "GET" && (url === "/" || url === "/health")) {
+    json(res, 200, { ok: true, gateway: "portkey-compat", portkeyUrl: PORTKEY_URL });
+    return;
+  }
+  if (req.method === "GET" && url === "/v1/models") {
+    json(res, 200, { object: "list", data: Object.keys(models).map((id) => ({ id, object: "model" })) });
+    return;
+  }
+  if (req.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/v1/embeddings")) {
+    json(res, 404, { error: { message: "not found", type: "gateway_error" } });
+    return;
+  }
+
+  try {
+    const body = JSON.parse(await readBody(req)) as Json;
+    const path = url.replace(/^\/v1/, "");
+    if (body.stream === true) {
+      await proxyStream(path, body, res);
+    } else {
+      await proxyJson(path, body, res);
+    }
+  } catch (err) {
+    json(res, 500, { error: { message: err instanceof Error ? err.message : String(err), type: "gateway_error" } });
+  }
+}
+
+export function startCompatGateway(port = PORT): ReturnType<typeof createServer> {
+  const server = createServer((req, res) => {
+    void handle(req, res);
+  });
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`[llm-gateway] Portkey compat listening on http://127.0.0.1:${port}/v1 -> ${PORTKEY_URL}`);
+  });
+  return server;
+}
+
+if (process.argv[1]?.endsWith("portkey-compat.ts") || process.argv[1]?.endsWith("portkey-compat.js")) {
+  startCompatGateway();
+}
