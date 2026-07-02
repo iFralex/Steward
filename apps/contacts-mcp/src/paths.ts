@@ -8,9 +8,14 @@ export function sourceDbPaths(): string[] {
   const out: string[] = [];
   const sources = join(base, "Sources");
   if (existsSync(sources)) {
-    for (const uuid of readdirSync(sources)) {
-      const db = join(sources, uuid, "AddressBook-v22.abcddb");
-      if (existsSync(db)) out.push(db);
+    try {
+      for (const uuid of readdirSync(sources)) {
+        const db = join(sources, uuid, "AddressBook-v22.abcddb");
+        if (existsSync(db)) out.push(db);
+      }
+    } catch {
+      // macOS can deny AddressBook/Sources without Full Disk Access. Keep the
+      // MCP server alive so write tools and permission diagnostics still work.
     }
   }
   const top = join(base, "AddressBook-v22.abcddb");

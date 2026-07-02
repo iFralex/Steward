@@ -5,7 +5,13 @@ node_modules/
 .DS_Store
 
 # Host build outputs
+dist/
 apps/host/dist/
+apps/web/dist/
+
+# SwiftPM launcher outputs
+apps/mac-launcher/.build/
+apps/mac-launcher/.module-cache/
 
 # Local secrets — never commit
 .env

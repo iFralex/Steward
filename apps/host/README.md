@@ -7,7 +7,19 @@ LLM gateway (capability tier `tier-5`, OpenAI-compatible).
 1. Start the gateway (with `DEEPSEEK_API_KEY` in its env):
    `litellm --config apps/llm-gateway/litellm.config.yaml --port 4000`
 2. Start the LLM Wiki desktop app (the wiki MCP server talks to its local API).
-3. `npm run dev -w @llm-wiki/host` and `npm run dev -w @llm-wiki/web`.
+3. During UI development, run `npm run dev -w @llm-wiki/host` and
+   `npm run dev -w @llm-wiki/web`.
+
+For the macOS launcher flow, build the web UI first:
+
+```sh
+npm run build -w @llm-wiki/web
+npm run dev -w @llm-wiki/host
+npm run launcher:mac
+```
+
+When `apps/web/dist` exists, the host serves it from
+`http://127.0.0.1:4317`; the WebSocket API stays on the same port.
 
 ## Env
 - `GATEWAY_BASE_URL` (default `http://127.0.0.1:4000/v1`), `HOST_TIER` (default `tier-5`).

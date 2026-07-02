@@ -13,9 +13,22 @@ import { createContact, updateContact } from "./applescript.ts";
 import { parseSearchArgs, parseResolveArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { sourceDbPaths, indexDbPath } from "./paths.ts";
 
-const paths = sourceDbPaths();
-const store = paths.length ? AddressBookStore.load(paths) : null;
-const index = existsSync(indexDbPath()) ? IndexDb.open(indexDbPath()) : null;
+let store: AddressBookStore | null = null;
+let storeError: string | null = null;
+try {
+  const paths = sourceDbPaths();
+  store = paths.length ? AddressBookStore.load(paths) : null;
+  if (!store) storeError = "No AddressBook stores found. Grant Full Disk Access.";
+} catch (err) {
+  storeError = contactsPermissionError(err);
+}
+
+let index: IndexDb | null = null;
+try {
+  index = existsSync(indexDbPath()) ? IndexDb.open(indexDbPath()) : null;
+} catch {
+  index = null;
+}
 if (index) index.vectors.enable();
 const embedCfg = loadEmbedConfig();
 const embedQuery = embedCfg ? (t: string) => embedText(t, embedCfg) : undefined;
@@ -41,24 +54,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 function ok(data: unknown) { return { content: [{ type: "text", text: JSON.stringify(data) }] }; }
 
+function contactsPermissionError(err?: unknown): string {
+  const detail = err instanceof Error ? err.message : err ? String(err) : "";
+  return [
+    "Apple Contacts store is not readable.",
+    "Grant Full Disk Access to LLM Wiki.app in System Settings -> Privacy & Security -> Full Disk Access, then restart LLM Wiki.",
+    detail ? `Detail: ${detail}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function requireStore(): AddressBookStore {
+  if (!store) throw new Error(storeError ?? contactsPermissionError());
+  return store;
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const raw = (req.params.arguments ?? {}) as Record<string, unknown>;
   try {
     switch (req.params.name) {
       case "search_contacts": {
-        if (!store) throw new Error("No AddressBook stores found. Grant Full Disk Access.");
+        const liveStore = requireStore();
         const a = parseSearchArgs(raw);
         const uids = index ? await search(a.query, a.limit) : [];
-        return ok(uids.map((u) => store.getContact(u)).filter(Boolean).slice(0, a.limit));
+        return ok(uids.map((u) => liveStore.getContact(u)).filter(Boolean).slice(0, a.limit));
       }
       case "read_contact": {
-        if (!store) throw new Error("No AddressBook stores found. Grant Full Disk Access.");
-        return ok(store.getContact(requireString(raw, "uid")) ?? null);
+        return ok(requireStore().getContact(requireString(raw, "uid")) ?? null);
       }
       case "resolve_recipient": {
-        if (!store) throw new Error("No AddressBook stores found. Grant Full Disk Access.");
+        const liveStore = requireStore();
         const a = parseResolveArgs(raw);
-        return ok(await resolveRecipient({ search, getContact: (u) => store.getContact(u) }, a.description, a.limit));
+        return ok(await resolveRecipient({ search, getContact: (u) => liveStore.getContact(u) }, a.description, a.limit));
       }
       case "create_contact": return ok({ id: await createContact(parseCreateArgs(raw)) });
       case "update_contact": { await updateContact(parseUpdateArgs(raw)); return ok({ ok: true }); }

@@ -4,6 +4,7 @@
  * placeholder satisfies Pi's auth check. Costs feed Pi's native getSessionStats.
  */
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { streamSimple as openAICompletionsStreamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import type { Model } from "@earendil-works/pi-ai";
 
 export interface GatewayConfig {
@@ -23,6 +24,7 @@ export function registerGatewayModel(cfg: GatewayConfig): { modelRegistry: Model
     baseUrl: cfg.baseUrl,
     apiKey: cfg.apiKey,
     api: "openai-completions",
+    streamSimple: openAICompletionsStreamSimple as any,
     models: [{
       id: cfg.tier,
       name: cfg.tier,

@@ -22,6 +22,7 @@ import { ToolCard } from "@/components/tool-card";
 import { CardView, type FileApi } from "@/components/cards";
 import { FileChip } from "@/components/file-chip";
 import { UsagePage } from "@/components/usage-page";
+import { SystemPage } from "@/components/system-page";
 import type { ActionCenterItem, ChannelFile, ChatSummary } from "@llm-wiki/protocol";
 
 const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
@@ -31,7 +32,7 @@ function App() {
   const host = useHostSocket(HOST_URL);
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
-  const [view, setView] = useState<"chat" | "usage">("chat");
+  const [view, setView] = useState<"chat" | "usage" | "system">("chat");
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
@@ -117,7 +118,7 @@ function App() {
         case "c": host.createChat(); e.preventDefault(); break;
         case "j": stepChat(1); e.preventDefault(); break;
         case "k": stepChat(-1); e.preventDefault(); break;
-        case "u": setView((v) => (v === "chat" ? "usage" : "chat")); e.preventDefault(); break;
+        case "u": setView((v) => (v === "usage" ? "chat" : "usage")); e.preventDefault(); break;
         case "?": setShowShortcuts((s) => !s); e.preventDefault(); break;
       }
     };
@@ -169,7 +170,7 @@ function App() {
         <div className="flex items-center gap-3">
           <h1 className="text-sm font-semibold">Personal Agent</h1>
           <div className="bg-muted flex rounded-md p-0.5 text-xs">
-            {(["chat", "usage"] as const).map((v) => (
+            {(["chat", "usage", "system"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
@@ -217,6 +218,10 @@ function App() {
       {view === "usage" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <UsagePage httpBase={HTTP_BASE} />
+        </div>
+      ) : view === "system" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <SystemPage httpBase={HTTP_BASE} />
         </div>
       ) : (
       <div className="grid min-h-0 flex-1 grid-cols-[210px_330px_minmax(0,1fr)_minmax(330px,0.85fr)]">

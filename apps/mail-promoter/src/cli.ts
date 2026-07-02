@@ -1,8 +1,5 @@
 #!/usr/bin/env -S node --import tsx
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { Store } from "../../mail-mirror/src/store.ts";
 import { blobsDir, dbPath } from "../../mail-mirror/src/paths.ts";
 import { LlmWikiApiClient } from "../../llm-wiki/mcp-server/src/api-client.ts";
@@ -17,15 +14,9 @@ import { migratePromotedThreadNotes } from "./migrate-thread-notes.ts";
 import { syncThreadAttachments } from "./attachments.ts";
 import { syncPromotedThreadAttachments } from "./sync-promoted-attachments.ts";
 
-/** The wiki project's sources dir — from env, else the desktop app's last-opened project. */
-export function resolveSourcesDir(): string {
-  if (process.env.MAIL_PROMOTER_WIKI_SOURCES_DIR) return process.env.MAIL_PROMOTER_WIKI_SOURCES_DIR;
-  const stateFile = join(homedir(), "Library/Application Support/com.llmwiki.app/app-state.json");
-  const st = JSON.parse(readFileSync(stateFile, "utf8")) as { lastProject?: { path?: string }; currentProject?: { path?: string } };
-  const p = st.lastProject?.path ?? st.currentProject?.path;
-  if (!p) throw new Error("Cannot resolve the wiki project path; set MAIL_PROMOTER_WIKI_SOURCES_DIR");
-  return join(p, "raw", "sources");
-}
+// resolveSourcesDir now lives in the wiki mcp-server (shared with the file
+// "add to wiki" CLI). Re-exported here for existing importers.
+export { resolveSourcesDir } from "../../llm-wiki/mcp-server/src/project-path.ts";
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];

@@ -5,8 +5,10 @@
  */
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { extname, join, normalize, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ClientEvent } from "@llm-wiki/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
 import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
@@ -15,6 +17,7 @@ import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry
 import { usageStore } from "./core/usage-store.ts";
 import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
+import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
 import type { HostConfig } from "./config.ts";
 
 const CORS = {
@@ -23,11 +26,117 @@ const CORS = {
   "Access-Control-Allow-Headers": "*",
 };
 const MAX_UPLOAD = 25 * 1024 * 1024;
+const WEB_DIST_DIR = process.env.HOST_STATIC_DIR ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
+const CONTENT_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".wasm": "application/wasm",
+};
+
+function readRequestBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk: Buffer) => {
+      data += chunk.toString("utf8");
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
+function tryServeWebAsset(req: IncomingMessage, res: ServerResponse): boolean {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+
+  let pathname = "/";
+  try {
+    pathname = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);
+  } catch {
+    res.writeHead(400, CORS);
+    res.end("bad request");
+    return true;
+  }
+
+  const requested = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const normalized = normalize(requested);
+  const candidate = join(WEB_DIST_DIR, normalized);
+  const safe = !relative(WEB_DIST_DIR, candidate).startsWith("..");
+  const fallback = join(WEB_DIST_DIR, "index.html");
+  const file = safe ? candidate : fallback;
+
+  try {
+    const stat = statSync(file);
+    if (!stat.isFile()) throw new Error("not a file");
+    res.writeHead(200, {
+      "Content-Type": CONTENT_TYPES[extname(file)] ?? "application/octet-stream",
+      "Content-Length": stat.size,
+      ...CORS,
+    });
+    if (req.method === "HEAD") {
+      res.end();
+    } else {
+      createReadStream(file).on("error", () => res.destroy()).pipe(res);
+    }
+    return true;
+  } catch {
+    if (file !== fallback) {
+      try {
+        const stat = statSync(fallback);
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Length": stat.size,
+          ...CORS,
+        });
+        if (req.method === "HEAD") {
+          res.end();
+        } else {
+          createReadStream(fallback).on("error", () => res.destroy()).pipe(res);
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+}
 
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
 function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
   if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
+  if (req.method === "GET" && url.startsWith("/health")) {
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify({ ok: true, port: config.port }));
+    return;
+  }
+  if (req.method === "GET" && url.startsWith("/system/status")) {
+    void loadSystemStatus(config).then((status) => {
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(status));
+    }).catch((err) => {
+      res.writeHead(500, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/system/autostart")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? JSON.parse(raw) as { enabled?: unknown } : {};
+      const status = setAutostart(body.enabled === true);
+      res.writeHead(status.detail && body.enabled === true && !status.enabled ? 400 : 200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(status));
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
   if (req.method === "POST" && url.startsWith("/upload")) {
     const name = new URL(url, "http://x").searchParams.get("name") ?? "file";
     const chunks: Buffer[] = [];
@@ -59,16 +168,22 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
     res.end(JSON.stringify(ref));
     return;
   }
-  const m = url.match(/^\/file\/([\w-]+)/);
-  const entry = m ? resolveToken(m[1]) : null;
-  if (!entry) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
-  res.writeHead(200, {
-    "Content-Type": entry.ref.mime,
-    "Content-Length": entry.ref.size,
-    "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(entry.ref.name)}`,
-    "Access-Control-Allow-Origin": "*",
-  });
-  createReadStream(entry.path).on("error", () => res.destroy()).pipe(res);
+  if (url.startsWith("/file/")) {
+    const m = url.match(/^\/file\/([\w-]+)/);
+    const entry = m ? resolveToken(m[1]) : null;
+    if (!entry) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
+    res.writeHead(200, {
+      "Content-Type": entry.ref.mime,
+      "Content-Length": entry.ref.size,
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(entry.ref.name)}`,
+      "Access-Control-Allow-Origin": "*",
+    });
+    createReadStream(entry.path).on("error", () => res.destroy()).pipe(res);
+    return;
+  }
+  if (tryServeWebAsset(req, res)) return;
+  res.writeHead(404, CORS);
+  res.end("not found");
 }
 
 export function startServer(config: HostConfig): WebSocketServer {

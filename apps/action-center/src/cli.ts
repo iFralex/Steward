@@ -81,6 +81,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 }
 
 function defaultReadToolServers(): Record<string, McpServerSpec> {
+  const bundled = process.env.LLM_WIKI_BUNDLED_SERVICES === "1";
+  const node = process.env.LLM_WIKI_NODE ?? process.execPath;
+  const nodeArgs = (entry: string) => bundled ? [entry] : ["--import", "tsx", entry];
   const llmWikiMcpEntry =
     process.env.LLM_WIKI_MCP_ENTRY ??
     fileURLToPath(new URL("../../llm-wiki/mcp-server/dist/src/index.js", import.meta.url));
@@ -91,10 +94,10 @@ function defaultReadToolServers(): Record<string, McpServerSpec> {
   const contactsMcpEntry =
     process.env.CONTACTS_MCP_ENTRY ?? fileURLToPath(new URL("../../contacts-mcp/src/index.ts", import.meta.url));
   return {
-    "llm-wiki": { command: process.execPath, args: [llmWikiMcpEntry] },
-    mail: { command: process.execPath, args: ["--import", "tsx", mailMcpEntry] },
-    calendar: { command: process.execPath, args: ["--import", "tsx", calendarMcpEntry] },
-    contacts: { command: process.execPath, args: ["--import", "tsx", contactsMcpEntry] },
+    "llm-wiki": { command: node, args: [llmWikiMcpEntry] },
+    mail: { command: node, args: nodeArgs(mailMcpEntry) },
+    calendar: { command: node, args: nodeArgs(calendarMcpEntry) },
+    contacts: { command: node, args: nodeArgs(contactsMcpEntry) },
   };
 }
 

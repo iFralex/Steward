@@ -1,6 +1,11 @@
 {
   "name": "llm-wiki-monorepo",
   "private": true,
+  "scripts": {
+    "build:web-host": "npm run build -w @llm-wiki/web && npm run typecheck -w @llm-wiki/host",
+    "launcher:mac": "swift run --package-path apps/mac-launcher LLMWikiLauncher",
+    "package:mac": "node --import tsx apps/mac-launcher/package-mac.mts"
+  },
   "workspaces": [
     "apps/host",
     "apps/web",

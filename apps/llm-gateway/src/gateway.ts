@@ -86,12 +86,33 @@ async function callProvider(baseUrl: string, path: string, body: Json, target: G
     return await fetch(`${baseUrl}${path}`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ ...body, model: target.model }),
+      body: JSON.stringify(prepareProviderBody(body, target)),
       signal: ac.signal,
     });
   } finally {
     clearTimeout(timer);
   }
+}
+
+function prepareProviderBody(body: Json, target: GatewayModel): Json {
+  const next: Json = { ...body, model: target.model };
+  if (target.provider !== "deepseek") return next;
+
+  if (Array.isArray(next.messages)) {
+    next.messages = next.messages.map((message) => {
+      if (!message || typeof message !== "object") return message;
+      const msg = { ...(message as Json) };
+      if (msg.role === "developer") msg.role = "system";
+      return msg;
+    });
+  }
+
+  delete next.store;
+  delete next.reasoning_effort;
+  if (Array.isArray(next.tools) && next.tools.length > 0) {
+    next.thinking = { type: "disabled" };
+  }
+  return next;
 }
 
 async function proxyJson(path: string, body: Json, res: ServerResponse): Promise<void> {

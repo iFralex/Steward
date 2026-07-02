@@ -14,10 +14,23 @@ import { parseSearchArgs, parseCreateArgs, parseUpdateArgs, requireString } from
 import { applePath, indexDbPath } from "./paths.ts";
 import { WriteOpsStore } from "@llm-wiki/write-ops";
 
-const appleReady = existsSync(applePath());
-const store = appleReady ? AppleStore.openReadonly(applePath()) : null;
-const idxReady = existsSync(indexDbPath());
-const index = idxReady ? IndexDb.open(indexDbPath()) : null;
+let store: AppleStore | null = null;
+let storeError: string | null = null;
+try {
+  const appleReady = existsSync(applePath());
+  store = appleReady ? AppleStore.openReadonly(applePath()) : null;
+  if (!store) storeError = "Apple Calendar store not found. Grant Full Disk Access.";
+} catch (err) {
+  storeError = calendarPermissionError(err);
+}
+
+let index: IndexDb | null = null;
+try {
+  const idxReady = existsSync(indexDbPath());
+  index = idxReady ? IndexDb.open(indexDbPath()) : null;
+} catch {
+  index = null;
+}
 if (index) index.vectors.enable();
 const embedCfg = loadEmbedConfig();
 const embedQuery = embedCfg ? (t: string) => embedText(t, embedCfg) : undefined;
@@ -48,16 +61,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 function ok(data: unknown) { return { content: [{ type: "text", text: JSON.stringify(data) }] }; }
 
+function calendarPermissionError(err?: unknown): string {
+  const detail = err instanceof Error ? err.message : err ? String(err) : "";
+  return [
+    "Apple Calendar store is not readable.",
+    "Grant Full Disk Access to LLM Wiki.app in System Settings -> Privacy & Security -> Full Disk Access, then restart LLM Wiki.",
+    detail ? `Detail: ${detail}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function requireStore(): AppleStore {
+  if (!store) throw new Error(storeError ?? calendarPermissionError());
+  return store;
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const raw = (req.params.arguments ?? {}) as Record<string, unknown>;
   try {
     switch (req.params.name) {
       case "list_calendars": {
-        if (!store) throw new Error("Apple Calendar store not found. Grant Full Disk Access.");
-        return ok(store.listCalendars());
+        return ok(requireStore().listCalendars());
       }
       case "search_events": {
-        if (!store) throw new Error("Apple Calendar store not found. Grant Full Disk Access.");
+        const liveStore = requireStore();
         const a = parseSearchArgs(raw);
         let uids: string[];
         if (a.query && index) {
@@ -70,15 +96,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             ...(dateExplicit ? { startISO: a.start, endISO: a.end } : {}),
           });
         } else {
-          uids = store.eventsInRange({ startISO: a.start, endISO: a.end, account: a.account, calendar: a.calendar }).map((e) => e.uid);
+          uids = liveStore.eventsInRange({ startISO: a.start, endISO: a.end, account: a.account, calendar: a.calendar }).map((e) => e.uid);
         }
         // Both paths already applied the account/calendar/date filters; just resolve live detail.
-        const events = uids.map((u) => store.getEvent(u)).filter((e): e is CalEvent => !!e).slice(0, a.limit);
+        const events = uids.map((u) => liveStore.getEvent(u)).filter((e): e is CalEvent => !!e).slice(0, a.limit);
         return ok(events);
       }
       case "read_event": {
-        if (!store) throw new Error("Apple Calendar store not found. Grant Full Disk Access.");
-        return ok(store.getEvent(requireString(raw, "uid")) ?? null);
+        return ok(requireStore().getEvent(requireString(raw, "uid")) ?? null);
       }
       case "create_event": {
         const args = parseCreateArgs(raw);

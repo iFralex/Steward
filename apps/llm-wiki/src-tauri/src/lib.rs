@@ -138,6 +138,9 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
 /// (not via the plugin) so it works during setup before the webview
 /// boots — mirrors how proxy::read_proxy_config_from_store works.
 fn read_background_mode(store_path: &std::path::Path) -> bool {
+    if forced_background_mode() {
+        return true;
+    }
     let Ok(raw) = std::fs::read_to_string(store_path) else {
         return false;
     };
@@ -148,6 +151,18 @@ fn read_background_mode(store_path: &std::path::Path) -> bool {
         .get("backgroundMode")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
+}
+
+fn forced_background_mode() -> bool {
+    matches!(
+        std::env::var("LLM_WIKI_BACKGROUND_MODE").ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "yes" | "YES")
+    ) || std::env::args().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--background" | "--hidden" | "--headless" | "--background-mode"
+        )
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -14,14 +14,37 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 test("non-streaming routes direct to the provider, forwards tools, and falls back across tiers", async () => {
-  const seen: { model: string; hasTools: boolean; auth: string | undefined }[] = [];
+  const seen: {
+    model: string;
+    hasTools: boolean;
+    auth: string | undefined;
+    roles: unknown[];
+    thinking: unknown;
+    hasStore: boolean;
+    hasReasoningEffort: boolean;
+  }[] = [];
   let calls = 0;
 
   // Stand-in for the provider's OpenAI-compatible endpoint (DEEPSEEK_BASE_URL).
   const provider = createServer(async (req, res) => {
     calls++;
-    const body = JSON.parse(await readBody(req)) as { model: string; tools?: unknown[] };
-    seen.push({ model: body.model, hasTools: Array.isArray(body.tools), auth: req.headers["authorization"] as string | undefined });
+    const body = JSON.parse(await readBody(req)) as {
+      model: string;
+      messages?: { role?: unknown }[];
+      tools?: unknown[];
+      thinking?: unknown;
+      store?: unknown;
+      reasoning_effort?: unknown;
+    };
+    seen.push({
+      model: body.model,
+      hasTools: Array.isArray(body.tools),
+      auth: req.headers["authorization"] as string | undefined,
+      roles: body.messages?.map((message) => message.role) ?? [],
+      thinking: body.thinking,
+      hasStore: Object.hasOwn(body, "store"),
+      hasReasoningEffort: Object.hasOwn(body, "reasoning_effort"),
+    });
     if (calls === 1) { // first tier fails → sweep to the next
       res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: "try next" } }));
@@ -49,9 +72,11 @@ test("non-streaming routes direct to the provider, forwards tools, and falls bac
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model: "tier-5",
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "developer", content: "use tools" }, { role: "user", content: "hi" }],
         tools: [{ type: "function", function: { name: "get_time", parameters: { type: "object", properties: {} } } }],
         tool_choice: "auto",
+        store: false,
+        reasoning_effort: "medium",
       }),
     });
     assert.equal(res.status, 200);
@@ -60,6 +85,10 @@ test("non-streaming routes direct to the provider, forwards tools, and falls bac
     // Went direct to the provider, swept flash → pro, and forwarded tools.
     assert.deepEqual(seen.map((s) => s.model), ["deepseek-v4-flash", "deepseek-v4-pro"]);
     assert.ok(seen[0].hasTools, "tools forwarded to the provider");
+    assert.deepEqual(seen[0].roles, ["system", "user"]);
+    assert.deepEqual(seen[0].thinking, { type: "disabled" });
+    assert.equal(seen[0].hasStore, false);
+    assert.equal(seen[0].hasReasoningEffort, false);
     assert.equal(seen[1].auth, "Bearer sk-test");
   } finally {
     await new Promise<void>((resolve) => compat.close(() => resolve()));

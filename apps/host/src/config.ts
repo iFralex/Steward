@@ -51,6 +51,9 @@ const DEFAULT_SYSTEM_PROMPT = [
 ].join(" ");
 
 export function loadConfig(): HostConfig {
+  const bundled = process.env.LLM_WIKI_BUNDLED_SERVICES === "1";
+  const node = process.env.LLM_WIKI_NODE ?? process.execPath;
+  const nodeArgs = (entry: string) => bundled ? [entry] : ["--import", "tsx", entry];
   const llmWikiMcpEntry =
     process.env.LLM_WIKI_MCP_ENTRY ??
     fileURLToPath(new URL("../../llm-wiki/mcp-server/dist/src/index.js", import.meta.url));
@@ -77,12 +80,12 @@ export function loadConfig(): HostConfig {
       cost: { input: 0.14, output: 0.28, cacheRead: 0.014, cacheWrite: 0.14 },
     },
     mcpServers: {
-      "llm-wiki": { command: process.execPath, args: [llmWikiMcpEntry] },
-      mail: { command: process.execPath, args: ["--import", "tsx", mailMcpEntry] },
-      calendar: { command: process.execPath, args: ["--import", "tsx", calendarMcpEntry] },
-      contacts: { command: process.execPath, args: ["--import", "tsx", contactsMcpEntry] },
-      "action-center": { command: process.execPath, args: ["--import", "tsx", actionCenterMcpEntry] },
-      shell: { command: process.execPath, args: ["--import", "tsx", shellMcpEntry] },
+      "llm-wiki": { command: node, args: [llmWikiMcpEntry] },
+      mail: { command: node, args: nodeArgs(mailMcpEntry) },
+      calendar: { command: node, args: nodeArgs(calendarMcpEntry) },
+      contacts: { command: node, args: nodeArgs(contactsMcpEntry) },
+      "action-center": { command: node, args: nodeArgs(actionCenterMcpEntry) },
+      shell: { command: node, args: nodeArgs(shellMcpEntry) },
     },
   };
 }
