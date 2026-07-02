@@ -3,20 +3,30 @@
 One OpenAI-compatible endpoint for every service. The public namespace is a
 vendor-agnostic **capability ladder** selected via `model`: `tier-1` (weak local)
 … `tier-6` (strongest paid), plus `local-embed` for embeddings. Callers pick a
-tier number; the real models live only in `litellm.config.yaml`.
+tier number; the real models live only in the gateway adapter.
+
+This gateway is a small self-contained TypeScript server (`src/gateway.ts`, no
+external gateway process). It routes each request **directly** to the provider's
+own OpenAI-compatible endpoint (DeepSeek / Ollama), which preserves tool-calling
+and the provider's `usage` block verbatim. The app uses `http://127.0.0.1:4000/v1`.
+
+> Previously this sat in front of Portkey; Portkey's provider transform dropped
+> `tools`/`tool_choice`, so we route direct instead.
 
 Today tiers 2–5 map to **DeepSeek V4 Flash** (the reliable cheap workhorse) and
-tier-6 to **DeepSeek V4 Pro**; tier-1 is local Ollama. On failure a tier
-escalates up (then sweeps the lower rungs) so a request tries every rung.
+tier-6 to **DeepSeek V4 Pro**; tier-1 is local Ollama. On non-streaming failure,
+a tier escalates up then sweeps the lower paid rungs before returning an error.
+Streaming requests use the first matching target, because a stream cannot safely
+retry after tokens have begun.
 
 ## Run
 
 1. Ollama running locally with the models pulled (`ollama pull bge-m3`, `ollama pull llama3.2:1b`).
-2. `pip install "litellm[proxy]"`
-3. Copy `.env.example` to `.env`, set `DEEPSEEK_API_KEY` (tiers 2–6).
-4. `set -a; source .env; set +a; litellm --config litellm.config.yaml --port 4000`
+2. Copy `.env.example` to `.env`, set `DEEPSEEK_API_KEY` (tiers 2–6).
+3. Start the gateway: `npm run dev -w @llm-wiki/llm-gateway`
 
 Gateway base URL: `http://127.0.0.1:4000` (`/v1/chat/completions`, `/v1/embeddings`).
+Optional env: `GATEWAY_PORT`, `GATEWAY_REQUEST_TIMEOUT_MS`, `DEEPSEEK_BASE_URL`.
 
 ## Centralized wiring
 
@@ -47,9 +57,10 @@ OpenAI-compatible provider with base URL `http://127.0.0.1:4000/v1` and select
 
 ## Resilience (api tier)
 
-LiteLLM's router handles it (configured in `litellm.config.yaml`): key-pool
-rotation (deployments sharing a `model_name`), model fallback (`fallbacks`),
-retries + cooldown. Proxy fallback is out of scope.
+The gateway keeps the tier aliases (`tier-*`, `local-embed`) and performs
+sequential fallback across tiers (escalate, then sweep the lower paid rungs) for
+both streaming and non-streaming calls, with a per-request timeout
+(`GATEWAY_REQUEST_TIMEOUT_MS`).
 
 ## Claude-subscription tier (retired, optional)
 

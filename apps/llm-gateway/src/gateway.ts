@@ -13,7 +13,6 @@ type GatewayModel = {
 loadDotEnv(new URL("../.env", import.meta.url));
 
 const PORT = Number(process.env.GATEWAY_PORT ?? 4000);
-const PORTKEY_URL = process.env.PORTKEY_URL ?? "http://127.0.0.1:4002/v1";
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
 function loadDotEnv(url: URL): void {
@@ -65,31 +64,34 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function portkeyConfig(target: GatewayModel): Json {
-  const cfg: Json = {
-    provider: target.provider,
-    retry: { attempts: Number(process.env.GATEWAY_RETRIES ?? 3) },
-    request_timeout: Number(process.env.GATEWAY_REQUEST_TIMEOUT_MS ?? 120_000),
-  };
-  if (target.apiKey) cfg.api_key = target.apiKey;
-  if (target.customHost) cfg.custom_host = target.customHost;
-  return cfg;
-}
-
 export function attemptsFor(model: string): GatewayModel[] {
   const names = fallbackOrder[model] ?? [model];
   return names.map((name) => models[name]).filter(Boolean);
 }
 
-async function callPortkey(path: string, body: Json, target: GatewayModel): Promise<Response> {
-  return fetch(`${PORTKEY_URL}${path}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-portkey-config": JSON.stringify(portkeyConfig(target)),
-    },
-    body: JSON.stringify({ ...body, model: target.model }),
-  });
+/** Base URL of a provider's OpenAI-compatible API. */
+function directOpenAIBaseUrl(target: GatewayModel): string | undefined {
+  if (target.provider === "deepseek") return process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1";
+  if (target.customHost) return `${target.customHost.replace(/\/$/, "")}/v1`;
+  return undefined;
+}
+
+async function callProvider(baseUrl: string, path: string, body: Json, target: GatewayModel): Promise<Response> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (target.apiKey) headers.authorization = `Bearer ${target.apiKey}`;
+  const timeoutMs = Number(process.env.GATEWAY_REQUEST_TIMEOUT_MS ?? 120_000);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...body, model: target.model }),
+      signal: ac.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function proxyJson(path: string, body: Json, res: ServerResponse): Promise<void> {
@@ -102,31 +104,17 @@ async function proxyJson(path: string, body: Json, res: ServerResponse): Promise
 
   let lastStatus = 502;
   let lastText = "";
-  const forward = (upstream: Response, text: string) => {
-    res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
-    res.end(text);
-  };
   for (const target of attempts) {
-    // Prefer the provider's own OpenAI-compatible endpoint: Portkey's provider
-    // transform drops tools/tool_choice, so tool-calling must not go through it.
-    const direct = directOpenAIBaseUrl(target);
-    if (direct) {
-      try {
-        const upstream = await callDirectOpenAI(direct, path, body, target);
-        const text = await upstream.text();
-        if (upstream.ok) { forward(upstream, text); return; }
-        lastStatus = upstream.status;
-        lastText = text;
-      } catch (err) {
-        lastStatus = 502;
-        lastText = err instanceof Error ? err.message : String(err);
-      }
-    }
-    // Fallback: Portkey (providers without a direct OpenAI-compatible base URL).
+    const base = directOpenAIBaseUrl(target);
+    if (!base) { lastText = `no route for provider ${target.provider}`; continue; }
     try {
-      const upstream = await callPortkey(path, body, target);
+      const upstream = await callProvider(base, path, body, target);
       const text = await upstream.text();
-      if (upstream.ok) { forward(upstream, text); return; }
+      if (upstream.ok) {
+        res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+        res.end(text);
+        return;
+      }
       lastStatus = upstream.status;
       lastText = text;
     } catch (err) {
@@ -154,24 +142,26 @@ async function proxyStream(path: string, body: Json, res: ServerResponse): Promi
   let lastStatus = 502;
   let lastText = "";
   for (const target of attempts) {
-    const direct = directOpenAIBaseUrl(target);
-    if (direct) {
-      try {
-        const upstream = await callDirectOpenAI(direct, path, body, target);
-        if (upstream.ok) {
-          await pipeStreamingResponse(upstream, res);
-          return;
-        }
-        lastStatus = upstream.status;
-        lastText = await upstream.text();
-      } catch (err) {
-        lastStatus = 502;
-        lastText = err instanceof Error ? err.message : String(err);
+    const base = directOpenAIBaseUrl(target);
+    if (!base) { lastText = `no route for provider ${target.provider}`; continue; }
+
+    // 1) Native streaming, piped verbatim (keeps tool-call deltas + usage).
+    try {
+      const upstream = await callProvider(base, path, body, target);
+      if (upstream.ok) {
+        await pipeStreamingResponse(upstream, res);
+        return;
       }
+      lastStatus = upstream.status;
+      lastText = await upstream.text();
+    } catch (err) {
+      lastStatus = 502;
+      lastText = err instanceof Error ? err.message : String(err);
     }
 
+    // 2) Fallback: non-streaming call re-emitted as a synthetic SSE stream.
     try {
-      const upstream = await callPortkey(path, { ...body, stream: false }, target);
+      const upstream = await callProvider(base, path, { ...body, stream: false }, target);
       const text = await upstream.text();
       if (!upstream.ok) {
         lastStatus = upstream.status;
@@ -192,31 +182,6 @@ async function proxyStream(path: string, body: Json, res: ServerResponse): Promi
       type: "gateway_error",
     },
   });
-}
-
-function directOpenAIBaseUrl(target: GatewayModel): string | undefined {
-  if (target.provider === "deepseek") return process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1";
-  if (target.customHost) return `${target.customHost.replace(/\/$/, "")}/v1`;
-  return undefined;
-}
-
-async function callDirectOpenAI(baseUrl: string, path: string, body: Json, target: GatewayModel): Promise<Response> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (target.apiKey) headers.authorization = `Bearer ${target.apiKey}`;
-  // Portkey enforced a request timeout; keep the same guarantee on the direct path.
-  const timeoutMs = Number(process.env.GATEWAY_REQUEST_TIMEOUT_MS ?? 120_000);
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    return await fetch(`${baseUrl}${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ ...body, model: target.model }),
-      signal: ac.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 async function pipeStreamingResponse(upstream: Response, res: ServerResponse): Promise<void> {
@@ -322,7 +287,7 @@ function writeSse(res: ServerResponse, body: unknown): void {
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = req.url ?? "/";
   if (req.method === "GET" && (url === "/" || url === "/health")) {
-    json(res, 200, { ok: true, gateway: "portkey-compat", portkeyUrl: PORTKEY_URL });
+    json(res, 200, { ok: true, gateway: "llm-gateway" });
     return;
   }
   if (req.method === "GET" && url === "/v1/models") {
@@ -347,16 +312,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 }
 
-export function startCompatGateway(port = PORT): ReturnType<typeof createServer> {
+export function startGateway(port = PORT): ReturnType<typeof createServer> {
   const server = createServer((req, res) => {
     void handle(req, res);
   });
   server.listen(port, "127.0.0.1", () => {
-    console.log(`[llm-gateway] Portkey compat listening on http://127.0.0.1:${port}/v1 -> ${PORTKEY_URL}`);
+    console.log(`[llm-gateway] listening on http://127.0.0.1:${port}/v1 (direct OpenAI-compatible routing)`);
   });
   return server;
 }
 
-if (process.argv[1]?.endsWith("portkey-compat.ts") || process.argv[1]?.endsWith("portkey-compat.js")) {
-  startCompatGateway();
+if (process.argv[1]?.endsWith("gateway.ts") || process.argv[1]?.endsWith("gateway.js")) {
+  startGateway();
 }

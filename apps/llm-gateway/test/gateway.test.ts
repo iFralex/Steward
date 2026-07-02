@@ -36,12 +36,10 @@ test("non-streaming routes direct to the provider, forwards tools, and falls bac
   await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
   const providerPort = (provider.address() as { port: number }).port;
 
-  // Portkey must NOT be hit for tool calls; point it somewhere that would fail loudly.
-  process.env.PORTKEY_URL = "http://127.0.0.1:1/v1";
   process.env.DEEPSEEK_BASE_URL = `http://127.0.0.1:${providerPort}/v1`;
   process.env.DEEPSEEK_API_KEY = "sk-test";
-  const { startCompatGateway } = await import("../src/portkey-compat.ts");
-  const compat = startCompatGateway(0);
+  const { startGateway } = await import("../src/gateway.ts");
+  const compat = startGateway(0);
   await new Promise<void>((resolve) => compat.once("listening", resolve));
   const compatPort = (compat.address() as { port: number }).port;
 
@@ -59,7 +57,7 @@ test("non-streaming routes direct to the provider, forwards tools, and falls bac
     assert.equal(res.status, 200);
     const body = await res.json() as any;
     assert.equal(body.choices[0].message.tool_calls[0].function.name, "get_time");
-    // Went direct to the provider (not Portkey), swept flash → pro, and forwarded tools.
+    // Went direct to the provider, swept flash → pro, and forwarded tools.
     assert.deepEqual(seen.map((s) => s.model), ["deepseek-v4-flash", "deepseek-v4-pro"]);
     assert.ok(seen[0].hasTools, "tools forwarded to the provider");
     assert.equal(seen[1].auth, "Bearer sk-test");

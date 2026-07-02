@@ -28,7 +28,7 @@ test("assertNoApiKey throws when ANTHROPIC_API_KEY is set", () => {
 
 test("server answers /v1/chat/completions with an OpenAI completion", async () => {
   const server = createAdapterServer({ runQuery: () => fake() });
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as AddressInfo).port;
   const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
     method: "POST",
@@ -43,7 +43,7 @@ test("server answers /v1/chat/completions with an OpenAI completion", async () =
 
 test("server lists models at /v1/models", async () => {
   const server = createAdapterServer({ runQuery: () => fake() });
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as AddressInfo).port;
   const res = await fetch(`http://127.0.0.1:${port}/v1/models`);
   const body = (await res.json()) as any;
@@ -56,7 +56,7 @@ test("server returns a 500 OpenAI error shape when the query throws", async () =
   // eslint-disable-next-line require-yield
   async function* boom(): AsyncIterable<unknown> { throw new Error("kaboom"); if (false) yield undefined; }
   const server = createAdapterServer({ runQuery: () => boom() });
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as AddressInfo).port;
   const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
     method: "POST",
