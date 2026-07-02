@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "node --import tsx src/index.ts",
+    "install-quick-actions": "node --import tsx install-quick-actions.mts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
