@@ -90,7 +90,7 @@ export async function executeActionProposal(args: {
 
     let input = step.input ?? {};
     if (decision === "gate") {
-      const approved = await args.session.requestApproval({ tool: step.tool, input });
+      const approved = await args.session.requestApproval({ tool: step.tool, input, chatId: args.chatId });
       if (approved.decision === "revise") {
         throw new ActionRevisionRequestedError(buildRevisionPrompt(action, proposal, step, approved.note));
       }
@@ -101,7 +101,7 @@ export async function executeActionProposal(args: {
     }
 
     const toolCallId = randomUUID();
-    args.emit({ type: "tool_call", sessionId: args.session.id, toolCallId, tool: step.tool, input });
+    args.emit({ type: "tool_call", sessionId: args.session.id, toolCallId, tool: step.tool, input, ...(args.chatId ? { chatId: args.chatId } : {}) });
     const startedAt = Date.now();
     try {
       const result = await bridge.callTool(step.tool, input);
@@ -112,6 +112,7 @@ export async function executeActionProposal(args: {
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
         ok: true, output, durationMs,
         ...(files.length ? { files } : {}),
+        ...(args.chatId ? { chatId: args.chatId } : {}),
       });
       record(toolMessage({ tool: step.tool, input, toolCallId, ok: true, output, durationMs, files }));
     } catch (err) {
@@ -120,6 +121,7 @@ export async function executeActionProposal(args: {
       args.emit({
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
         ok: false, output: null, durationMs, error,
+        ...(args.chatId ? { chatId: args.chatId } : {}),
       });
       record(toolMessage({ tool: step.tool, input, toolCallId, ok: false, output: null, durationMs, error }));
       throw err;

@@ -11,6 +11,8 @@ import { decideTool, type ToolPolicy } from "./tool-policy.ts";
 export interface ApprovalRequest {
   tool: string;
   input: Record<string, unknown>;
+  /** Chat whose turn requested this approval (routes the card in the UI). */
+  chatId?: string;
 }
 
 export interface ApprovalOutcome {

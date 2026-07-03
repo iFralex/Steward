@@ -353,7 +353,7 @@ export function startServer(config: HostConfig): WebSocketServer {
             const action = getActionItem(msg.id);
             const chatId = action ? ensureActionChat(action) : session.activeChatId ?? undefined;
             if (chatId) selectChat(chatId);
-            emit({ type: "status", sessionId: session.id, state: "running" });
+            emit({ type: "status", sessionId: session.id, ...(chatId ? { chatId } : {}), state: "running" });
             try {
               const state = await executeActionProposal({
                 config,
@@ -371,7 +371,7 @@ export function startServer(config: HostConfig): WebSocketServer {
                 emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
               }
             } finally {
-              emit({ type: "status", sessionId: session.id, state: "idle" });
+              emit({ type: "status", sessionId: session.id, ...(chatId ? { chatId } : {}), state: "idle" });
               sendChatList();
             }
           })();

@@ -99,8 +99,8 @@ export type ClientEvent =
 
 /** Messages the core sends OUT to a channel. */
 export type ServerEvent =
-  | { type: "assistant_token"; sessionId: string; text: string }
-  | { type: "assistant_done"; sessionId: string }
+  | { type: "assistant_token"; sessionId: string; chatId?: string; text: string }
+  | { type: "assistant_done"; sessionId: string; chatId?: string }
   | {
       /**
        * The agent invoked a tool (shown in the transcript so nothing is lost).
@@ -108,6 +108,7 @@ export type ServerEvent =
        */
       type: "tool_call";
       sessionId: string;
+      chatId?: string;
       toolCallId: string;
       tool: string;
       input: unknown;
@@ -120,6 +121,7 @@ export type ServerEvent =
        */
       type: "approval_request";
       sessionId: string;
+      chatId?: string;
       requestId: string;
       tool: string;
       input: unknown;
@@ -133,6 +135,7 @@ export type ServerEvent =
        */
       type: "question_request";
       sessionId: string;
+      chatId?: string;
       requestId: string;
       question: string;
       options: string[];
@@ -142,6 +145,7 @@ export type ServerEvent =
       /** Cumulative session token usage + cost, emitted after each turn. */
       type: "usage";
       sessionId: string;
+      chatId?: string;
       /** Cost (USD) of the turn that just finished. */
       turnCostUsd: number;
       /** Cumulative session cost (USD). */
@@ -156,6 +160,7 @@ export type ServerEvent =
        */
       type: "tool_result";
       sessionId: string;
+      chatId?: string;
       toolCallId: string;
       tool: string;
       ok: boolean;
@@ -168,7 +173,7 @@ export type ServerEvent =
   | { type: "action_center_state"; sessionId: string; state: ActionCenterState }
   | { type: "chat_list"; chats: ChatSummary[]; activeChatId: string | null }
   | { type: "chat_history"; chatId: string; messages: PersistedMessage[] }
-  | { type: "status"; sessionId: string; state: SessionState }
+  | { type: "status"; sessionId: string; chatId?: string; state: SessionState }
   | { type: "error"; sessionId?: string; message: string };
 
 export type ApprovalDecision = "allow" | "deny" | "revise";

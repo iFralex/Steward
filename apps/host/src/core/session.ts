@@ -48,6 +48,7 @@ export class Session {
       this.emit({
         type: "approval_request",
         sessionId: this.id,
+        ...(req.chatId ? { chatId: req.chatId } : {}),
         requestId,
         tool: req.tool,
         input: req.input,
@@ -69,7 +70,10 @@ export class Session {
    * and resolve with the labels the user selected (via `question_response`),
    * or `[]` on timeout. Mirrors `requestApproval` but for a plain question.
    */
-  readonly askQuestion = (q: { question: string; options: string[]; multiSelect: boolean }): Promise<string[]> => {
+  readonly askQuestion = (
+    q: { question: string; options: string[]; multiSelect: boolean },
+    chatId?: string,
+  ): Promise<string[]> => {
     const requestId = randomUUID();
     return new Promise<string[]>((resolve) => {
       const timer = setTimeout(() => {
@@ -84,6 +88,7 @@ export class Session {
       this.emit({
         type: "question_request",
         sessionId: this.id,
+        ...(chatId ? { chatId } : {}),
         requestId,
         question: q.question,
         options: q.options,

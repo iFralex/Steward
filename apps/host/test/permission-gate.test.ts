@@ -60,3 +60,21 @@ test("gated tool runs on approval; note delivered as follow-up; edited args used
   assert.deepEqual(calls, [{ a: 2 }]);
   assert.deepEqual(followUps, ["User note: ok cc boss"]);
 });
+
+test("gated tool's requestApproval receives the chatId it was constructed with", async () => {
+  const calls: any[] = [];
+  const captured: any[] = [];
+  const capture: RequestApproval = async (req) => {
+    captured.push(req);
+    return { decision: "allow" };
+  };
+  // Mirrors how ChatManager.ensureChat builds a per-chat requestApproval:
+  // a closure over the chat's own chatId, tagging every approval request.
+  const chatBoundRequestApproval: RequestApproval = (req) => capture({ ...req, chatId: "chat-1" });
+  const t = gateToolDefinition(fakeTool("send", calls), policy, chatBoundRequestApproval, noFollowUp);
+  await t.execute("1", { a: 1 }, undefined, undefined, {} as any);
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].chatId, "chat-1");
+  assert.equal(captured[0].tool, "send");
+  assert.deepEqual(captured[0].input, { a: 1 });
+});

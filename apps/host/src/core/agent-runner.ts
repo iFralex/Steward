@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { buildMcpBridge, type McpBridge } from "@llm-wiki/mcp-bridge";
-import { gateToolDefinition, type FollowUpSink } from "./permission-gate.ts";
+import { gateToolDefinition } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
@@ -87,7 +87,6 @@ interface BridgeRuntime {
   modelRegistry: ReturnType<typeof registerGatewayModel>["modelRegistry"];
   model: ReturnType<typeof registerGatewayModel>["model"];
   resourceLoader: DefaultResourceLoader;
-  tools: ReturnType<typeof gateToolDefinition>[];
 }
 
 interface ChatRuntime {
@@ -108,8 +107,6 @@ interface ChatRuntime {
 export class ChatManager {
   private bridge?: BridgeRuntime;
   private readonly chats = new Map<string, ChatRuntime>();
-  /** The followUp sink the gate uses — points at the chat currently running. */
-  private activeFollowUp: FollowUpSink = { followUp: async () => {} };
 
   constructor(
     private readonly config: HostConfig,
@@ -121,12 +118,6 @@ export class ChatManager {
     if (this.bridge) return this.bridge;
     const { modelRegistry, model } = registerGatewayModel(this.config.gateway);
     const bridge = await buildMcpBridge(this.config.mcpServers);
-    const tools = [
-      ...bridge.tools.map((def) =>
-        gateToolDefinition(def, this.config.policy, this.session.requestApproval, () => this.activeFollowUp),
-      ),
-      buildAskUserTool(this.session.askQuestion),
-    ];
     const resourceLoader = new DefaultResourceLoader({
       cwd: process.cwd(),
       agentDir: process.cwd(),
@@ -134,7 +125,7 @@ export class ChatManager {
       noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true, noExtensions: true,
     });
     await resourceLoader.reload();
-    this.bridge = { bridge, modelRegistry, model, resourceLoader, tools };
+    this.bridge = { bridge, modelRegistry, model, resourceLoader };
     return this.bridge;
   }
 
@@ -160,10 +151,27 @@ export class ChatManager {
       if (created) store.setSessionFile(chatId, created);
     }
 
-    const { session: piSession } = await createAgentSession({
+    // Built per chat (not shared): each chat's gate closes over its own chatId
+    // (so approval cards route to the right chat) and its own piSession
+    // followUp sink (so an allow-note lands on the chat that asked, not
+    // whichever chat happens to be running).
+    let piSession: AgentSession;
+    const tools = [
+      ...b.bridge.tools.map((def) =>
+        gateToolDefinition(
+          def,
+          this.config.policy,
+          (req) => this.session.requestApproval({ ...req, chatId }),
+          () => ({ followUp: (t: string) => piSession.followUp(t) }),
+        ),
+      ),
+      buildAskUserTool((q) => this.session.askQuestion(q, chatId)),
+    ];
+    const { session: created } = await createAgentSession({
       model: b.model, modelRegistry: b.modelRegistry, resourceLoader: b.resourceLoader,
-      sessionManager, noTools: "builtin", customTools: b.tools,
+      sessionManager, noTools: "builtin", customTools: tools,
     });
+    piSession = created;
 
     const runtime: ChatRuntime = {
       chatId, session: piSession, unsub: () => {},
@@ -182,13 +190,13 @@ export class ChatManager {
       const delta = e.assistantMessageEvent.delta;
       if (delta) {
         runtime.assistantBuffer += delta;
-        this.emit({ type: "assistant_token", sessionId: this.session.id, text: delta });
+        this.emit({ type: "assistant_token", sessionId: this.session.id, chatId: runtime.chatId, text: delta });
       }
       return;
     }
     if (e.type === "tool_execution_start") {
       if (e.toolCallId) { runtime.starts.set(e.toolCallId, Date.now()); runtime.toolInputs.set(e.toolCallId, e.args ?? {}); }
-      this.emit({ type: "tool_call", sessionId: this.session.id, toolCallId: e.toolCallId ?? "", tool: e.toolName, input: e.args ?? {} });
+      this.emit({ type: "tool_call", sessionId: this.session.id, chatId: runtime.chatId, toolCallId: e.toolCallId ?? "", tool: e.toolName, input: e.args ?? {} });
       return;
     }
     if (e.type === "tool_execution_end") {
@@ -207,7 +215,7 @@ export class ChatManager {
         }));
       } catch { /* transcript optional */ }
       this.emit({
-        type: "tool_result", sessionId: this.session.id, toolCallId: e.toolCallId ?? "", tool: e.toolName,
+        type: "tool_result", sessionId: this.session.id, chatId: runtime.chatId, toolCallId: e.toolCallId ?? "", tool: e.toolName,
         ok, output, durationMs, ...(files.length ? { files } : {}), ...(error ? { error } : {}),
       });
     }
@@ -224,7 +232,6 @@ export class ChatManager {
     if (this.session.closed) return;
     runtime.assistantBuffer = "";
     runtime.aborted = false;
-    this.activeFollowUp = { followUp: (t: string) => runtime.session.followUp(t) };
 
     // Surface user-attached files to the agent as absolute paths it can pass to
     // send_email/reply (which attach by path).
@@ -232,18 +239,18 @@ export class ChatManager {
       ? `${prompt}\n\n[Files the user attached — absolute paths on disk. If the user wants them sent by email, pass these in the send_email/reply "attachments" array:]\n${attached.map((a) => `- ${a.name}: ${a.path}`).join("\n")}`
       : prompt;
 
-    this.emit({ type: "status", sessionId: this.session.id, state: "running" });
+    this.emit({ type: "status", sessionId: this.session.id, chatId, state: "running" });
     try {
       await runtime.session.prompt(piPrompt);
       const text = runtime.assistantBuffer.trim();
       if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
-      this.emit({ type: "assistant_done", sessionId: this.session.id });
+      this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
     } catch (err) {
       // A user-requested stop surfaces as an abort here — not a real error.
       if (runtime.aborted) {
         const text = runtime.assistantBuffer.trim();
         if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
-        this.emit({ type: "assistant_done", sessionId: this.session.id });
+        this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
       } else {
         this.emit({ type: "error", sessionId: this.session.id, message: err instanceof Error ? err.message : String(err) });
       }
@@ -267,9 +274,9 @@ export class ChatManager {
             costUsd: turnCostUsd,
           });
         } catch { /* ledger optional */ }
-        this.emit({ type: "usage", sessionId: this.session.id, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
+        this.emit({ type: "usage", sessionId: this.session.id, chatId, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
       } catch { /* stats unavailable */ }
-      this.emit({ type: "status", sessionId: this.session.id, state: "idle" });
+      this.emit({ type: "status", sessionId: this.session.id, chatId, state: "idle" });
     }
   }
 

@@ -46,6 +46,8 @@ export interface PendingApproval {
   requestId: string;
   tool: string;
   input: unknown;
+  /** Chat this approval belongs to (routes the card; survives chat switches). */
+  chatId?: string;
 }
 
 export interface PendingQuestion {
@@ -53,7 +55,12 @@ export interface PendingQuestion {
   question: string;
   options: string[];
   multiSelect: boolean;
+  /** Chat this question belongs to (routes the card; survives chat switches). */
+  chatId?: string;
 }
+
+/** Sentinel key for a "running" signal with no chatId (legacy/global status). */
+const GLOBAL_STATUS_KEY = "__global__";
 
 export interface SessionUsage {
   turnCostUsd: number;
@@ -102,8 +109,6 @@ export function useHostSocket(url: string): HostSocket {
   const wsRef = useRef<WebSocket | null>(null);
   const sessionRef = useRef<string>("");
   const [connected, setConnected] = useState(false);
-  const [state, setState] = useState<SessionState>("idle");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [usage, setUsage] = useState<SessionUsage | null>(null);
@@ -112,6 +117,31 @@ export function useHostSocket(url: string): HostSocket {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   /** Files seen in tool results, keyed by both absolute path and name — lets inline `card:file` resolve to an openable file. */
   const filesRef = useRef<Map<string, ChannelFile>>(new Map());
+
+  /** Per-chat transcript, keyed by chatId; `messages` mirrors the active chat's list. */
+  const messagesByChat = useRef<Map<string, ChatMessage[]>>(new Map());
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const activeChatRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeChatRef.current = activeChatId;
+  }, [activeChatId]);
+
+  /** Apply fn to a chat's list; re-render only if it's the visible one. */
+  const updateChat = (chatId: string | null, fn: (prev: ChatMessage[]) => ChatMessage[]) => {
+    const key = chatId ?? activeChatRef.current ?? "";
+    const next = fn(messagesByChat.current.get(key) ?? []);
+    messagesByChat.current.set(key, next);
+    if (key === (activeChatRef.current ?? "")) setMessages(next);
+  };
+
+  /** Chats currently running a turn (per-chat status) + whether the "global" (no-chatId) signal is on. */
+  const runningChatsRef = useRef<Set<string>>(new Set());
+  const [statusVersion, setStatusVersion] = useState(0);
+  const state: SessionState = runningChatsRef.current.has(activeChatId ?? "") || runningChatsRef.current.has(GLOBAL_STATUS_KEY)
+    ? "running"
+    : "idle";
+  // statusVersion is read only to force a re-render when the ref above changes.
+  void statusVersion;
 
   useEffect(() => {
     const ws = new WebSocket(url);
@@ -126,18 +156,27 @@ export function useHostSocket(url: string): HostSocket {
         return;
       }
       switch (msg.type) {
-        case "status":
+        case "status": {
           sessionRef.current = msg.sessionId;
-          setState(msg.state);
+          if (msg.chatId) {
+            if (msg.state === "running") runningChatsRef.current.add(msg.chatId);
+            else runningChatsRef.current.delete(msg.chatId);
+          } else if (msg.state === "idle") {
+            runningChatsRef.current.clear();
+          } else {
+            runningChatsRef.current.add(GLOBAL_STATUS_KEY);
+          }
+          setStatusVersion((v) => v + 1);
           break;
+        }
         case "assistant_token":
-          setMessages((prev) => appendAssistant(prev, msg.text));
+          updateChat(msg.chatId ?? null, (prev) => appendAssistant(prev, msg.text));
           break;
         case "assistant_done":
-          setMessages((prev) => closeAssistant(prev));
+          updateChat(msg.chatId ?? null, (prev) => closeAssistant(prev));
           break;
         case "tool_call":
-          setMessages((prev) => [
+          updateChat(msg.chatId ?? null, (prev) => [
             ...prev,
             { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
           ]);
@@ -149,7 +188,7 @@ export function useHostSocket(url: string): HostSocket {
               filesRef.current.set(f.name, f);
             }
           }
-          setMessages((prev) =>
+          updateChat(msg.chatId ?? null, (prev) =>
             prev.map((m) =>
               m.role === "tool" && m.toolCallId === msg.toolCallId
                 ? { ...m, toolStatus: msg.ok ? "ok" : "error", toolOutput: msg.output, toolDurationMs: msg.durationMs, toolError: msg.error, toolFiles: msg.files }
@@ -160,13 +199,13 @@ export function useHostSocket(url: string): HostSocket {
         case "approval_request":
           setApprovals((prev) => [
             ...prev,
-            { requestId: msg.requestId, tool: msg.tool, input: msg.input },
+            { requestId: msg.requestId, tool: msg.tool, input: msg.input, chatId: msg.chatId },
           ]);
           break;
         case "question_request":
           setQuestions((prev) => [
             ...prev,
-            { requestId: msg.requestId, question: msg.question, options: msg.options, multiSelect: msg.multiSelect },
+            { requestId: msg.requestId, question: msg.question, options: msg.options, multiSelect: msg.multiSelect, chatId: msg.chatId },
           ]);
           break;
         case "usage":
@@ -177,16 +216,18 @@ export function useHostSocket(url: string): HostSocket {
           setActiveChatId(msg.activeChatId);
           break;
         case "chat_history":
+          activeChatRef.current = msg.chatId;
           setActiveChatId(msg.chatId);
-          setMessages(msg.messages.map(persistedToChat));
-          setApprovals([]);
-          setQuestions([]);
-          break;
+          messagesByChat.current.set(msg.chatId, msg.messages.map(persistedToChat));
+          setMessages(messagesByChat.current.get(msg.chatId)!);
+          break; // note: approvals/questions are NOT cleared anymore — they're per-chat and filtered on read
         case "action_center_state":
           setActionCenter(msg.state);
           break;
         case "error":
-          setMessages((prev) => [
+          // No chatId on this event; route it into whatever chat is currently
+          // active so it doesn't get silently dropped by a later map-driven update.
+          updateChat(null, (prev) => [
             ...prev,
             { id: crypto.randomUUID(), role: "assistant", text: `⚠️ ${msg.message}` },
           ]);
@@ -205,7 +246,7 @@ export function useHostSocket(url: string): HostSocket {
     (text: string, attachments?: ChannelFile[]) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      setMessages((prev) => [
+      updateChat(activeChatId, (prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "user", text: trimmed, ts: Date.now(), ...(attachments?.length ? { attachments } : {}) },
       ]);
@@ -307,7 +348,13 @@ export function useHostSocket(url: string): HostSocket {
     }
   }, [httpBase]);
 
-  return { connected, state, messages, approvals, questions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  // Approvals/questions are per-chat (chatId is optional for back-compat): a
+  // card with no chatId is treated as belonging to whatever chat is active so
+  // it isn't silently dropped, and it stays visible across chat switches.
+  const visibleApprovals = approvals.filter((a) => !a.chatId || a.chatId === activeChatId);
+  const visibleQuestions = questions.filter((q) => !q.chatId || q.chatId === activeChatId);
+
+  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */
