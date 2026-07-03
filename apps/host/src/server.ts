@@ -214,6 +214,11 @@ export function startServer(config: HostConfig): WebSocketServer {
       isAllowedOrigin(req.headers.origin, config.port),
   });
 
+  // Startup housekeeping: drop unsaved temporary chats from previous runs.
+  // Done once per process — NOT per connection (a second tab must not delete
+  // the temporary action chats another connection is actively using).
+  chatStore().purgeTemporary();
+
   wss.on("connection", (ws) => {
     const emit: Emit = (event) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(event));
@@ -244,8 +249,6 @@ export function startServer(config: HostConfig): WebSocketServer {
 
     emit({ type: "status", sessionId: session.id, state: "idle" });
     emit({ type: "action_center_state", sessionId: session.id, state: loadActionCenterState() });
-    // Fresh connection: drop unsaved temporary chats from the previous session.
-    store.purgeTemporary();
     // Restore (or seed) the chat list; focus the most-recent chat.
     const existing = store.listChats();
     const focus = existing[0] ?? store.createChat();
