@@ -120,7 +120,7 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
     },
     analyzed: { ...analyzed, deadline },
   });
-  const replyRequirements = deriveReplyRequirements(msg, analyzed, toolContext);
+  const replyRequirements: string[] = [];
   const relatedMailFacts = deriveRelatedMailFacts(toolContext, opts.userAddrs ?? [], msg.date);
   const contextSnapshot: ContextSnapshot = {
     mail: {
@@ -170,13 +170,13 @@ function deriveRelatedMailFacts(
     const from = String(message.from ?? "").toLowerCase();
     const snippet = String(message.snippet ?? "");
     const subject = String(message.subject ?? "");
-    const sentByUser = [...userSet].some((addr) => from.includes(addr)) || /alessio\.antonucci@steantycip\.com/i.test(from);
+    const sentByUser = [...userSet].some((addr) => from.includes(addr));
     if (!sentByUser) continue;
     if (!isNearReferenceDate(message.date, referenceDate)) continue;
     if (/\b(nulla da segnalare|nessuna? assenz|non ho assenz|no assenz|nothing to report|no absence)/i.test(snippet)) {
       facts.push({
-        kind: "already-communicated-absence-status",
-        meaning: "Alessio already told the recipient in another/recent mail that he had no absences or nothing to report.",
+        kind: "already-replied-elsewhere",
+        meaning: "The user already answered this request in another recent thread.",
         subject,
         date: message.date,
         threadId: message.threadId,
@@ -235,32 +235,6 @@ function uniqueFacts(facts: Record<string, unknown>[]): Record<string, unknown>[
     out.push(fact);
   }
   return out.slice(0, 5);
-}
-
-function deriveReplyRequirements(
-  msg: PlanningMessage,
-  analyzed: AnalyzedMail,
-  toolContext: { requested: unknown[]; observations: unknown[] },
-): string[] {
-  const text = [
-    msg.subject,
-    cleanBody(msg.bodyText).slice(0, 4000),
-    analyzed.summary,
-    analyzed.reasoning,
-    JSON.stringify(toolContext.observations).slice(0, 12000),
-  ].join("\n").toLowerCase();
-  const requirements: string[] = [];
-  const hasJune = /\b(giugno|june)\b/i.test(text);
-  const hasPresence = /\b(presenz|presence|attendance|assen[zt]|absence|giorni?\s*\/?\s*ore\s+off|ore\s+off|nulla da segnalare)\b/i.test(text);
-  if (hasJune && hasPresence) {
-    requirements.push("State June attendance/presence/absence information, including whether there are absences or nothing to report.");
-  }
-  const hasFirstJune = /\b(1\s*giugno|1\/6|01\/06|2026-06-01|june\s+1|1st\s+of\s+june)\b/i.test(text);
-  const hasAccountingChoice = /\b(ferie|rol|banca ore|permess[oi]|scaric|scaricare|ponte|chiusura|leave|pto|vacation|holiday)\b/i.test(text);
-  if (hasFirstJune && hasAccountingChoice) {
-    requirements.push("Specify how the 1 June bridge/closure day should be accounted for, such as ferie, ROL/banca ore, or another explicit choice.");
-  }
-  return [...new Set(requirements)];
 }
 
 async function analyzeMail(msg: PlanningMessage, chat: Chat, userAddrs: string[]): Promise<AnalyzedMail | null> {
