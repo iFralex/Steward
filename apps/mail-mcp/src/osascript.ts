@@ -20,7 +20,7 @@ export function mapOsaError(stderr: string): string {
 
 export async function runOsa(
   script: string,
-  opts: { timeoutMs?: number; exec?: OsaExec } = {},
+  opts: { timeoutMs?: number; exec?: OsaExec; isTransient?: (message: string) => boolean } = {},
 ): Promise<string> {
   const full: OsaOptions = { ...opts, mapError: mapOsaError };
   return sharedRunOsa(script, full);

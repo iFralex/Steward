@@ -121,14 +121,22 @@ export function buildDelete(uid: string): string {
   ].join("\n");
 }
 
-const run = (script: string, exec?: OsaExec) => runOsa(script, { exec, mapError: mapCalendarError });
+const run = (script: string, exec?: OsaExec, opts?: { retryTransient?: boolean }) =>
+  runOsa(script, {
+    exec,
+    mapError: mapCalendarError,
+    ...(opts?.retryTransient === false ? { isTransient: () => false } : {}),
+  });
 
+// Writes (create/update/delete) never retry transiently at this low level — the
+// write-ops reconcile loop owns safe retries, and a low-level retry here risks
+// double-executing the AppleScript side effect (e.g. creating the event twice).
 export async function createEvent(a: CreateArgs, exec?: OsaExec): Promise<string> {
-  return (await run(buildCreate(a), exec)).trim();
+  return (await run(buildCreate(a), exec, { retryTransient: false })).trim();
 }
 export async function updateEvent(a: UpdateArgs, exec?: OsaExec): Promise<void> {
-  await run(buildUpdate(a), exec);
+  await run(buildUpdate(a), exec, { retryTransient: false });
 }
 export async function deleteEvent(uid: string, exec?: OsaExec): Promise<void> {
-  await run(buildDelete(uid), exec);
+  await run(buildDelete(uid), exec, { retryTransient: false });
 }

@@ -5,6 +5,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { FileChip } from "@/components/file-chip";
+import { safeHref } from "@/lib/utils";
 import type { ChannelFile } from "@llm-wiki/protocol";
 
 export interface FileApi {
@@ -46,6 +47,7 @@ function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]
     typeof a === "string" ? { name: a.split("/").pop() ?? a, path: a } : (a as Dict),
   );
   const mailUrl = str(data.mailUrl);
+  const safeMailUrl = safeHref(mailUrl);
   const metaKeys = ["from", "to", "cc", "bcc", "date", "sendAt"] as const;
   const hasMeta = data.replyAll === true || metaKeys.some((k) => present(data[k]));
   const hasFooter = !!mailUrl || attachments.length > 0 || (files?.length ?? 0) > 0;
@@ -68,7 +70,9 @@ function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]
       )}
       {hasFooter && (
         <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
-          {mailUrl && <a href={mailUrl} className="text-primary underline">Apri in Mail</a>}
+          {mailUrl && (safeMailUrl
+            ? <a href={safeMailUrl} className="text-primary underline">Apri in Mail</a>
+            : <span className="text-muted-foreground">Apri in Mail</span>)}
           {attachments.map((a, i) => {
             const name = str(a.name);
             const f = fileApi.resolve(str(a.path)) ?? fileApi.resolve(name);
@@ -93,7 +97,13 @@ function EventCard({ data }: { data: Dict }) {
       {present(data.location) && <Row label="Luogo">{str(data.location)}</Row>}
       {present(data.calendar) && <Row label="Calendario">{str(data.calendar)}</Row>}
       {present(data.alarms) && <Row label="Avvisi">{formatAlarms(data.alarms)}</Row>}
-      {present(data.url) && <Row label="URL"><a href={str(data.url)} className="text-primary break-all underline">{str(data.url)}</a></Row>}
+      {present(data.url) && (
+        <Row label="URL">
+          {safeHref(str(data.url))
+            ? <a href={str(data.url)} className="text-primary break-all underline">{str(data.url)}</a>
+            : <span className="break-all">{str(data.url)}</span>}
+        </Row>
+      )}
       {present(data.description) && <div className="mt-1 border-t pt-1 whitespace-pre-wrap">{str(data.description)}</div>}
     </div>
   );
@@ -104,7 +114,7 @@ function SearchResultsList({ results }: { results: Dict[] }) {
   return (
     <div className="my-1 flex flex-col gap-1">
       {results.map((r, i) => {
-        const url = str(r.mailUrl);
+        const url = safeHref(str(r.mailUrl));
         const inner = (
           <>
             <div className="truncate font-medium">{str(r.subject) || "(senza oggetto)"}</div>

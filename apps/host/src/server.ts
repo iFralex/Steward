@@ -5,7 +5,7 @@
  */
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream, statSync } from "node:fs";
+import { createReadStream, statSync, type Stats } from "node:fs";
 import { execFile } from "node:child_process";
 import { extname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -205,7 +205,7 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
     return;
   }
   // Make a file-card path actionable on demand (register → return its ref).
-  if (url.startsWith("/resolve")) {
+  if (url.startsWith("/resolve") && req.method === "GET") {
     const path = new URL(url, "http://x").searchParams.get("path") ?? "";
     const ref = registerUserPath(path);
     if (!ref) { res.writeHead(404, CORS); res.end("not found or blocked"); return; }
@@ -216,10 +216,12 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
   if (url.startsWith("/file/")) {
     const m = url.match(/^\/file\/([\w-]+)/);
     const entry = m ? resolveToken(m[1]) : null;
-    if (!entry) { res.writeHead(404, { ...CORS }); res.end("not found"); return; }
+    let stat: Stats | undefined;
+    try { stat = entry ? statSync(entry.path) : undefined; } catch { /* gone */ }
+    if (!entry || !stat?.isFile()) { res.writeHead(404, CORS); res.end("not found"); return; }
     res.writeHead(200, {
       "Content-Type": entry.ref.mime,
-      "Content-Length": entry.ref.size,
+      "Content-Length": stat.size,
       "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(entry.ref.name)}`,
       ...CORS,
     });

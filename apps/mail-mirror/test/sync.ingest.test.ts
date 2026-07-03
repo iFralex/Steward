@@ -83,6 +83,27 @@ test("re-ingesting a no-subject no-references message reuses its own thread (no 
   store.close();
 });
 
+test("resolveThreadId escapes % in the subject LIKE pattern (unrelated subjects must not merge)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ing-like-"));
+  const store = Store.open(":memory:");
+  const deps = { store, blobs: new BlobStore(join(dir, "blobs")) };
+
+  // Same participants (a@x / me@x) so the only gate left is the subject LIKE match.
+  // Unescaped, subj2's literal "%" becomes a wildcard: the stored pattern
+  // "%Alpha%Bravo%" would match subj1 ("Alpha ... Bravo ...") even though the
+  // two subjects share no real relationship — a false thread merge.
+  const e1: EmlxEntry = { path: emlx(dir, "1.emlx", RFC2("pctA@x", "Alpha report Bravo section")), account: "ACC", mailbox: "INBOX", isPartial: false, mtimeMs: 1 };
+  const e2: EmlxEntry = { path: emlx(dir, "2.emlx", RFC2("pctB@x", "Alpha%Bravo")), account: "ACC", mailbox: "INBOX", isPartial: false, mtimeMs: 2 };
+
+  await ingestEmlxFile(deps, e1);
+  await ingestEmlxFile(deps, e2);
+
+  const t1 = (store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("pctA@x") as { thread_id: number }).thread_id;
+  const t2 = (store.raw.prepare("SELECT thread_id FROM messages WHERE message_id=?").get("pctB@x") as { thread_id: number }).thread_id;
+  assert.notEqual(t1, t2, "a literal % in one subject must not wildcard-match an unrelated subject into the same thread");
+  store.close();
+});
+
 test("ingest is idempotent: re-ingesting the same message does not inflate thread counters", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ing-idem-"));
   const store = Store.open(":memory:");

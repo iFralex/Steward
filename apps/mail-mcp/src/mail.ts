@@ -29,7 +29,7 @@ import { bodySnippet, sha256, WriteOpsStore, type WriteOpKind } from "@llm-wiki/
 /** Result of a send/reply: sent now, or queued for later delivery. */
 type WriteResult = { sent: true; operationId?: string } | { scheduled: true; sendAt: string; operationId: string };
 
-type Runner = (script: string, timeoutMs?: number) => Promise<string>;
+type Runner = (script: string, timeoutMs?: number, opts?: { retryTransient?: boolean }) => Promise<string>;
 
 function toEpochSeconds(s?: string): number | undefined {
   if (!s) return undefined;
@@ -69,7 +69,8 @@ export class Mail {
   constructor(deps: MailDeps) {
     this.store = deps.store;
     this.embedQuery = deps.embedQuery;
-    this.run = deps.runner ?? ((script, timeoutMs) => runOsa(script, { timeoutMs }));
+    this.run = deps.runner ?? ((script, timeoutMs, opts) =>
+      runOsa(script, { timeoutMs, ...(opts?.retryTransient === false ? { isTransient: () => false } : {}) }));
     this.writeOps = deps.writeOps ?? null;
   }
 
@@ -196,7 +197,7 @@ export class Mail {
 
     const operationId = this.writeOps?.start({ kind: "mail.send", input: args as unknown as Record<string, unknown>, expected });
     try {
-      await withWriteLock(() => this.run(sendScript(args), WRITE_TIMEOUT_MS));
+      await withWriteLock(() => this.run(sendScript(args), WRITE_TIMEOUT_MS, { retryTransient: false }));
       if (operationId) this.writeOps?.scriptReturned(operationId);
       return { sent: true, ...(operationId ? { operationId } : {}) };
     } catch (err) {
@@ -221,7 +222,7 @@ export class Mail {
 
     const operationId = this.writeOps?.start({ kind: "mail.reply", input: args as unknown as Record<string, unknown>, expected });
     try {
-      await withWriteLock(() => this.run(replyScript(args), WRITE_TIMEOUT_MS));
+      await withWriteLock(() => this.run(replyScript(args), WRITE_TIMEOUT_MS, { retryTransient: false }));
       if (operationId) this.writeOps?.scriptReturned(operationId);
       return { sent: true, ...(operationId ? { operationId } : {}) };
     } catch (err) {

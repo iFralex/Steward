@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildCreate, buildUpdate, buildDelete, mapCalendarError, createEvent } from "../src/applescript.ts";
+import { buildCreate, buildUpdate, buildDelete, mapCalendarError, createEvent, updateEvent, deleteEvent } from "../src/applescript.ts";
 
 test("buildCreate sets calendar, summary and escapes quotes", () => {
   const s = buildCreate({ calendar: "Casa", summary: 'a"b', start: "2026-06-25T10:00:00.000Z", end: "2026-06-25T11:00:00.000Z" });
@@ -45,6 +45,33 @@ test("createEvent returns the uid printed by the script", async () => {
     async () => "UID-NEW\n",
   );
   assert.equal(uid, "UID-NEW");
+});
+
+test("createEvent does not retry a transient-looking failure (write-ops owns retries)", async () => {
+  let calls = 0;
+  await assert.rejects(() => createEvent(
+    { calendar: "Casa", summary: "x", start: "2026-06-25T10:00:00.000Z", end: "2026-06-25T11:00:00.000Z" },
+    async () => { calls += 1; throw new Error("connection is invalid (-609)"); },
+  ));
+  assert.equal(calls, 1, "createEvent must not retry a transient failure");
+});
+
+test("updateEvent does not retry a transient-looking failure (write-ops owns retries)", async () => {
+  let calls = 0;
+  await assert.rejects(() => updateEvent(
+    { uid: "U1", summary: "y" },
+    async () => { calls += 1; throw new Error("connection is invalid (-609)"); },
+  ));
+  assert.equal(calls, 1, "updateEvent must not retry a transient failure");
+});
+
+test("deleteEvent does not retry a transient-looking failure (write-ops owns retries)", async () => {
+  let calls = 0;
+  await assert.rejects(() => deleteEvent(
+    "UID-9",
+    async () => { calls += 1; throw new Error("connection is invalid (-609)"); },
+  ));
+  assert.equal(calls, 1, "deleteEvent must not retry a transient failure");
 });
 
 test("dateExpr sets day to 1 before month to avoid end-of-month rollover", () => {

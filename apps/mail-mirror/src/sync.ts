@@ -45,8 +45,8 @@ function resolveThreadId(store: Store, m: ParsedMessage & { messageId: string })
     const since = m.date - 14 * 86400;
     const until = m.date + 14 * 86400;
     const cand = db
-      .prepare("SELECT thread_id, from_addr, to_addrs FROM messages WHERE thread_id IS NOT NULL AND date BETWEEN ? AND ? AND subject LIKE ?")
-      .all(since, until, "%" + subj + "%") as { thread_id: number; from_addr: string; to_addrs: string }[];
+      .prepare("SELECT thread_id, from_addr, to_addrs FROM messages WHERE thread_id IS NOT NULL AND date BETWEEN ? AND ? AND subject LIKE ? ESCAPE '\\'")
+      .all(since, until, "%" + subj.replace(/[\\%_]/g, "\\$&") + "%") as { thread_id: number; from_addr: string; to_addrs: string }[];
     const parts = new Set<string>([m.fromAddr, ...m.to]);
     for (const c of cand) {
       const cParts = new Set<string>([c.from_addr, ...JSON.parse(c.to_addrs || "[]")]);

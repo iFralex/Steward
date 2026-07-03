@@ -148,6 +148,34 @@ test("send rejects an invalid `from` address without running anything", async ()
   assert.equal(ran, false);
 });
 
+test("send does not retry a transient-looking AppleScript failure (write-ops owns retries)", async () => {
+  let calls = 0;
+  const mail = new Mail({
+    store: emptyStore(),
+    runner: async (_script, _timeoutMs, opts) => {
+      calls += 1;
+      assert.equal(opts?.retryTransient, false, "send must disable the low-level transient retry");
+      throw new Error("Mail connection was temporarily invalid (-609).");
+    },
+  });
+  await assert.rejects(() => mail.send({ to: ["a@b.co"], subject: "x", body: "y" }));
+  assert.equal(calls, 1, "runner must be invoked exactly once — no low-level retry on a write");
+});
+
+test("reply does not retry a transient-looking AppleScript failure (write-ops owns retries)", async () => {
+  let calls = 0;
+  const mail = new Mail({
+    store: emptyStore(),
+    runner: async (_script, _timeoutMs, opts) => {
+      calls += 1;
+      assert.equal(opts?.retryTransient, false, "reply must disable the low-level transient retry");
+      throw new Error("Mail connection was temporarily invalid (-609).");
+    },
+  });
+  await assert.rejects(() => mail.reply({ messageId: "m@x", body: "ok" }));
+  assert.equal(calls, 1, "runner must be invoked exactly once — no low-level retry on a write");
+});
+
 test("send rejects an invalid recipient without running anything", async () => {
   let ran = false;
   const mail = new Mail({

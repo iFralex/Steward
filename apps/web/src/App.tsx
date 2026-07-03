@@ -17,7 +17,7 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+import { cn, safeHref } from "@/lib/utils";
 import { ToolCard } from "@/components/tool-card";
 import { CardView, type FileApi } from "@/components/cards";
 import { FileChip } from "@/components/file-chip";
@@ -592,7 +592,7 @@ function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) 
           return <pre className="bg-background/70 mb-2 overflow-auto rounded-md p-2 text-xs last:mb-0">{children}</pre>;
         },
         a: ({ children, href }) => (
-          <a className="text-primary underline underline-offset-2" href={href} target="_blank" rel="noreferrer">
+          <a className="text-primary underline underline-offset-2" href={safeHref(href)} target="_blank" rel="noreferrer">
             {children}
           </a>
         ),

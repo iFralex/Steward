@@ -35,3 +35,15 @@ test("runOsa retries once on a transient -609 failure", async () => {
   assert.equal(out, "ok");
   assert.equal(calls, 2);
 });
+
+test("runOsa does not retry a transient -609 failure when isTransient is disabled (write path)", async () => {
+  let calls = 0;
+  await assert.rejects(() => runOsa("script", {
+    isTransient: () => false,
+    exec: async () => {
+      calls += 1;
+      throw new Error("Mail connection was temporarily invalid (-609).");
+    },
+  }));
+  assert.equal(calls, 1);
+});
