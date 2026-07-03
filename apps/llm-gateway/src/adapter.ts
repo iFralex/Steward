@@ -26,7 +26,7 @@ const denyAll: HookCallback = async (input) => {
 
 /**
  * Gateway sub-* model aliases -> real Claude model IDs served on the subscription.
- * litellm exposes `sub-<name>` which forwards `claude-<name>-sub` to this adapter.
+ * The gateway exposes `sub-<name>` which forwards `claude-<name>-sub` to this adapter.
  */
 export const SUB_MODELS: Record<string, string> = {
   "claude-opus-sub": "claude-opus-4-8",
