@@ -19,3 +19,12 @@ test("confirmation matches a body snippet containing underscores", () => {
   } as any;
   assert.ok(findMailConfirmation(store, op), "snippet with _ must match");
 });
+
+test("falls back to from+subject+date when the body snippet is not in the mirror", () => {
+  const store = mailStoreWith("(body stored as html, snippet absent)");
+  const op = {
+    startedAt: Math.floor(Date.now() / 1000) - 10,
+    expected: { bodySnippet: "text the mirror never stored", from: "me@x.com", subject: "Subj" },
+  } as any;
+  assert.ok(findMailConfirmation(store, op), "must fall back to subject+from match");
+});

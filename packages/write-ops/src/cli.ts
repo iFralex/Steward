@@ -197,31 +197,30 @@ function shouldRetry(op: WriteOpRow): boolean {
 
 export function findMailConfirmation(mail: Store, op: WriteOpRow): { message_id: string; date: number; mailbox: string } | null {
   const snippet = typeof op.expected.bodySnippet === "string" ? op.expected.bodySnippet : "";
-  if (!snippet) return null;
   const from = typeof op.expected.from === "string" ? op.expected.from.trim().toLowerCase() : "";
   const subject = typeof op.expected.subject === "string" ? op.expected.subject.trim() : "";
   const startedAt = op.startedAt - 300;
-  const clauses = [
-    "deleted=0",
-    "date>=?",
-    "body_text LIKE ? ESCAPE '\\'",
-  ];
-  const params: unknown[] = [startedAt, `%${snippet.replace(/[\\%_]/g, "\\$&")}%`];
-  if (from) {
-    clauses.push("lower(from_addr)=?");
-    params.push(from);
+
+  const query = (clauses: string[], params: unknown[]) =>
+    mail.raw.prepare(
+      `SELECT message_id, date, mailbox FROM messages WHERE ${clauses.join(" AND ")} ORDER BY date DESC LIMIT 1`,
+    ).get(...params) as { message_id: string; date: number; mailbox: string } | undefined;
+
+  if (snippet) {
+    const clauses = ["deleted=0", "date>=?", "body_text LIKE ? ESCAPE '\\'"];
+    const params: unknown[] = [startedAt, `%${snippet.replace(/[\\%_]/g, "\\$&")}%`];
+    if (from) { clauses.push("lower(from_addr)=?"); params.push(from); }
+    if (subject) { clauses.push("subject=?"); params.push(subject); }
+    const row = query(clauses, params);
+    if (row) return row;
   }
-  if (subject) {
-    clauses.push("subject=?");
-    params.push(subject);
+  // Fallback: the mirror may store a transformed body (HTML→text) — accept a
+  // strict header match instead of retrying (a retry duplicates the send).
+  if (from && subject) {
+    const row = query(["deleted=0", "date>=?", "lower(from_addr)=?", "subject=?"], [startedAt, from, subject]);
+    if (row) return row;
   }
-  const row = mail.raw.prepare(
-    `SELECT message_id, date, mailbox FROM messages
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY date DESC
-     LIMIT 1`,
-  ).get(...params) as { message_id: string; date: number; mailbox: string } | undefined;
-  return row ?? null;
+  return null;
 }
 
 async function retryMailOperation(op: WriteOpRow): Promise<void> {
