@@ -212,6 +212,11 @@ test("assertSafeDestPath rejects persistence and secret directories", () => {
     join(homedir(), ".aws"),
     "/etc/cron.d",
     "/usr/local/bin",
+    "/private/etc/cron.d",
+    "/private/var/at/jobs",
+    "/ETC/cron.d",
+    join(homedir(), ".SSH"),
+    join(homedir(), "LIBRARY", "LaunchAgents"),
   ];
   for (const dir of bad) assert.throws(() => assertSafeDestPath(dir), new RegExp("not allowed"));
   assert.equal(assertSafeDestPath(join(homedir(), "Documents")), join(homedir(), "Documents"));

@@ -34,9 +34,10 @@ export function assertEmails(list: string[], field: string): void {
 
 /** Directories an emailed attachment must never be written into (persistence/secrets/system). */
 const FORBIDDEN_DEST = [
-  /(^|\/)\.ssh(\/|$)/, /(^|\/)\.aws(\/|$)/, /(^|\/)\.gnupg(\/|$)/, /(^|\/)\.config(\/|$)/,
-  /\/Library\/(LaunchAgents|LaunchDaemons|StartupItems|Keychains|Preferences)(\/|$)/,
-  /^\/(etc|usr|bin|sbin|System|var)(\/|$)/,
+  /(^|\/)\.ssh(\/|$)/i, /(^|\/)\.aws(\/|$)/i, /(^|\/)\.gnupg(\/|$)/i, /(^|\/)\.config(\/|$)/i,
+  /\/Library\/(LaunchAgents|LaunchDaemons|StartupItems|Keychains|Preferences)(\/|$)/i,
+  /^\/(etc|usr|bin|sbin|System|var)(\/|$)/i,
+  /^\/private\/(etc|var|tmp)(\/|$)/i,
 ];
 
 /** Validate an optional destination directory for saved attachments. */
