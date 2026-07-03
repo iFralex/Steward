@@ -74,28 +74,40 @@ export async function scanMailForActions(deps: {
 
   for (const candidate of candidates) {
     const msg = candidate.message;
+    // Mark each candidate's messages seen as soon as it's fully processed (not in
+    // a bulk post-loop pass at the very end), so a crash/kill mid-scan keeps
+    // whatever candidates were already handled instead of losing all progress.
     if (NO_REPLY.test(msg.fromAddr) || NO_REPLY.test(msg.fromName)) {
       result.skipped++;
+      if (!manual) deps.actions.markSeen(candidate.batchIds);
       continue;
     }
     if (isLowValueSurvey(msg)) {
       result.skipped++;
+      if (!manual) deps.actions.markSeen(candidate.batchIds);
       continue;
     }
     let plan: Awaited<ReturnType<typeof planMailAction>>;
+    let planFailed = false;
     try {
       plan = await planMailAction(msg, deps.chat, { userAddrs: deps.userAddrs, readTool: deps.readTool });
     } catch (err) {
       recordDeferred(result, err instanceof Error ? err.message : String(err));
       plan = null;
+      planFailed = true;
     }
     if (!plan) {
       result.deferred++;
       recordDeferred(result, "no-action-or-unparseable");
+      // A genuine planner failure (as opposed to a normal "no action needed"
+      // verdict) is left unmarked so it's retried on the next scan instead of
+      // being permanently skipped.
+      if (!planFailed && !manual) deps.actions.markSeen(candidate.batchIds);
       continue;
     }
     if (!plan.needsAction) {
       result.skipped++;
+      if (!manual) deps.actions.markSeen(candidate.batchIds);
       continue;
     }
     const upsert = deps.actions.upsert({
@@ -124,10 +136,8 @@ export async function scanMailForActions(deps: {
     });
     if (upsert.inserted) result.created++;
     else if (upsert.updated) result.updated++;
+    if (!manual) deps.actions.markSeen(candidate.batchIds);
   }
-  // Mark every message that fed a processed candidate as seen, so it isn't
-  // re-evaluated next run (only a new message in the thread will re-trigger it).
-  if (!manual) deps.actions.markSeen(candidates.flatMap((c) => c.batchIds));
   return result;
 }
 

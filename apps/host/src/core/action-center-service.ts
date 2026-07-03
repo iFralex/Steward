@@ -186,7 +186,7 @@ export function getActionItem(id: number): ActionCenterItem | null {
 function loadAction(id: number): ActionCenterItem | null {
   const store = ActionStore.open(actionDbPath());
   try {
-    return ((store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[]).find((a) => a.id === id) ?? null);
+    return (store.get(id) as ActionCenterItem | null) ?? null;
   } finally {
     store.close();
   }

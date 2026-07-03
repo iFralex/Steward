@@ -40,6 +40,24 @@ test("upsert inserts, updates active items, and preserves done items", () => {
   s.close();
 });
 
+test("get(id) returns one action regardless of list limits", () => {
+  const s = ActionStore.open(":memory:");
+  const { id } = s.upsert({
+    sourceKey: "k",
+    sourceKind: "mail",
+    kind: "reply-needed",
+    priority: "normal",
+    title: "t",
+    summary: "s",
+    dueAt: null,
+    payload: {},
+  });
+  const row = s.get(id);
+  assert.equal(row?.title, "t");
+  assert.equal(s.get(999999), null);
+  s.close();
+});
+
 test("mail thread source key migrates old message-keyed active rows", () => {
   const s = ActionStore.open(":memory:");
   s.upsert({

@@ -122,6 +122,11 @@ export class ActionStore {
     return info.changes > 0;
   }
 
+  get(id: number): ActionItem | null {
+    const row = this.raw.prepare("SELECT * FROM actions WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    return row ? rowToAction(row) : null;
+  }
+
   list(opts: { includeDone?: boolean; limit?: number } = {}): ActionItem[] {
     const includeDone = opts.includeDone ?? false;
     const limit = opts.limit ?? 50;

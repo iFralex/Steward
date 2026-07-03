@@ -342,6 +342,56 @@ test("does not re-evaluate already-seen mail on the next scan", async () => {
   actions.close();
 });
 
+test("markSeen is incremental: a candidate processed before a mid-scan failure stays marked seen", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  const now = Math.floor(Date.now() / 1000);
+  // Two independent threads/candidates. Candidates are processed in descending
+  // trigger-date order, so "keep-1" (newer) is handled before "boom-1" (older).
+  mail.upsertMessage(row({ messageId: "keep-1", subject: "Keep This", date: now, fromAddr: "a@example.com" }));
+  mail.setThreadId("keep-1", 501);
+  mail.upsertMessage(row({ messageId: "boom-1", subject: "Boom This", date: now - 100, fromAddr: "b@example.com" }));
+  mail.setThreadId("boom-1", 502);
+
+  const chat = async (system: string, prompt: string) => {
+    if (system.includes("Analyze")) {
+      if (prompt.includes("Boom This")) throw new Error("planner exploded");
+      return JSON.stringify({
+        needsAction: true,
+        kind: "reply-needed",
+        priority: "normal",
+        summary: "Keep this thread.",
+        dueDateTime: null,
+        scheduling: null,
+        replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: "Ok." },
+        reasoning: "test",
+      });
+    }
+    return JSON.stringify({
+      title: "Reply",
+      summary: "Reply.",
+      proposedActions: [{
+        id: "reply",
+        label: "Reply",
+        summary: "Send reply.",
+        confidence: "high",
+        steps: [{ id: "send", label: "Send", tool: "mcp__mail__reply", input: { messageId: "keep-1", body: "Ok." }, writes: true }],
+      }],
+    });
+  };
+
+  const res = await scanMailForActions({ mail, actions, chat, now });
+  assert.equal(res.considered, 2);
+  assert.equal(res.created, 1);
+  assert.equal(res.deferred, 1);
+
+  const seen = actions.loadSeen();
+  assert.equal(seen.has("keep-1"), true, "candidate processed before the failure must stay marked seen");
+  assert.equal(seen.has("boom-1"), false, "candidate whose planning threw must not be marked seen (so it's retried)");
+  mail.close();
+  actions.close();
+});
+
 test("seedIfEmpty marks the current window seen without evaluating; new mail is then picked up", async () => {
   const mail = Store.open(":memory:");
   const actions = ActionStore.open(":memory:");
