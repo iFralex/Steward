@@ -128,18 +128,32 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Recor
 }
 
 /**
- * Per-tier USD rates for the Usage page, fetched once from the gateway's
- * `/rates` (single source of truth) and cached for the process lifetime.
- * Falls back to `config.gateway.cost` (Pi's own registration cost) if the
- * gateway is unreachable or slow, so `/usage` never blocks on it.
+ * The gateway's `/rates` is a per-tier map (`{ "tier-5": { input, output, … } }`);
+ * the Usage page wants the FLAT rate for THIS host's tier. Pick it out, falling
+ * back to `fallback` (the flat `config.gateway.cost`) if the tier is absent.
+ */
+export function pickTierRates(ratesMap: unknown, tier: string, fallback: unknown): unknown {
+  const flat = (ratesMap as Record<string, unknown> | null)?.[tier];
+  return flat && typeof flat === "object" ? flat : fallback;
+}
+
+/**
+ * Flat USD rates for the Usage page, fetched once from the gateway's `/rates`
+ * (single source of truth) and cached for the process lifetime. Falls back to
+ * `config.gateway.cost` (Pi's own registration cost) if the gateway is
+ * unreachable/slow or doesn't know this tier, so `/usage` never blocks on it.
  */
 let cachedRates: unknown | undefined;
-async function gatewayRates(baseUrl: string, fallback: unknown): Promise<unknown> {
+async function gatewayRates(baseUrl: string, tier: string, fallback: unknown): Promise<unknown> {
   if (cachedRates !== undefined) return cachedRates;
   try {
     const origin = baseUrl.replace(/\/v1\/?$/, "");
     const res = await fetch(`${origin}/rates`, { signal: AbortSignal.timeout(1000) });
-    if (res.ok) return (cachedRates = await res.json());
+    if (res.ok) {
+      const flat = pickTierRates(await res.json(), tier, fallback);
+      // only cache a real hit; on a miss keep trying next request
+      if (flat !== fallback) return (cachedRates = flat);
+    }
   } catch {
     // gateway down or timed out — fall back to the static config cost.
   }
@@ -198,7 +212,7 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
     return;
   }
   if (url.startsWith("/usage") && req.method === "GET") {
-    void gatewayRates(config.gateway.baseUrl, config.gateway.cost).then((rates) => {
+    void gatewayRates(config.gateway.baseUrl, config.gateway.tier, config.gateway.cost).then((rates) => {
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ ...(usageStore().summary() as object), rates }));
     });
