@@ -32,10 +32,20 @@ export function assertEmails(list: string[], field: string): void {
   }
 }
 
+/** Directories an emailed attachment must never be written into (persistence/secrets/system). */
+const FORBIDDEN_DEST = [
+  /(^|\/)\.ssh(\/|$)/, /(^|\/)\.aws(\/|$)/, /(^|\/)\.gnupg(\/|$)/, /(^|\/)\.config(\/|$)/,
+  /\/Library\/(LaunchAgents|LaunchDaemons|StartupItems|Keychains|Preferences)(\/|$)/,
+  /^\/(etc|usr|bin|sbin|System|var)(\/|$)/,
+];
+
 /** Validate an optional destination directory for saved attachments. */
 export function assertSafeDestPath(destDir: string): string {
   if (!isAbsolute(destDir)) throw new Error(`destDir must be an absolute path: ${destDir}`);
   const norm = normalize(destDir);
   if (norm.split("/").includes("..")) throw new Error(`destDir must not contain "..": ${destDir}`);
+  if (FORBIDDEN_DEST.some((re) => re.test(norm))) {
+    throw new Error(`destDir not allowed (system/persistence/secret location): ${destDir}`);
+  }
   return norm;
 }

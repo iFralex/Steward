@@ -3,6 +3,9 @@ import { test } from "node:test";
 import { Store, type MessageRow } from "../../mail-mirror/src/store.ts";
 import { Mail } from "../src/mail.ts";
 import { WriteOpsStore } from "@llm-wiki/write-ops";
+import { assertSafeDestPath } from "../src/validate.ts";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** Minimal in-memory store for tests that do not exercise DB behaviour. */
 function emptyStore(): Store {
@@ -199,4 +202,17 @@ test("getThread returns the conversation", async () => {
   const out = await mail.getThread({ messageId: "a" });
   assert.equal(out.length, 2);
   s.close();
+});
+
+test("assertSafeDestPath rejects persistence and secret directories", () => {
+  const bad = [
+    join(homedir(), "Library", "LaunchAgents"),
+    "/Library/LaunchDaemons",
+    join(homedir(), ".ssh"),
+    join(homedir(), ".aws"),
+    "/etc/cron.d",
+    "/usr/local/bin",
+  ];
+  for (const dir of bad) assert.throws(() => assertSafeDestPath(dir), new RegExp("not allowed"));
+  assert.equal(assertSafeDestPath(join(homedir(), "Documents")), join(homedir(), "Documents"));
 });
