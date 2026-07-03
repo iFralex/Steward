@@ -252,7 +252,7 @@ export class ChatManager {
         if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
         this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
       } else {
-        this.emit({ type: "error", sessionId: this.session.id, message: err instanceof Error ? err.message : String(err) });
+        this.emit({ type: "error", sessionId: this.session.id, chatId, message: err instanceof Error ? err.message : String(err) });
       }
     } finally {
       try {

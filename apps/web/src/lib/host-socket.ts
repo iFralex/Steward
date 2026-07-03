@@ -161,10 +161,10 @@ export function useHostSocket(url: string): HostSocket {
           if (msg.chatId) {
             if (msg.state === "running") runningChatsRef.current.add(msg.chatId);
             else runningChatsRef.current.delete(msg.chatId);
-          } else if (msg.state === "idle") {
-            runningChatsRef.current.clear();
-          } else {
+          } else if (msg.state === "running") {
             runningChatsRef.current.add(GLOBAL_STATUS_KEY);
+          } else {
+            runningChatsRef.current.delete(GLOBAL_STATUS_KEY);
           }
           setStatusVersion((v) => v + 1);
           break;
@@ -215,19 +215,26 @@ export function useHostSocket(url: string): HostSocket {
           setChats(msg.chats);
           setActiveChatId(msg.activeChatId);
           break;
-        case "chat_history":
+        case "chat_history": {
           activeChatRef.current = msg.chatId;
           setActiveChatId(msg.chatId);
-          messagesByChat.current.set(msg.chatId, msg.messages.map(persistedToChat));
-          setMessages(messagesByChat.current.get(msg.chatId)!);
-          break; // note: approvals/questions are NOT cleared anymore — they're per-chat and filtered on read
+          const persisted = msg.messages.map(persistedToChat);
+          // Preserve the live tail of an in-flight turn: the open (streaming) assistant
+          // bubble and still-running tool bubbles are persisted only when they finish,
+          // so a plain reseed would drop them until the turn ends. Completed tools ARE
+          // already in `persisted` (the host persists them at tool_execution_end).
+          const prev = messagesByChat.current.get(msg.chatId) ?? [];
+          const liveTail = prev.filter((m) => m.open || m.toolStatus === "running");
+          const merged = liveTail.length ? [...persisted, ...liveTail] : persisted;
+          messagesByChat.current.set(msg.chatId, merged);
+          setMessages(merged);
+          break; // approvals/questions are NOT cleared — they're per-chat and filtered on read
+        }
         case "action_center_state":
           setActionCenter(msg.state);
           break;
         case "error":
-          // No chatId on this event; route it into whatever chat is currently
-          // active so it doesn't get silently dropped by a later map-driven update.
-          updateChat(null, (prev) => [
+          updateChat(msg.chatId ?? null, (prev) => [
             ...prev,
             { id: crypto.randomUUID(), role: "assistant", text: `⚠️ ${msg.message}` },
           ]);

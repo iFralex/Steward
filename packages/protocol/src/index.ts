@@ -174,7 +174,7 @@ export type ServerEvent =
   | { type: "chat_list"; chats: ChatSummary[]; activeChatId: string | null }
   | { type: "chat_history"; chatId: string; messages: PersistedMessage[] }
   | { type: "status"; sessionId: string; chatId?: string; state: SessionState }
-  | { type: "error"; sessionId?: string; message: string };
+  | { type: "error"; sessionId?: string; chatId?: string; message: string };
 
 export type ApprovalDecision = "allow" | "deny" | "revise";
 export type SessionState = "idle" | "running";
