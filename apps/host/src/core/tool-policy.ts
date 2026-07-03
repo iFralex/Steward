@@ -1,10 +1,9 @@
 /**
  * Tool gating policy — the security core. The agent can only *request* a
- * tool; whether it *executes* is decided here (consulted by the
- * permission gate, which bridges the Agent SDK's permission callback to
- * the approval protocol). This is deterministic and independent of the
- * model's output, so a hallucinated sensitive call cannot fire without
- * an explicit user approval.
+ * tool; whether it *executes* is decided here (consulted by the permission
+ * gate, which wraps each Pi tool's execute). This is deterministic and
+ * independent of the model's output, so a hallucinated sensitive call cannot
+ * fire without an explicit user approval.
  *
  * Design: **default-deny** — anything not explicitly allowed is gated
  * (requires confirmation). Read-only / safe tools are allow-listed.
@@ -20,10 +19,11 @@ export interface ToolPolicy {
   /** Exact tool-name → decision overrides. */
   rules: Record<string, ToolDecision>;
   /**
-   * Tool-name prefixes that are hard-denied (no user prompt). Used to block
-   * account-level connectors the Agent SDK exposes but the host doesn't
-   * configure (e.g. the Claude.ai Gmail/Google connectors) — we want email to
-   * go through Apple Mail (mcp__mail__*) only. Explicit `rules` win over this.
+   * Tool-name prefixes that are hard-denied (no user prompt). Defense in
+   * depth against account-level connectors that aren't part of the host's
+   * own MCP wiring (e.g. the Claude.ai Gmail/Google connectors) — we want
+   * email to go through Apple Mail (mcp__mail__*) only. Explicit `rules`
+   * win over this.
    */
   denyPrefixes?: string[];
 }
@@ -41,28 +41,22 @@ export function decideTool(policy: ToolPolicy, toolName: string): ToolDecision {
 }
 
 /**
- * Phase 1 default policy. Default-deny; allow-list the known read-only
- * tools (Agent SDK built-ins + LLM Wiki MCP read tools). MCP tools are
- * named `mcp__<server>__<tool>` by the Agent SDK; the LLM Wiki MCP
- * server is registered under the name `llm-wiki` (see agent-runner).
+ * Default policy. Default-deny; allow-list the known read-only tools.
+ * The host runs Pi (`@earendil-works/pi-coding-agent`) with no builtin
+ * tools (`noTools: "builtin"`) — every tool is a custom tool bridged from
+ * an MCP server, named `mcp__<server>__<tool>`. The LLM Wiki MCP server
+ * is registered under the name `llm-wiki` (see agent-runner).
  *
- * Side-effecting tools (Bash, Write, Edit, llm_wiki_add_source, the
- * demo send_email tool, …) fall through to the `gate` default.
+ * Side-effecting tools (llm_wiki_add_source, send_email, …) fall through
+ * to the `gate` default.
  */
 export const defaultPolicy: ToolPolicy = {
   default: "gate",
-  // Block account-level connectors the SDK exposes from the Claude.ai account
-  // (Gmail, Google Calendar/Drive, …). Email goes through Apple Mail only.
+  // Block account-level connectors that aren't part of the host's own MCP
+  // wiring (e.g. Claude.ai Gmail/Google connectors). Email goes through
+  // Apple Mail only.
   denyPrefixes: ["mcp__claude_ai_", "mcp__plugin_"],
   rules: {
-    // Agent SDK built-ins — read-only.
-    WebSearch: "allow",
-    WebFetch: "allow",
-    Read: "allow",
-    Glob: "allow",
-    Grep: "allow",
-    // Internal tool discovery (no side effects).
-    ToolSearch: "allow",
     // LLM Wiki MCP — read-only (the wiki as memory).
     "mcp__llm-wiki__llm_wiki_status": "allow",
     "mcp__llm-wiki__llm_wiki_projects": "allow",

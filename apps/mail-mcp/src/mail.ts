@@ -182,7 +182,7 @@ export class Mail {
 
   async send(args: SendArgs): Promise<WriteResult> {
     if (args.from && !isEmail(args.from)) {
-      throw new Error(`from: must be one of your account email addresses, got "${args.from}"`);
+      throw new Error(`from: not a valid email address: "${args.from}"`);
     }
     assertEmails(args.to, "to");
     if (args.cc?.length) assertEmails(args.cc, "cc");
@@ -207,7 +207,7 @@ export class Mail {
 
   async reply(args: ReplyArgs): Promise<WriteResult> {
     if (args.from && !isEmail(args.from)) {
-      throw new Error(`from: must be one of your account email addresses, got "${args.from}"`);
+      throw new Error(`from: not a valid email address: "${args.from}"`);
     }
     if (!args.body?.trim()) {
       throw new Error("reply body must not be empty");

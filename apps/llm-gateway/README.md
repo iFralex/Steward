@@ -30,8 +30,9 @@ Optional env: `GATEWAY_PORT`, `GATEWAY_REQUEST_TIMEOUT_MS`, `DEEPSEEK_BASE_URL`.
 
 ## Centralized wiring
 
-Every service except the host points at this gateway. The host stays on the
-Claude subscription via the Agent SDK and is intentionally NOT routed here.
+Every service points at this gateway — including the host, which runs Pi
+(`@earendil-works/pi-coding-agent`) against `tier-5` here. The old
+Agent-SDK/Claude-subscription path is retired (see below).
 
 **Default-on (no env needed).** mail-mirror and mail-mcp now default their
 embedding + role-classify endpoints to the gateway; mail-promoter already
@@ -60,7 +61,10 @@ OpenAI-compatible provider with base URL `http://127.0.0.1:4000/v1` and select
 The gateway keeps the tier aliases (`tier-*`, `local-embed`) and performs
 sequential fallback across tiers (escalate, then sweep the lower paid rungs) for
 both streaming and non-streaming calls, with a per-request timeout
-(`GATEWAY_REQUEST_TIMEOUT_MS`).
+(`GATEWAY_REQUEST_TIMEOUT_MS`). For streaming, this fallback happens before the
+first byte is written to the client (native stream, then a non-streaming retry
+re-emitted as synthetic SSE, per target); once bytes have started flowing for a
+given attempt, that stream cannot be retried mid-flight.
 
 ## Claude-subscription tier (retired, optional)
 

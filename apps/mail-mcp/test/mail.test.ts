@@ -107,7 +107,7 @@ test("reply rejects an invalid `from` address without running anything", async (
   });
   await assert.rejects(
     () => mail.reply({ messageId: "m@x", from: "Polimi", body: "ok" }),
-    /account email addresses/,
+    /not a valid email address/,
   );
   assert.equal(ran, false);
 });
@@ -143,7 +143,7 @@ test("send rejects an invalid `from` address without running anything", async ()
   });
   await assert.rejects(
     () => mail.send({ from: "Polimi", to: ["a@b.co"], subject: "x", body: "y" }),
-    /account email addresses/,
+    /not a valid email address/,
   );
   assert.equal(ran, false);
 });

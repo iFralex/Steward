@@ -41,7 +41,7 @@ export function gateToolDefinition(
     execute: async (id: string, params: unknown, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => {
       const decision = decideTool(policy, def.name);
       if (decision === "deny") {
-        return blocked(`Tool ${def.name} is disabled. Use Apple Mail (mail tools) for email.`);
+        return blocked(`Tool ${def.name} is disabled by policy.`);
       }
       if (decision === "allow") {
         return def.execute(id, params as never, signal as never, onUpdate as never, ctx as never);
