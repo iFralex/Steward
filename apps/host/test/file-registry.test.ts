@@ -59,12 +59,14 @@ test("filesFromOutput refuses sensitive paths even when a tool output mentions t
   assert.equal(refs.length, 0);
 });
 
-test("registerFile refuses sensitive paths, saveUpload still works for scary names", () => {
+test("registerFile refuses sensitive paths, saveUpload still works for scary names", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "reg-"));
   const env = join(dir, ".env");
   writeFileSync(env, "SECRET=1");
   assert.equal(registerFile(env), null);
   // Upload dir is trusted: a user uploading "credentials.pdf" must still work.
+  const prevUpload = process.env.UPLOAD_DIR;
+  t.after(() => { if (prevUpload === undefined) delete process.env.UPLOAD_DIR; else process.env.UPLOAD_DIR = prevUpload; });
   process.env.UPLOAD_DIR = mkdtempSync(join(tmpdir(), "up-"));
   const ref = saveUpload("credentials.pdf", Buffer.from("x"));
   assert.ok(ref);
