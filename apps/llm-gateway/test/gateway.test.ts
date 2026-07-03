@@ -95,3 +95,17 @@ test("non-streaming routes direct to the provider, forwards tools, and falls bac
     await new Promise<void>((resolve) => provider.close(() => resolve()));
   }
 });
+
+test("shouldFallback: retry 429/5xx, surface 4xx immediately", async () => {
+  // Dynamic import (not a top-level static import): a static import would evaluate
+  // gateway.ts's module-level code eagerly, before the test above sets
+  // DEEPSEEK_API_KEY, and since ESM modules are singletons the later dynamic
+  // import in that test would just return the already-poisoned cached module.
+  const { shouldFallback } = await import("../src/gateway.ts");
+  assert.equal(shouldFallback(429), true);
+  assert.equal(shouldFallback(500), true);
+  assert.equal(shouldFallback(503), true);
+  assert.equal(shouldFallback(400), false);
+  assert.equal(shouldFallback(401), false);
+  assert.equal(shouldFallback(404), false);
+});

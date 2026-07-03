@@ -64,6 +64,11 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** Only availability failures are worth trying another tier; a 4xx is deterministic. */
+export function shouldFallback(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
 export function attemptsFor(model: string): GatewayModel[] {
   const names = fallbackOrder[model] ?? [model];
   return names.map((name) => models[name]).filter(Boolean);
@@ -136,6 +141,11 @@ async function proxyJson(path: string, body: Json, res: ServerResponse): Promise
         res.end(text);
         return;
       }
+      if (!shouldFallback(upstream.status)) {
+        res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+        res.end(text);
+        return;
+      }
       lastStatus = upstream.status;
       lastText = text;
     } catch (err) {
@@ -173,8 +183,14 @@ async function proxyStream(path: string, body: Json, res: ServerResponse): Promi
         await pipeStreamingResponse(upstream, res);
         return;
       }
+      const text = await upstream.text();
+      if (!shouldFallback(upstream.status)) {
+        res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+        res.end(text);
+        return;
+      }
       lastStatus = upstream.status;
-      lastText = await upstream.text();
+      lastText = text;
     } catch (err) {
       lastStatus = 502;
       lastText = err instanceof Error ? err.message : String(err);
@@ -185,6 +201,11 @@ async function proxyStream(path: string, body: Json, res: ServerResponse): Promi
       const upstream = await callProvider(base, path, { ...body, stream: false }, target);
       const text = await upstream.text();
       if (!upstream.ok) {
+        if (!shouldFallback(upstream.status)) {
+          res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+          res.end(text);
+          return;
+        }
         lastStatus = upstream.status;
         lastText = text;
         continue;
