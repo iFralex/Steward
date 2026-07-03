@@ -20,13 +20,18 @@ import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
 import type { HostConfig } from "./config.ts";
 
-/** Origins allowed to talk to the host (the served UI itself + vite dev). */
+/** Origins allowed to talk to the host: the served UI itself, plus the vite dev
+ *  server — but the vite origins only outside production (the packaged app sets
+ *  NODE_ENV=production), so a stray process on :5173 can't drive a shipped host. */
 export function isAllowedOrigin(origin: string | undefined, port: number): boolean {
   if (origin === undefined) return true; // non-browser clients send no Origin
   const extra = (process.env.HOST_ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const viteDev = process.env.NODE_ENV === "production"
+    ? []
+    : ["http://127.0.0.1:5173", "http://localhost:5173"];
   const allowed = new Set([
     `http://127.0.0.1:${port}`, `http://localhost:${port}`,
-    "http://127.0.0.1:5173", "http://localhost:5173",
+    ...viteDev,
     ...extra,
   ]);
   return allowed.has(origin);
