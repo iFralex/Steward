@@ -9,8 +9,6 @@ import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { ChannelFile } from "@llm-wiki/protocol";
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR ?? join(homedir(), "Library", "Application Support", "llmwiki-uploads");
-
 /** Paths never exposed for serving/opening, even if a card references them. */
 const SENSITIVE = [
   /(^|\/)\.ssh(\/|$)/, /(^|\/)\.aws(\/|$)/, /(^|\/)\.gnupg(\/|$)/,
@@ -35,9 +33,15 @@ const mimeFor = (path: string): string => MIME[extname(path).toLowerCase()] ?? "
 const byPath = new Map<string, { ref: ChannelFile; path: string }>();
 const byToken = new Map<string, { ref: ChannelFile; path: string }>();
 
-/** Register an on-disk file for serving. Returns its ref, or null if it isn't a readable file. */
-export function registerFile(path: string): ChannelFile | null {
+/**
+ * Register an on-disk file for serving. Returns its ref, or null if it isn't a
+ * readable file. Refuses sensitive paths (SSH keys, .env, keychains, …) unless
+ * `trusted` is set — only `saveUpload` may pass that, since it controls the
+ * upload directory a file is written into.
+ */
+export function registerFile(path: string, opts: { trusted?: boolean } = {}): ChannelFile | null {
   try {
+    if (!opts.trusted && isSensitivePath(path)) return null;
     if (!existsSync(path)) return null;
     const st = statSync(path);
     if (!st.isFile()) return null;
@@ -66,7 +70,7 @@ export function resolveToken(token: string): { ref: ChannelFile; path: string } 
  */
 export function registerUserPath(path: string): ChannelFile | null {
   const abs = path.startsWith("~/") || path === "~" ? path.replace(/^~/, homedir()) : path;
-  if (!abs.startsWith("/") || isSensitivePath(abs)) return null;
+  if (!abs.startsWith("/")) return null;
   return registerFile(abs);
 }
 
@@ -77,12 +81,13 @@ export function registerUserPath(path: string): ChannelFile | null {
  */
 export function saveUpload(name: string, bytes: Buffer): ChannelFile | null {
   try {
+    const uploadRoot = process.env.UPLOAD_DIR ?? join(homedir(), "Library", "Application Support", "llmwiki-uploads");
     const safe = basename(name || "file").replace(/[/\\]/g, "_").trim() || "file";
-    const dir = join(UPLOAD_DIR, randomUUID());
+    const dir = join(uploadRoot, randomUUID());
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = join(dir, safe);
     writeFileSync(path, bytes);
-    return registerFile(path);
+    return registerFile(path, { trusted: true });
   } catch {
     return null;
   }
