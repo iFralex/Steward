@@ -11,6 +11,10 @@
     "build-app": "node --import tsx build-app.mts",
     "add-login-item": "node --import tsx add-login-item.mts"
   },
+  "dependencies": {
+    "@llm-wiki/write-ops": "*",
+    "@llm-wiki/applescript": "*"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "tsx": "^4.19.0",

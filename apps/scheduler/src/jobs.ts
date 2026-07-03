@@ -23,7 +23,7 @@ const runCli = (entry: string, args: string[], timeoutMs: number) => () =>
 const MAIL_MIRROR = cli("MAIL_MIRROR_CLI", "../../mail-mirror/src/cli.ts");
 const MAIL_PROMOTER = cli("MAIL_PROMOTER_CLI", "../../mail-promoter/src/cli.ts");
 const ACTION_CENTER = cli("ACTION_CENTER_CLI", "../../action-center/src/cli.ts");
-const WRITE_OPS = cli("WRITE_OPS_CLI", "../../../packages/write-ops/src/cli.ts");
+const WRITE_OPS = cli("WRITE_OPS_CLI", "./write-ops-cli.ts");
 const CALENDAR_MCP = cli("CALENDAR_MCP_CLI", "../../calendar-mcp/src/cli.ts");
 
 export const jobs: Job[] = [

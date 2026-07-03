@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { findMailConfirmation } from "../src/cli.ts";
+import { findMailConfirmation } from "../src/write-ops-cli.ts";
 
 function mailStoreWith(body: string) {
   const db = new Database(":memory:");

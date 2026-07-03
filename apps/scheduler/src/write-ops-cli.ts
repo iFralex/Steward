@@ -2,14 +2,14 @@
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Store } from "../../../apps/mail-mirror/src/store.ts";
-import { dbPath as mailDbPath } from "../../../apps/mail-mirror/src/paths.ts";
-import { sendScript, replyScript } from "../../../apps/mail-mcp/src/applescript.ts";
-import { runOsa } from "../../../apps/mail-mcp/src/osascript.ts";
-import type { ReplyArgs, SendArgs } from "../../../apps/mail-mcp/src/types.ts";
-import { IndexDb } from "../../../apps/calendar-mcp/src/index-db.ts";
-import { indexDbPath as calendarIndexDbPath } from "../../../apps/calendar-mcp/src/paths.ts";
-import { WriteOpsStore, type WriteOpRow } from "./index.ts";
+import { Store } from "../../mail-mirror/src/store.ts";
+import { dbPath as mailDbPath } from "../../mail-mirror/src/paths.ts";
+import { sendScript, replyScript } from "../../mail-mcp/src/applescript.ts";
+import { runOsa } from "../../mail-mcp/src/osascript.ts";
+import type { ReplyArgs, SendArgs } from "../../mail-mcp/src/types.ts";
+import { IndexDb } from "../../calendar-mcp/src/index-db.ts";
+import { indexDbPath as calendarIndexDbPath } from "../../calendar-mcp/src/paths.ts";
+import { WriteOpsStore, type WriteOpRow } from "@llm-wiki/write-ops";
 
 const execFileAsync = promisify(execFile);
 

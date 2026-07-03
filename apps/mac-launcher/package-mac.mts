@@ -33,7 +33,7 @@ const entries: Record<string, string> = {
   "cli/mail-mirror.js": "apps/mail-mirror/src/cli.ts",
   "cli/mail-promoter.js": "apps/mail-promoter/src/cli.ts",
   "cli/action-center.js": "apps/action-center/src/cli.ts",
-  "cli/write-ops.js": "packages/write-ops/src/cli.ts",
+  "cli/write-ops.js": "apps/scheduler/src/write-ops-cli.ts",
   "cli/calendar.js": "apps/calendar-mcp/src/cli.ts",
   "cli/contacts.js": "apps/contacts-mcp/src/cli.ts",
 };

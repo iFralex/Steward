@@ -11,6 +11,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.2",
     "@earendil-works/pi-coding-agent": "^0.80.2",
+    "@llm-wiki/action-center": "*",
     "@llm-wiki/mcp-bridge": "*",
     "@llm-wiki/protocol": "*",
     "@llm-wiki/sensitive-path": "*",
