@@ -41,6 +41,17 @@ export function extractToolOutput(result: unknown): unknown {
   return text;
 }
 
+/** Serialize turns per chat: a second user message waits for the first to finish. */
+export class KeyedQueue {
+  private tails = new Map<string, Promise<void>>();
+  run<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const tail = this.tails.get(key) ?? Promise.resolve();
+    const next = tail.then(fn, fn);
+    this.tails.set(key, next.then(() => undefined, () => undefined));
+    return next;
+  }
+}
+
 export interface PiRuntime {
   session: AgentSession;
   bridge: McpBridge;
@@ -107,6 +118,7 @@ interface ChatRuntime {
 export class ChatManager {
   private bridge?: BridgeRuntime;
   private readonly chats = new Map<string, ChatRuntime>();
+  private readonly turnQueue = new KeyedQueue();
 
   constructor(
     private readonly config: HostConfig,
@@ -223,6 +235,10 @@ export class ChatManager {
 
   /** Run one user turn against a chat, persisting the transcript + usage. */
   async runTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
+    return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, attachments));
+  }
+
+  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
     const store = chatStore();
     const attached = (attachments ?? []).filter((a) => a.path);
     store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });

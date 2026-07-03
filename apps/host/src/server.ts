@@ -239,6 +239,8 @@ export function startServer(config: HostConfig): WebSocketServer {
 
     // Per-action temporary "scratch" chats (open-in-chat / execute go here).
     const actionChats = new Map<number, string>();
+    // Single-flight guard: a double-click must not run an action's steps (e.g. send_email) twice.
+    const executingActions = new Set<number>();
     const ensureActionChat = (action: ActionCenterItem): string => {
       const existing = actionChats.get(action.id);
       if (existing && store.exists(existing)) return existing;
@@ -349,6 +351,11 @@ export function startServer(config: HostConfig): WebSocketServer {
           break;
         }
         case "action_center_execute":
+          if (executingActions.has(msg.id)) {
+            emit({ type: "error", sessionId: session.id, message: `Action ${msg.id} is already executing` });
+            break;
+          }
+          executingActions.add(msg.id);
           void (async () => {
             const action = getActionItem(msg.id);
             const chatId = action ? ensureActionChat(action) : session.activeChatId ?? undefined;
@@ -371,6 +378,7 @@ export function startServer(config: HostConfig): WebSocketServer {
                 emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
               }
             } finally {
+              executingActions.delete(msg.id);
               emit({ type: "status", sessionId: session.id, ...(chatId ? { chatId } : {}), state: "idle" });
               sendChatList();
             }
