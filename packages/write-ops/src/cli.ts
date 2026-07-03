@@ -195,7 +195,7 @@ function shouldRetry(op: WriteOpRow): boolean {
   return op.attempts < MAX_ATTEMPTS;
 }
 
-function findMailConfirmation(mail: Store, op: WriteOpRow): { message_id: string; date: number; mailbox: string } | null {
+export function findMailConfirmation(mail: Store, op: WriteOpRow): { message_id: string; date: number; mailbox: string } | null {
   const snippet = typeof op.expected.bodySnippet === "string" ? op.expected.bodySnippet : "";
   if (!snippet) return null;
   const from = typeof op.expected.from === "string" ? op.expected.from.trim().toLowerCase() : "";
@@ -204,9 +204,9 @@ function findMailConfirmation(mail: Store, op: WriteOpRow): { message_id: string
   const clauses = [
     "deleted=0",
     "date>=?",
-    "body_text LIKE ?",
+    "body_text LIKE ? ESCAPE '\\'",
   ];
-  const params: unknown[] = [startedAt, `%${snippet.replace(/[%_]/g, "\\$&")}%`];
+  const params: unknown[] = [startedAt, `%${snippet.replace(/[\\%_]/g, "\\$&")}%`];
   if (from) {
     clauses.push("lower(from_addr)=?");
     params.push(from);
