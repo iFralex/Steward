@@ -1,9 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { buildPiRuntime, KeyedQueue } from "../src/core/agent-runner.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// chatStore() is a lazily-initialized singleton keyed off CHATS_DIR; point it at a
+// throwaway dir before anything in this test file (or its imports) can call it.
+process.env.CHATS_DIR = mkdtempSync(join(tmpdir(), "agent-runner-chats-"));
+
+import { buildPiRuntime, ChatManager, KeyedQueue } from "../src/core/agent-runner.ts";
 import { Session } from "../src/core/session.ts";
 import { defaultPolicy } from "../src/core/tool-policy.ts";
+import { chatStore } from "../src/core/chat-store.ts";
 
 const echo = fileURLToPath(new URL("./fixtures/echo-mcp-server.mts", import.meta.url));
 
@@ -33,4 +42,23 @@ test("buildPiRuntime registers gate-wrapped bridged tools and resolves the model
   } finally {
     await runtime.close();
   }
+});
+
+test("doRunTurn does not resurrect a deleted/nonexistent chat", async () => {
+  const session = new Session(() => {}, 1000);
+  // Config is never touched: the missing-chat guard returns before ensureBridge
+  // (and thus before the gateway/MCP servers it names) is ever invoked.
+  const cm = new ChatManager(
+    {
+      port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
+      gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      mcpServers: {},
+    } as any,
+    session,
+    () => {},
+  );
+  const missingChatId = "does-not-exist-chat-id";
+  await cm.runTurn(missingChatId, "hello");
+  assert.equal(chatStore().exists(missingChatId), false);
+  assert.deepEqual(chatStore().getMessages(missingChatId), []);
 });

@@ -155,6 +155,17 @@ export function useHostSocket(url: string): HostSocket {
       ws.onopen = () => {
         retryMs = 500;
         setConnected(true);
+        // A reconnect means the server tore down any in-flight turn; clear stale
+        // "running" flags and half-streamed bubbles so they don't hang forever.
+        runningChatsRef.current.clear();
+        for (const [k, msgs] of messagesByChat.current) {
+          messagesByChat.current.set(
+            k,
+            msgs.filter((m) => m.toolStatus !== "running").map((m) => (m.open ? { ...m, open: false } : m)),
+          );
+        }
+        setStatusVersion((v) => v + 1);
+        if (activeChatRef.current) setMessages(messagesByChat.current.get(activeChatRef.current) ?? []);
       };
       ws.onclose = () => {
         setConnected(false);

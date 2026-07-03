@@ -240,6 +240,9 @@ export class ChatManager {
 
   private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
     const store = chatStore();
+    // A turn queued behind another can run after its chat was deleted; do not
+    // resurrect a deleted chat (addMessage orphan row + ensureChat rebuilding a session).
+    if (!store.exists(chatId)) return;
     const attached = (attachments ?? []).filter((a) => a.path);
     store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
     store.maybeAutoTitle(chatId, prompt);
@@ -309,6 +312,7 @@ export class ChatManager {
   dispose(chatId: string): void {
     const r = this.chats.get(chatId);
     if (!r) return;
+    r.aborted = true;               // suppress the spurious error emit from the aborted turn
     r.unsub();
     try { r.session.abort(); } catch { /* idle */ }
     r.session.dispose();
