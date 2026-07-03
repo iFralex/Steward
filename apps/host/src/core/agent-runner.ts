@@ -305,6 +305,16 @@ export class ChatManager {
     try { await runtime.session.abort(); } catch { /* already idle */ }
   }
 
+  /** Tear down a chat's live session (called when the chat is deleted). */
+  dispose(chatId: string): void {
+    const r = this.chats.get(chatId);
+    if (!r) return;
+    r.unsub();
+    try { r.session.abort(); } catch { /* idle */ }
+    r.session.dispose();
+    this.chats.delete(chatId);
+  }
+
   async close(): Promise<void> {
     for (const r of this.chats.values()) { r.unsub(); r.session.dispose(); }
     this.chats.clear();

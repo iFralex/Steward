@@ -5,7 +5,7 @@
  */
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ChannelFile, ChatSummary, PersistedMessage } from "@llm-wiki/protocol";
@@ -102,6 +102,8 @@ export class ChatStore {
 
   /** Delete all still-temporary (unsaved) chats — called on a fresh connection. */
   purgeTemporary(): void {
+    const temp = this.raw.prepare(`SELECT id FROM chats WHERE temporary = 1`).all() as { id: string }[];
+    for (const { id } of temp) this.removeSessionFile(id);
     this.raw.prepare(`DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE temporary = 1)`).run();
     this.raw.prepare(`DELETE FROM chats WHERE temporary = 1`).run();
   }
@@ -128,8 +130,15 @@ export class ChatStore {
   }
 
   deleteChat(chatId: string): void {
+    this.removeSessionFile(chatId);
     this.raw.prepare(`DELETE FROM messages WHERE chat_id = ?`).run(chatId);
     this.raw.prepare(`DELETE FROM chats WHERE id = ?`).run(chatId);
+  }
+
+  /** Best-effort removal of a chat's Pi session file (missing/none is not an error). */
+  private removeSessionFile(chatId: string): void {
+    const file = this.getSessionFile(chatId);
+    if (file) { try { rmSync(file, { force: true }); } catch { /* best-effort */ } }
   }
 
   getSessionFile(chatId: string): string | null {

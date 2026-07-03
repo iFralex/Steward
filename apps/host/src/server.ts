@@ -301,6 +301,7 @@ export function startServer(config: HostConfig): WebSocketServer {
           sendChatList();
           break;
         case "chat_delete": {
+          chats.dispose(msg.chatId);
           store.deleteChat(msg.chatId);
           if (session.activeChatId === msg.chatId) {
             const remaining = store.listChats();
