@@ -27,10 +27,10 @@ const DANGEROUS_FLAGS = new Set([
 
 /** Paths whose contents must never be read/written by this tool. */
 const SENSITIVE = [
-  /(^|\/)\.ssh(\/|$)/, /(^|\/)\.aws(\/|$)/, /(^|\/)\.gnupg(\/|$)/,
-  /\/Library\/Keychains(\/|$)/, /(^|\/)\.netrc$/, /(^|\/)Cookies(\/|$)/,
-  /id_rsa/, /id_ed25519/, /(^|\/)\.env(\.[\w-]+)?$/, /credentials/i,
-  /\.pem$/, /\.p12$/, /(^|\/)\.aws\/credentials/,
+  /(^|\/)\.ssh(\/|$)/i, /(^|\/)\.aws(\/|$)/i, /(^|\/)\.gnupg(\/|$)/i,
+  /\/Library\/Keychains(\/|$)/i, /(^|\/)\.netrc$/i, /(^|\/)Cookies(\/|$)/i,
+  /id_rsa/i, /id_ed25519/i, /(^|\/)\.env(\.[\w-]+)?$/i, /credentials/i,
+  /\.pem$/i, /\.p12$/i, /(^|\/)\.aws\/credentials/i,
 ];
 
 /** grep-family recursion reads file contents without the paths appearing in argv. */
@@ -62,6 +62,7 @@ function isRecursiveLongAbbrev(a: string): boolean {
 const RG_IGNORE_GLOBS = [
   "!**/.ssh/**", "!**/.aws/**", "!**/.gnupg/**", "!**/Keychains/**",
   "!**/.env", "!**/.env.*", "!**/*credentials*", "!**/*.pem", "!**/*.p12",
+  "!**/.netrc", "!**/Cookies/**", "!**/id_rsa*", "!**/id_ed25519*",
 ];
 
 /** rg flags that force reading otherwise-skipped (hidden / git-ignored) files
@@ -127,6 +128,17 @@ export function validate(binary: string, args: string[], mode: Mode): string | n
     if (DANGEROUS_FLAGS.has(a)) return `flag '${a}' is not allowed (it can execute or delete files)`;
     if (GREP_FAMILY.has(binary) && (RECURSIVE_FLAGS.has(a) || isBundledRecursiveFlag(a) || isRecursiveLongAbbrev(a))) {
       return `recursive '${a}' is not allowed for ${binary} (it can read files the path guard never sees). Use find + grep on explicit paths, or rg (which excludes sensitive dirs).`;
+    }
+    // grep's -d/--directories can enable recursion (`-d recurse`), reading files the
+    // path guard never sees. Block the whole option family (fail-safe): -d's only
+    // non-recursive values are grep's default anyway.
+    if (GREP_FAMILY.has(binary)) {
+      const isShortCluster = /^-[a-z]+$/i.test(a); // e.g. -d, -nd, -rd
+      const longHead = a.split("=")[0];
+      const isDirLong = longHead.startsWith("--") && longHead.length >= 5 && "--directories".startsWith(longHead);
+      if ((isShortCluster && /d/i.test(a)) || isDirLong) {
+        return `option '${a}' is not allowed for ${binary} (-d/--directories can enable recursion). Use find + grep on explicit paths, or rg.`;
+      }
     }
     if (binary === "rg") {
       if (a === "--") return "'--' is not allowed for rg (it would demote the safety excludes to plain paths).";

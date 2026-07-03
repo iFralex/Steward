@@ -202,6 +202,21 @@ test("an rg stage inside a pipeline validates and hardens without self-rejecting
   assert.equal(res.error, undefined);
 });
 
+test("grep -d recurse / --directories=recurse are rejected", () => {
+  for (const args of [["-d","recurse","x","/tmp"], ["--directories=recurse","x","/tmp"], ["-nd","recurse","x","/tmp"], ["--directories","recurse","x","/tmp"]]) {
+    assert.notEqual(validate("grep", args, "read"), null, `expected grep ${args.join(" ")} rejected`);
+  }
+  // non-directory grep flags still pass
+  assert.equal(validate("grep", ["-in","x","/tmp/f"], "read"), null);
+  assert.equal(validate("grep", ["-e","pat","/tmp/f"], "read"), null);
+});
+
+test("sensitive-path guard is case-insensitive (macOS default FS)", () => {
+  assert.match(validate("cat", ["/Users/x/.SSH/config"], "read") ?? "", /sensitive/);
+  assert.match(validate("cat", ["/Users/x/report.PEM"], "read") ?? "", /sensitive/);
+  assert.match(validate("cat", ["/Library/KEYCHAINS/login.keychain-db"], "read") ?? "", /sensitive/);
+});
+
 test("runCommand: shell metacharacters are inert (no shell)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "shell-mcp-"));
   const f = join(dir, "safe.txt");

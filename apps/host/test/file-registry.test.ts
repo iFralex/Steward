@@ -71,3 +71,12 @@ test("registerFile refuses sensitive paths, saveUpload still works for scary nam
   const ref = saveUpload("credentials.pdf", Buffer.from("x"));
   assert.ok(ref);
 });
+
+test("registerFile refuses case-variant sensitive paths (macOS default FS)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "reg-"));
+  const sshDir = join(dir, ".SSH");
+  mkdirSync(sshDir);
+  const key = join(sshDir, "id_rsa");
+  writeFileSync(key, "PRIVATE");
+  assert.equal(registerFile(key), null);
+});

@@ -11,9 +11,9 @@ import type { ChannelFile } from "@llm-wiki/protocol";
 
 /** Paths never exposed for serving/opening, even if a card references them. */
 const SENSITIVE = [
-  /(^|\/)\.ssh(\/|$)/, /(^|\/)\.aws(\/|$)/, /(^|\/)\.gnupg(\/|$)/,
-  /\/Library\/Keychains(\/|$)/, /(^|\/)\.netrc$/, /(^|\/)Cookies(\/|$)/,
-  /id_rsa/, /id_ed25519/, /(^|\/)\.env(\.[\w-]+)?$/, /credentials/i, /\.pem$/, /\.p12$/,
+  /(^|\/)\.ssh(\/|$)/i, /(^|\/)\.aws(\/|$)/i, /(^|\/)\.gnupg(\/|$)/i,
+  /\/Library\/Keychains(\/|$)/i, /(^|\/)\.netrc$/i, /(^|\/)Cookies(\/|$)/i,
+  /id_rsa/i, /id_ed25519/i, /(^|\/)\.env(\.[\w-]+)?$/i, /credentials/i, /\.pem$/i, /\.p12$/i,
 ];
 const isSensitivePath = (p: string): boolean => SENSITIVE.some((re) => re.test(p));
 
