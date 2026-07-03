@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validate, runCommand, runPipeline, runCommandLine, parsePipeline, isSensitivePath, expandTilde, clip } from "../src/exec.ts";
 
+test("sips is not allowed in read mode (it mutates images in place)", () => {
+  assert.match(validate("sips", ["-r", "90", "/tmp/x.jpg"], "read") ?? "", /not allowed|changes files/);
+  assert.equal(validate("sips", ["-r", "90", "/tmp/x.jpg"], "write"), null);
+});
+
 test("validate: read binary allowed, write binary denied in read mode", () => {
   assert.equal(validate("cat", ["/tmp/x"], "read"), null);
   assert.match(validate("rm", ["/tmp/x"], "read") ?? "", /run_write_command/);

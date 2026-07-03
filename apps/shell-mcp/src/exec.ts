@@ -13,11 +13,11 @@ import { homedir } from "node:os";
 export const READ_BINARIES = new Set([
   "ls", "cat", "head", "tail", "file", "stat", "find", "mdfind", "mdls",
   "grep", "egrep", "fgrep", "rg", "wc", "du", "df", "basename", "dirname",
-  "realpath", "readlink", "pwd", "sips", "sha256sum", "md5", "cksum",
+  "realpath", "readlink", "pwd", "sha256sum", "md5", "cksum",
 ]);
 
 /** Mutating binaries — only via the gated write tool (approval required). */
-export const WRITE_BINARIES = new Set(["cp", "mv", "mkdir", "rmdir", "rm", "ln", "touch"]);
+export const WRITE_BINARIES = new Set(["cp", "mv", "mkdir", "rmdir", "rm", "ln", "touch", "sips"]);
 
 /** Flags that turn an otherwise read-only binary into an executor/mutator. */
 const DANGEROUS_FLAGS = new Set([
