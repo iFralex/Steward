@@ -144,104 +144,125 @@ export function useHostSocket(url: string): HostSocket {
   void statusVersion;
 
   useEffect(() => {
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onmessage = (ev: MessageEvent<string>) => {
-      let msg: ServerEvent;
-      try {
-        msg = JSON.parse(ev.data) as ServerEvent;
-      } catch {
-        return;
-      }
-      switch (msg.type) {
-        case "status": {
-          sessionRef.current = msg.sessionId;
-          if (msg.chatId) {
-            if (msg.state === "running") runningChatsRef.current.add(msg.chatId);
-            else runningChatsRef.current.delete(msg.chatId);
-          } else if (msg.state === "running") {
-            runningChatsRef.current.add(GLOBAL_STATUS_KEY);
-          } else {
-            runningChatsRef.current.delete(GLOBAL_STATUS_KEY);
-          }
-          setStatusVersion((v) => v + 1);
-          break;
+    let disposed = false;
+    let retryMs = 500;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = () => {
+      if (disposed) return;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+      ws.onopen = () => {
+        retryMs = 500;
+        setConnected(true);
+      };
+      ws.onclose = () => {
+        setConnected(false);
+        if (disposed) return;
+        timer = setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 5000); // 0.5s → 5s cap
+      };
+      ws.onmessage = (ev: MessageEvent<string>) => {
+        let msg: ServerEvent;
+        try {
+          msg = JSON.parse(ev.data) as ServerEvent;
+        } catch {
+          return;
         }
-        case "assistant_token":
-          updateChat(msg.chatId ?? null, (prev) => appendAssistant(prev, msg.text));
-          break;
-        case "assistant_done":
-          updateChat(msg.chatId ?? null, (prev) => closeAssistant(prev));
-          break;
-        case "tool_call":
-          updateChat(msg.chatId ?? null, (prev) => [
-            ...prev,
-            { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
-          ]);
-          break;
-        case "tool_result":
-          if (msg.files) {
-            for (const f of msg.files) {
-              if (f.path) filesRef.current.set(f.path, f);
-              filesRef.current.set(f.name, f);
+        switch (msg.type) {
+          case "status": {
+            sessionRef.current = msg.sessionId;
+            if (msg.chatId) {
+              if (msg.state === "running") runningChatsRef.current.add(msg.chatId);
+              else runningChatsRef.current.delete(msg.chatId);
+            } else if (msg.state === "running") {
+              runningChatsRef.current.add(GLOBAL_STATUS_KEY);
+            } else {
+              runningChatsRef.current.delete(GLOBAL_STATUS_KEY);
             }
+            setStatusVersion((v) => v + 1);
+            break;
           }
-          updateChat(msg.chatId ?? null, (prev) =>
-            prev.map((m) =>
-              m.role === "tool" && m.toolCallId === msg.toolCallId
-                ? { ...m, toolStatus: msg.ok ? "ok" : "error", toolOutput: msg.output, toolDurationMs: msg.durationMs, toolError: msg.error, toolFiles: msg.files }
-                : m,
-            ),
-          );
-          break;
-        case "approval_request":
-          setApprovals((prev) => [
-            ...prev,
-            { requestId: msg.requestId, tool: msg.tool, input: msg.input, chatId: msg.chatId },
-          ]);
-          break;
-        case "question_request":
-          setQuestions((prev) => [
-            ...prev,
-            { requestId: msg.requestId, question: msg.question, options: msg.options, multiSelect: msg.multiSelect, chatId: msg.chatId },
-          ]);
-          break;
-        case "usage":
-          setUsage({ turnCostUsd: msg.turnCostUsd, costUsd: msg.costUsd, tokens: msg.tokens });
-          break;
-        case "chat_list":
-          setChats(msg.chats);
-          setActiveChatId(msg.activeChatId);
-          break;
-        case "chat_history": {
-          activeChatRef.current = msg.chatId;
-          setActiveChatId(msg.chatId);
-          const persisted = msg.messages.map(persistedToChat);
-          // Preserve the live tail of an in-flight turn: the open (streaming) assistant
-          // bubble and still-running tool bubbles are persisted only when they finish,
-          // so a plain reseed would drop them until the turn ends. Completed tools ARE
-          // already in `persisted` (the host persists them at tool_execution_end).
-          const prev = messagesByChat.current.get(msg.chatId) ?? [];
-          const liveTail = prev.filter((m) => m.open || m.toolStatus === "running");
-          const merged = liveTail.length ? [...persisted, ...liveTail] : persisted;
-          messagesByChat.current.set(msg.chatId, merged);
-          setMessages(merged);
-          break; // approvals/questions are NOT cleared — they're per-chat and filtered on read
+          case "assistant_token":
+            updateChat(msg.chatId ?? null, (prev) => appendAssistant(prev, msg.text));
+            break;
+          case "assistant_done":
+            updateChat(msg.chatId ?? null, (prev) => closeAssistant(prev));
+            break;
+          case "tool_call":
+            updateChat(msg.chatId ?? null, (prev) => [
+              ...prev,
+              { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
+            ]);
+            break;
+          case "tool_result":
+            if (msg.files) {
+              for (const f of msg.files) {
+                if (f.path) filesRef.current.set(f.path, f);
+                filesRef.current.set(f.name, f);
+              }
+            }
+            updateChat(msg.chatId ?? null, (prev) =>
+              prev.map((m) =>
+                m.role === "tool" && m.toolCallId === msg.toolCallId
+                  ? { ...m, toolStatus: msg.ok ? "ok" : "error", toolOutput: msg.output, toolDurationMs: msg.durationMs, toolError: msg.error, toolFiles: msg.files }
+                  : m,
+              ),
+            );
+            break;
+          case "approval_request":
+            setApprovals((prev) => [
+              ...prev,
+              { requestId: msg.requestId, tool: msg.tool, input: msg.input, chatId: msg.chatId },
+            ]);
+            break;
+          case "question_request":
+            setQuestions((prev) => [
+              ...prev,
+              { requestId: msg.requestId, question: msg.question, options: msg.options, multiSelect: msg.multiSelect, chatId: msg.chatId },
+            ]);
+            break;
+          case "usage":
+            setUsage({ turnCostUsd: msg.turnCostUsd, costUsd: msg.costUsd, tokens: msg.tokens });
+            break;
+          case "chat_list":
+            setChats(msg.chats);
+            setActiveChatId(msg.activeChatId);
+            break;
+          case "chat_history": {
+            activeChatRef.current = msg.chatId;
+            setActiveChatId(msg.chatId);
+            const persisted = msg.messages.map(persistedToChat);
+            // Preserve the live tail of an in-flight turn: the open (streaming) assistant
+            // bubble and still-running tool bubbles are persisted only when they finish,
+            // so a plain reseed would drop them until the turn ends. Completed tools ARE
+            // already in `persisted` (the host persists them at tool_execution_end).
+            const prev = messagesByChat.current.get(msg.chatId) ?? [];
+            const liveTail = prev.filter((m) => m.open || m.toolStatus === "running");
+            const merged = liveTail.length ? [...persisted, ...liveTail] : persisted;
+            messagesByChat.current.set(msg.chatId, merged);
+            setMessages(merged);
+            break; // approvals/questions are NOT cleared — they're per-chat and filtered on read
+          }
+          case "action_center_state":
+            setActionCenter(msg.state);
+            break;
+          case "error":
+            updateChat(msg.chatId ?? null, (prev) => [
+              ...prev,
+              { id: crypto.randomUUID(), role: "assistant", text: `⚠️ ${msg.message}` },
+            ]);
+            break;
         }
-        case "action_center_state":
-          setActionCenter(msg.state);
-          break;
-        case "error":
-          updateChat(msg.chatId ?? null, (prev) => [
-            ...prev,
-            { id: crypto.randomUUID(), role: "assistant", text: `⚠️ ${msg.message}` },
-          ]);
-          break;
-      }
+      };
     };
-    return () => ws.close();
+
+    connect();
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      wsRef.current?.close();
+    };
   }, [url]);
 
   const send = useCallback((event: ClientEvent) => {
