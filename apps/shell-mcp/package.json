@@ -9,6 +9,7 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
+    "@llm-wiki/sensitive-path": "*",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {

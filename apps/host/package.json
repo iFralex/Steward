@@ -13,6 +13,7 @@
     "@earendil-works/pi-coding-agent": "^0.80.2",
     "@llm-wiki/mcp-bridge": "*",
     "@llm-wiki/protocol": "*",
+    "@llm-wiki/sensitive-path": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ws": "^8.18.0",
     "zod": "^4.0.0"

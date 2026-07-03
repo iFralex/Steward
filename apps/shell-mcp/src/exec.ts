@@ -8,6 +8,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
+import { isUnreadableSecret, RG_IGNORE_GLOBS } from "@llm-wiki/sensitive-path";
 
 /** Read-only inspection/search binaries — safe to run without approval. */
 export const READ_BINARIES = new Set([
@@ -24,14 +25,6 @@ const DANGEROUS_FLAGS = new Set([
   "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fdelete",
   "-fprint", "-fprint0", "-fprintf", "-fls",
 ]);
-
-/** Paths whose contents must never be read/written by this tool. */
-const SENSITIVE = [
-  /(^|\/)\.ssh(\/|$)/i, /(^|\/)\.aws(\/|$)/i, /(^|\/)\.gnupg(\/|$)/i,
-  /\/Library\/Keychains(\/|$)/i, /(^|\/)\.netrc$/i, /(^|\/)Cookies(\/|$)/i,
-  /id_rsa/i, /id_ed25519/i, /(^|\/)\.env(\.[\w-]+)?$/i, /credentials/i,
-  /\.pem$/i, /\.p12$/i, /(^|\/)\.aws\/credentials/i,
-];
 
 /** grep-family recursion reads file contents without the paths appearing in argv. */
 const GREP_FAMILY = new Set(["grep", "egrep", "fgrep"]);
@@ -57,13 +50,6 @@ function isRecursiveLongAbbrev(a: string): boolean {
   if (!a.startsWith("--") || a.length < 4) return false;
   return ["--recursive", "--dereference-recursive"].some((full) => full.startsWith(a));
 }
-
-/** Globs rg must always ignore (it recurses by default). */
-const RG_IGNORE_GLOBS = [
-  "!**/.ssh/**", "!**/.aws/**", "!**/.gnupg/**", "!**/Keychains/**",
-  "!**/.env", "!**/.env.*", "!**/*credentials*", "!**/*.pem", "!**/*.p12",
-  "!**/.netrc", "!**/Cookies/**", "!**/id_rsa*", "!**/id_ed25519*",
-];
 
 /** rg flags that force reading otherwise-skipped (hidden / git-ignored) files
  *  or re-include specific files, defeating the injected excludes. rg is safe by
@@ -107,9 +93,9 @@ export function expandTilde(p: string): string {
   return p.startsWith("~/") || p === "~" ? p.replace(/^~/, homedir()) : p;
 }
 
+/** Read-context guard: never read a secret's bytes into the model. */
 export function isSensitivePath(value: string): boolean {
-  const v = expandTilde(value);
-  return SENSITIVE.some((re) => re.test(v));
+  return isUnreadableSecret(expandTilde(value));
 }
 
 export type Mode = "read" | "write";

@@ -8,14 +8,7 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { ChannelFile } from "@llm-wiki/protocol";
-
-/** Paths never exposed for serving/opening, even if a card references them. */
-const SENSITIVE = [
-  /(^|\/)\.ssh(\/|$)/i, /(^|\/)\.aws(\/|$)/i, /(^|\/)\.gnupg(\/|$)/i,
-  /\/Library\/Keychains(\/|$)/i, /(^|\/)\.netrc$/i, /(^|\/)Cookies(\/|$)/i,
-  /id_rsa/i, /id_ed25519/i, /(^|\/)\.env(\.[\w-]+)?$/i, /credentials/i, /\.pem$/i, /\.p12$/i,
-];
-const isSensitivePath = (p: string): boolean => SENSITIVE.some((re) => re.test(p));
+import { isServableSecret } from "@llm-wiki/sensitive-path";
 
 const MIME: Record<string, string> = {
   ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -41,7 +34,7 @@ const byToken = new Map<string, { ref: ChannelFile; path: string }>();
  */
 export function registerFile(path: string, opts: { trusted?: boolean } = {}): ChannelFile | null {
   try {
-    if (!opts.trusted && isSensitivePath(path)) return null;
+    if (!opts.trusted && isServableSecret(path)) return null;
     if (!existsSync(path)) return null;
     const st = statSync(path);
     if (!st.isFile()) return null;

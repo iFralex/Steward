@@ -1,4 +1,5 @@
 import { isAbsolute, normalize } from "node:path";
+import { isForbiddenWriteDir } from "@llm-wiki/sensitive-path";
 import type { MessageRef } from "./types.ts";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -32,20 +33,12 @@ export function assertEmails(list: string[], field: string): void {
   }
 }
 
-/** Directories an emailed attachment must never be written into (persistence/secrets/system). */
-const FORBIDDEN_DEST = [
-  /(^|\/)\.ssh(\/|$)/i, /(^|\/)\.aws(\/|$)/i, /(^|\/)\.gnupg(\/|$)/i, /(^|\/)\.config(\/|$)/i,
-  /\/Library\/(LaunchAgents|LaunchDaemons|StartupItems|Keychains|Preferences)(\/|$)/i,
-  /^\/(etc|usr|bin|sbin|System|var)(\/|$)/i,
-  /^\/private\/(etc|var|tmp)(\/|$)/i,
-];
-
 /** Validate an optional destination directory for saved attachments. */
 export function assertSafeDestPath(destDir: string): string {
   if (!isAbsolute(destDir)) throw new Error(`destDir must be an absolute path: ${destDir}`);
   const norm = normalize(destDir);
   if (norm.split("/").includes("..")) throw new Error(`destDir must not contain "..": ${destDir}`);
-  if (FORBIDDEN_DEST.some((re) => re.test(norm))) {
+  if (isForbiddenWriteDir(norm)) {
     throw new Error(`destDir not allowed (system/persistence/secret location): ${destDir}`);
   }
   return norm;
