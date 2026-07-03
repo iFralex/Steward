@@ -16,6 +16,10 @@
     "apps/llm-gateway",
     "apps/calendar-mcp",
     "apps/contacts-mcp",
+    "apps/shell-mcp",
+    "apps/scheduler",
+    "apps/wiki-add",
+    "apps/llm-wiki",
     "packages/*"
   ]
 }
