@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validate, runCommand, runPipeline, runCommandLine, parsePipeline, isSensitivePath, expandTilde, clip } from "../src/exec.ts";
+import { validate, runCommand, runPipeline, runCommandLine, parsePipeline, isSensitivePath, expandTilde, clip, hardenArgs } from "../src/exec.ts";
 
 test("sips is not allowed in read mode (it mutates images in place)", () => {
   assert.match(validate("sips", ["-r", "90", "/tmp/x.jpg"], "read") ?? "", /not allowed|changes files/);
@@ -147,6 +147,27 @@ test("runCommandLine read mode refuses a write binary with a helpful message", a
   const res = await runCommandLine("rm -rf /tmp/whatever", "read");
   assert.equal(res.ok, false);
   assert.match(res.error ?? "", /run_write_command/);
+});
+
+test("recursive grep is rejected (it can read sensitive files without naming them)", () => {
+  assert.match(validate("grep", ["-r", "KEY", "/Users"], "read") ?? "", /recursive/);
+  assert.match(validate("grep", ["-R", "KEY", "."], "read") ?? "", /recursive/);
+  assert.match(validate("egrep", ["--recursive", "x", "."], "read") ?? "", /recursive/);
+});
+
+test("recursive grep is rejected when bundled with other short flags", () => {
+  assert.match(validate("grep", ["-rn", "KEY", "/Users"], "read") ?? "", /recursive/);
+  assert.match(validate("grep", ["-nr", "KEY", "/Users"], "read") ?? "", /recursive/);
+  assert.match(validate("fgrep", ["-Hnr", "KEY", "."], "read") ?? "", /recursive/);
+  // Non-recursive combos must keep working.
+  assert.equal(validate("grep", ["-in", "KEY", "/tmp/x"], "read"), null);
+  assert.equal(validate("grep", ["pattern", "/tmp/file"], "read"), null);
+});
+
+test("rg gets sensitive-dir ignore globs injected", () => {
+  const out = hardenArgs("rg", ["pattern", "/Users/x"]);
+  assert.ok(out.includes("!**/.ssh/**"));
+  assert.ok(out.includes("!**/.aws/**"));
 });
 
 test("runCommand: shell metacharacters are inert (no shell)", async () => {

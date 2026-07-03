@@ -33,6 +33,35 @@ const SENSITIVE = [
   /\.pem$/, /\.p12$/, /(^|\/)\.aws\/credentials/,
 ];
 
+/** grep-family recursion reads file contents without the paths appearing in argv. */
+const GREP_FAMILY = new Set(["grep", "egrep", "fgrep"]);
+const RECURSIVE_FLAGS = new Set(["-r", "-R", "--recursive", "--dereference-recursive"]);
+
+/**
+ * grep also accepts bundled single-dash short options, e.g. `-rn` (recursive +
+ * line numbers) or `-Hnr` — an exact match on `-r`/`-R` alone misses these, and
+ * `-rn` is extremely common real-world usage. Flag any single-dash, letters-only
+ * (after stripping a trailing numeric argument like `-m5`) cluster containing
+ * `r`/`R`; every grep variant uses that letter exclusively for recursion.
+ */
+function isBundledRecursiveFlag(a: string): boolean {
+  if (!a.startsWith("-") || a.startsWith("--")) return false;
+  const body = a.slice(1).replace(/\d+$/, "");
+  return /^[A-Za-z]+$/.test(body) && /[rR]/.test(body);
+}
+
+/** Globs rg must always ignore (it recurses by default). */
+const RG_IGNORE_GLOBS = [
+  "!**/.ssh/**", "!**/.aws/**", "!**/.gnupg/**", "!**/Keychains/**",
+  "!**/.env", "!**/.env.*", "!**/*credentials*", "!**/*.pem", "!**/*.p12",
+];
+
+/** Inject defensive flags after validation (rg ignore-globs). */
+export function hardenArgs(binary: string, args: string[]): string[] {
+  if (binary !== "rg") return args;
+  return [...RG_IGNORE_GLOBS.flatMap((g) => ["-g", g]), ...args];
+}
+
 export const OUTPUT_CAP = 1024 * 1024; // 1 MB hard execFile buffer
 export const DEFAULT_TIMEOUT_MS = 15_000;
 /** How much output is returned to the model by default (keep context small). */
@@ -74,6 +103,9 @@ export function validate(binary: string, args: string[], mode: Mode): string | n
   }
   for (const a of args) {
     if (DANGEROUS_FLAGS.has(a)) return `flag '${a}' is not allowed (it can execute or delete files)`;
+    if (GREP_FAMILY.has(binary) && (RECURSIVE_FLAGS.has(a) || isBundledRecursiveFlag(a))) {
+      return `recursive '${a}' is not allowed for ${binary} (it can read files the path guard never sees). Use find + grep on explicit paths, or rg (which excludes sensitive dirs).`;
+    }
     if (isSensitivePath(a)) return `path blocked (sensitive): ${a}`;
   }
   return null;
@@ -107,7 +139,7 @@ export function runCommand(
   if (invalid) return Promise.resolve(fail(invalid));
   const cwd = opts.cwd ? expandTilde(opts.cwd) : undefined;
   if (cwd && isSensitivePath(cwd)) return Promise.resolve(fail(`cwd blocked (sensitive): ${cwd}`));
-  const resolvedArgs = args.map(expandTilde);
+  const resolvedArgs = hardenArgs(binary, args.map(expandTilde));
   const maxLines = clampLines(opts.maxLines);
   const maxChars = clampChars(opts.maxChars);
   return new Promise<ExecResult>((resolvePromise) => {
@@ -151,11 +183,15 @@ export function runPipeline(
   if (!stages.length) return Promise.resolve(fail("pipeline needs at least one stage"));
   if (stages.length > 6) return Promise.resolve(fail("pipeline too long (max 6 stages)"));
   const mode = opts.mode ?? "read";
-  const norm = stages.map((s) => ({ command: s.command, args: (s.args ?? []).map(expandTilde) }));
-  for (const s of norm) {
+  // Validate against the pre-hardened args: hardenArgs' own injected ignore-globs
+  // (e.g. `!**/.ssh/**`) would otherwise trip validate's sensitive-path check and
+  // make rg self-reject. Harden only after validation has passed, for execution.
+  const expanded = stages.map((s) => ({ command: s.command, args: (s.args ?? []).map(expandTilde) }));
+  for (const s of expanded) {
     const invalid = validate(s.command, s.args, mode);
     if (invalid) return Promise.resolve(fail(`stage '${s.command}': ${invalid}`));
   }
+  const norm = expanded.map((s) => ({ command: s.command, args: hardenArgs(s.command, s.args) }));
   const cwd = opts.cwd ? expandTilde(opts.cwd) : undefined;
   if (cwd && isSensitivePath(cwd)) return Promise.resolve(fail(`cwd blocked (sensitive): ${cwd}`));
   const maxLines = clampLines(opts.maxLines);
