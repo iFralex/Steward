@@ -170,6 +170,38 @@ test("rg gets sensitive-dir ignore globs injected", () => {
   assert.ok(out.includes("!**/.aws/**"));
 });
 
+test("rg descent/include-override flags are rejected (they defeat the injected excludes)", () => {
+  for (const args of [["--hidden","P","/tmp"], ["-uu","P","/tmp"], ["-uuu","P","/tmp"], ["--no-ignore","P","/tmp"], ["--iglob","**/known_hosts","P","/tmp"], ["--iglob=**/x","P","/tmp"], ["--","P","/tmp"]]) {
+    assert.notEqual(validate("rg", args, "read"), null, `expected rg ${args.join(" ")} to be rejected`);
+  }
+});
+
+test("plain rg and legit non-recursive grep still pass validate", () => {
+  assert.equal(validate("rg", ["PATTERN", "/tmp/docs"], "read"), null);
+  assert.equal(validate("grep", ["-in", "x", "/tmp/f"], "read"), null);
+  assert.equal(validate("grep", ["-e", "pat", "/tmp/f"], "read"), null);
+});
+
+test("grep long-option recursive abbreviations are rejected", () => {
+  for (const a of ["--recu", "--recurs", "--recursiv", "--recursive", "--dereference-rec"]) {
+    assert.match(validate("grep", [a, "x", "/tmp"], "read") ?? "", /recursive/);
+  }
+});
+
+test("hardenArgs appends rg excludes AFTER the caller args", () => {
+  const out = hardenArgs("rg", ["PATTERN", "/tmp"]);
+  assert.equal(out[0], "PATTERN");
+  assert.equal(out[1], "/tmp");
+  assert.ok(out.slice(2).includes("!**/.ssh/**"));
+  assert.ok(out.indexOf("PATTERN") < out.indexOf("!**/.ssh/**"));
+});
+
+test("an rg stage inside a pipeline validates and hardens without self-rejecting", async () => {
+  const res = await runPipeline([{ command: "rg", args: ["PATTERN", "/tmp"] }, { command: "head", args: ["-1"] }], { mode: "read" });
+  // Must not fail with a validation error about the injected !**/.ssh/** globs.
+  assert.equal(res.error, undefined);
+});
+
 test("runCommand: shell metacharacters are inert (no shell)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "shell-mcp-"));
   const f = join(dir, "safe.txt");

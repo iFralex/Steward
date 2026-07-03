@@ -50,16 +50,38 @@ function isBundledRecursiveFlag(a: string): boolean {
   return /^[A-Za-z]+$/.test(body) && /[rR]/.test(body);
 }
 
+/** GNU grep accepts unambiguous prefix abbreviations of long options, so
+ *  --recu / --recursiv reach recursion just like --recursive. Fail-safe: also
+ *  rejects ambiguous short prefixes (grep would reject those itself). */
+function isRecursiveLongAbbrev(a: string): boolean {
+  if (!a.startsWith("--") || a.length < 4) return false;
+  return ["--recursive", "--dereference-recursive"].some((full) => full.startsWith(a));
+}
+
 /** Globs rg must always ignore (it recurses by default). */
 const RG_IGNORE_GLOBS = [
   "!**/.ssh/**", "!**/.aws/**", "!**/.gnupg/**", "!**/Keychains/**",
   "!**/.env", "!**/.env.*", "!**/*credentials*", "!**/*.pem", "!**/*.p12",
 ];
 
-/** Inject defensive flags after validation (rg ignore-globs). */
+/** rg flags that force reading otherwise-skipped (hidden / git-ignored) files
+ *  or re-include specific files, defeating the injected excludes. rg is safe by
+ *  default (skips hidden + ignored), where the sensitive dot-dirs live. */
+const RG_FORBIDDEN_FLAGS = new Set([
+  "--hidden",
+  "--unrestricted",
+  "--no-ignore", "--no-ignore-dot", "--no-ignore-exclude", "--no-ignore-files",
+  "--no-ignore-global", "--no-ignore-parent", "--no-ignore-vcs", "--no-require-git",
+  "--iglob",
+]);
+/** rg -u / -uu / -uuu (unrestricted: progressively disables ignore, hidden, binary). */
+const isRgUnrestricted = (a: string): boolean => /^-u+$/.test(a);
+
+/** Inject defensive flags after validation (rg ignore-globs, appended LAST so
+ *  they take precedence over any earlier caller -g/--glob). */
 export function hardenArgs(binary: string, args: string[]): string[] {
   if (binary !== "rg") return args;
-  return [...RG_IGNORE_GLOBS.flatMap((g) => ["-g", g]), ...args];
+  return [...args, ...RG_IGNORE_GLOBS.flatMap((g) => ["-g", g])];
 }
 
 export const OUTPUT_CAP = 1024 * 1024; // 1 MB hard execFile buffer
@@ -103,8 +125,15 @@ export function validate(binary: string, args: string[], mode: Mode): string | n
   }
   for (const a of args) {
     if (DANGEROUS_FLAGS.has(a)) return `flag '${a}' is not allowed (it can execute or delete files)`;
-    if (GREP_FAMILY.has(binary) && (RECURSIVE_FLAGS.has(a) || isBundledRecursiveFlag(a))) {
+    if (GREP_FAMILY.has(binary) && (RECURSIVE_FLAGS.has(a) || isBundledRecursiveFlag(a) || isRecursiveLongAbbrev(a))) {
       return `recursive '${a}' is not allowed for ${binary} (it can read files the path guard never sees). Use find + grep on explicit paths, or rg (which excludes sensitive dirs).`;
+    }
+    if (binary === "rg") {
+      if (a === "--") return "'--' is not allowed for rg (it would demote the safety excludes to plain paths).";
+      const flag = a.split("=")[0];
+      if (RG_FORBIDDEN_FLAGS.has(flag) || isRgUnrestricted(a)) {
+        return `flag '${a}' is not allowed for rg (it forces reading hidden/ignored files, which can include secrets). Search explicit non-hidden paths instead.`;
+      }
     }
     if (isSensitivePath(a)) return `path blocked (sensitive): ${a}`;
   }
