@@ -20,11 +20,27 @@ import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
 import type { HostConfig } from "./config.ts";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "*",
-};
+/** Origins allowed to talk to the host (the served UI itself + vite dev). */
+export function isAllowedOrigin(origin: string | undefined, port: number): boolean {
+  if (origin === undefined) return true; // non-browser clients send no Origin
+  const extra = (process.env.HOST_ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const allowed = new Set([
+    `http://127.0.0.1:${port}`, `http://localhost:${port}`,
+    "http://127.0.0.1:5173", "http://localhost:5173",
+    ...extra,
+  ]);
+  return allowed.has(origin);
+}
+
+function corsHeaders(origin: string | undefined, port: number): Record<string, string> {
+  if (origin === undefined || !isAllowedOrigin(origin, port)) return {};
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+    Vary: "Origin",
+  };
+}
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const WEB_DIST_DIR = process.env.HOST_STATIC_DIR ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
 const CONTENT_TYPES: Record<string, string> = {
@@ -50,14 +66,14 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function tryServeWebAsset(req: IncomingMessage, res: ServerResponse): boolean {
+function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): boolean {
   if (req.method !== "GET" && req.method !== "HEAD") return false;
 
   let pathname = "/";
   try {
     pathname = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);
   } catch {
-    res.writeHead(400, CORS);
+    res.writeHead(400, cors);
     res.end("bad request");
     return true;
   }
@@ -75,7 +91,7 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse): boolean {
     res.writeHead(200, {
       "Content-Type": CONTENT_TYPES[extname(file)] ?? "application/octet-stream",
       "Content-Length": stat.size,
-      ...CORS,
+      ...cors,
     });
     if (req.method === "HEAD") {
       res.end();
@@ -90,7 +106,7 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse): boolean {
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Content-Length": stat.size,
-          ...CORS,
+          ...cors,
         });
         if (req.method === "HEAD") {
           res.end();
@@ -109,6 +125,10 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse): boolean {
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
 function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
+  if (req.headers.origin !== undefined && !isAllowedOrigin(req.headers.origin, config.port)) {
+    res.writeHead(403); res.end("forbidden origin"); return;
+  }
+  const CORS = corsHeaders(req.headers.origin, config.port);
   if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
   if (req.method === "GET" && url.startsWith("/health")) {
     res.writeHead(200, { "Content-Type": "application/json", ...CORS });
@@ -171,24 +191,28 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
   if (url.startsWith("/file/")) {
     const m = url.match(/^\/file\/([\w-]+)/);
     const entry = m ? resolveToken(m[1]) : null;
-    if (!entry) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
+    if (!entry) { res.writeHead(404, { ...CORS }); res.end("not found"); return; }
     res.writeHead(200, {
       "Content-Type": entry.ref.mime,
       "Content-Length": entry.ref.size,
       "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(entry.ref.name)}`,
-      "Access-Control-Allow-Origin": "*",
+      ...CORS,
     });
     createReadStream(entry.path).on("error", () => res.destroy()).pipe(res);
     return;
   }
-  if (tryServeWebAsset(req, res)) return;
+  if (tryServeWebAsset(req, res, CORS)) return;
   res.writeHead(404, CORS);
   res.end("not found");
 }
 
 export function startServer(config: HostConfig): WebSocketServer {
   const httpServer = createServer((req, res) => handleHttp(config, req, res));
-  const wss = new WebSocketServer({ server: httpServer });
+  const wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: ({ req }: { req: IncomingMessage }) =>
+      isAllowedOrigin(req.headers.origin, config.port),
+  });
 
   wss.on("connection", (ws) => {
     const emit: Emit = (event) => {
