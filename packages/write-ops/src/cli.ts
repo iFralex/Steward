@@ -214,10 +214,19 @@ export function findMailConfirmation(mail: Store, op: WriteOpRow): { message_id:
     const row = query(clauses, params);
     if (row) return row;
   }
-  // Fallback: the mirror may store a transformed body (HTML→text) — accept a
-  // strict header match instead of retrying (a retry duplicates the send).
+  // Fallback: the mirror may store a transformed body (HTML→text), so a valid
+  // send can miss the snippet match. Accept a header match, but tightly — the
+  // confirming message must land at/just-after the send attempt and within a
+  // sync window, and we take the EARLIEST such message so a later same-subject
+  // email (recurring reports, "Re:" threads) can't be mistaken for this send.
   if (from && subject) {
-    const row = query(["deleted=0", "date>=?", "lower(from_addr)=?", "subject=?"], [startedAt, from, subject]);
+    const lo = op.startedAt - 60;          // small skew: server Date vs our startedAt
+    const hi = op.startedAt + 86400;        // tolerate mirror sync lag; bound recurring-subject false matches
+    const row = mail.raw.prepare(
+      `SELECT message_id, date, mailbox FROM messages
+       WHERE deleted=0 AND date>=? AND date<=? AND lower(from_addr)=? AND subject=?
+       ORDER BY date ASC LIMIT 1`,
+    ).get(lo, hi, from, subject) as { message_id: string; date: number; mailbox: string } | undefined;
     if (row) return row;
   }
   return null;
