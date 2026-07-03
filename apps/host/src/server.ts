@@ -286,7 +286,6 @@ export function startServer(config: HostConfig): WebSocketServer {
     ws.on("close", () => {
       session.closed = true;
       void chats.close();
-      void session.directBridge?.close();
     });
 
     ws.on("message", (data) => {

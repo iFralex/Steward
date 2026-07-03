@@ -12,10 +12,9 @@ import { ActionStore } from "../../../action-center/src/store.ts";
 import { actionDbPath } from "../../../action-center/src/paths.ts";
 import { gatewayChat, jsonFromLlm } from "../../../action-center/src/llm.ts";
 import type { HostConfig } from "../config.ts";
-import { buildMcpBridge } from "@llm-wiki/mcp-bridge";
 import type { Emit, Session } from "./session.ts";
 import { decideTool } from "./tool-policy.ts";
-import { extractToolOutput } from "./agent-runner.ts";
+import { extractToolOutput, sharedMcpBridge } from "./agent-runner.ts";
 import { filesFromOutput } from "./file-registry.ts";
 
 interface ProposedStep {
@@ -80,7 +79,7 @@ export async function executeActionProposal(args: {
   if (!action) throw new Error(`Action not found: ${args.actionId}`);
   const proposal = findProposal(action, args.proposalId);
   if (!proposal) throw new Error(`Proposal not found: ${args.proposalId}`);
-  const bridge = await ensureDirectBridge(args.config, args.session);
+  const bridge = await ensureDirectBridge(args.config);
   const record = (msg: PersistedMessage) => { if (args.chatId) chatStore().addMessage(args.chatId, msg); };
   record({ id: randomUUID(), role: "user", text: `Esegui: ${proposal.label}` });
 
@@ -174,9 +173,8 @@ export class ActionRevisionRequestedError extends Error {
   }
 }
 
-async function ensureDirectBridge(config: HostConfig, session: Session) {
-  if (!session.directBridge) session.directBridge = await buildMcpBridge(config.mcpServers);
-  return session.directBridge;
+async function ensureDirectBridge(config: HostConfig) {
+  return sharedMcpBridge(config.mcpServers);
 }
 
 export function getActionItem(id: number): ActionCenterItem | null {

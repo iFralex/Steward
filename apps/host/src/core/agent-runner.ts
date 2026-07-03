@@ -1,10 +1,11 @@
 /**
- * Multi-chat agent runner. One ChatManager per channel connection owns a single
- * shared MCP bridge (the heavy part) and one Pi AgentSession per chat — each
- * with its own file-backed memory (persisted by Pi) and its own usage stats.
- * Switching chats swaps the live session, not the bridge, so it's instant.
- * Every turn's transcript (user / assistant / tool) is persisted to chat-store
- * so conversations survive reloads and host restarts.
+ * Multi-chat agent runner. One ChatManager per channel connection uses the
+ * single process-wide MCP bridge (the heavy part, see {@link sharedMcpBridge})
+ * and owns one Pi AgentSession per chat — each with its own file-backed memory
+ * (persisted by Pi) and its own usage stats. Switching chats swaps the live
+ * session, not the bridge, so it's instant. Every turn's transcript
+ * (user / assistant / tool) is persisted to chat-store so conversations
+ * survive reloads and host restarts.
  */
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -19,6 +20,18 @@ import { usageStore } from "./usage-store.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 import type { ChannelFile } from "@llm-wiki/protocol";
+
+let sharedBridge: Promise<McpBridge> | undefined;
+/** One set of MCP connector child processes for the whole host process. Built
+ *  lazily and kept for the process lifetime — never closed per-connection, since
+ *  closing it would tear down connectors other chats/connections still use.
+ *  A failed build is not cached, so a transient failure can be retried. */
+export function sharedMcpBridge(specs: Parameters<typeof buildMcpBridge>[0]): Promise<McpBridge> {
+  return (sharedBridge ??= buildMcpBridge(specs).catch((err) => {
+    sharedBridge = undefined; // don't poison the process with a cached rejection
+    throw err;
+  }));
+}
 
 /**
  * Turn Pi's tool result into a UI-friendly `output`: pull the text out of the
@@ -129,7 +142,7 @@ export class ChatManager {
   private async ensureBridge(): Promise<BridgeRuntime> {
     if (this.bridge) return this.bridge;
     const { modelRegistry, model } = registerGatewayModel(this.config.gateway);
-    const bridge = await buildMcpBridge(this.config.mcpServers);
+    const bridge = await sharedMcpBridge(this.config.mcpServers);
     const resourceLoader = new DefaultResourceLoader({
       cwd: process.cwd(),
       agentDir: process.cwd(),
@@ -322,6 +335,7 @@ export class ChatManager {
   async close(): Promise<void> {
     for (const r of this.chats.values()) { r.unsub(); r.session.dispose(); }
     this.chats.clear();
-    await this.bridge?.bridge.close();
+    // The MCP bridge is process-shared (sharedMcpBridge) — do NOT close it here;
+    // other connections and the action executor rely on it staying up.
   }
 }

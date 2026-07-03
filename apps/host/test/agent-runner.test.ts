@@ -9,7 +9,7 @@ import { join } from "node:path";
 // throwaway dir before anything in this test file (or its imports) can call it.
 process.env.CHATS_DIR = mkdtempSync(join(tmpdir(), "agent-runner-chats-"));
 
-import { buildPiRuntime, ChatManager, KeyedQueue } from "../src/core/agent-runner.ts";
+import { buildPiRuntime, ChatManager, KeyedQueue, sharedMcpBridge } from "../src/core/agent-runner.ts";
 import { Session } from "../src/core/session.ts";
 import { defaultPolicy } from "../src/core/tool-policy.ts";
 import { chatStore } from "../src/core/chat-store.ts";
@@ -42,6 +42,18 @@ test("buildPiRuntime registers gate-wrapped bridged tools and resolves the model
   } finally {
     await runtime.close();
   }
+});
+
+test("sharedMcpBridge memoizes: repeated calls return the identical bridge instance", async () => {
+  // Empty specs make buildMcpBridge's connector loop a no-op (no child process
+  // spawned), so this exercises the process-wide memoization in sharedMcpBridge
+  // without starting any real MCP connector.
+  const first = sharedMcpBridge({});
+  const second = sharedMcpBridge({});
+  assert.equal(first, second, "second call must return the exact same in-flight promise");
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a, b, "resolved bridge instance must be the same object across calls");
+  assert.deepEqual(a.tools, [], "empty specs produce no tools and spawn no connectors");
 });
 
 test("doRunTurn does not resurrect a deleted/nonexistent chat", async () => {
