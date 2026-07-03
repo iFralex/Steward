@@ -46,3 +46,13 @@ test("createEvent returns the uid printed by the script", async () => {
   );
   assert.equal(uid, "UID-NEW");
 });
+
+test("dateExpr sets day to 1 before month to avoid end-of-month rollover", () => {
+  const lines = buildCreate({ calendar: "C", summary: "S", start: "2026-06-15T10:00:00+02:00", end: "2026-06-15T11:00:00+02:00" });
+  const startLines = lines.split("\n").filter((l) => l.includes("startD"));
+  const dayResetIdx = startLines.findIndex((l) => /set day of startD to 1$/.test(l));
+  const monthIdx = startLines.findIndex((l) => /set month of startD to/.test(l));
+  const dayIdx = startLines.findIndex((l) => /set day of startD to \d+$/.test(l.replace(/to 1$/, "to X")));
+  assert.ok(dayResetIdx >= 0, "must reset day to 1 first");
+  assert.ok(dayResetIdx < monthIdx, "day reset must precede month set");
+});

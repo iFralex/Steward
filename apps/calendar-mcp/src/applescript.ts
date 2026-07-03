@@ -39,6 +39,9 @@ function dateExpr(varName: string, iso: string): string[] {
   const d = new Date(iso);
   return [
     `set ${varName} to current date`,
+    // Reset day first: "31 Jan → set month to June" would overflow to 1 July
+    // before day is applied; day 1 is safe in every month.
+    `set day of ${varName} to 1`,
     `set year of ${varName} to ${d.getFullYear()}`,
     `set month of ${varName} to ${d.getMonth() + 1}`,
     `set day of ${varName} to ${d.getDate()}`,
