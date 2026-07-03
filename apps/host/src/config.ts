@@ -77,7 +77,11 @@ export function loadConfig(): HostConfig {
       baseUrl: process.env.GATEWAY_BASE_URL ?? "http://127.0.0.1:4000/v1",
       tier: process.env.HOST_TIER ?? "tier-5",
       apiKey: process.env.GATEWAY_API_KEY ?? "sk-local",
-      cost: { input: 0.14, output: 0.28, cacheRead: 0.014, cacheWrite: 0.14 },
+      // tier-5 (flash) cost, used by Pi at model registration for its own cost
+      // tracking. The Usage page's display now comes from the gateway's
+      // /rates endpoint (single source of truth); this is only the fallback
+      // used if the gateway is unreachable.
+      cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
     },
     mcpServers: {
       "llm-wiki": { command: node, args: [llmWikiMcpEntry] },

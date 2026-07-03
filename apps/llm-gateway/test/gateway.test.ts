@@ -96,6 +96,23 @@ test("non-streaming routes direct to the provider, forwards tools, and falls bac
   }
 });
 
+test("GET /rates returns per-tier USD costs per 1M tokens", async () => {
+  // Dynamic import for the same env-ordering reason as the test below.
+  const { startGateway } = await import("../src/gateway.ts");
+  const server = startGateway(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/rates`);
+    const body = await res.json() as Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }>;
+    assert.equal(body["tier-1"].input, 0);
+    assert.equal(body["tier-5"].input, 0.14);
+    assert.equal(body["tier-6"].output, 0.87);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("shouldFallback: retry 429/5xx, surface 4xx immediately", async () => {
   // Dynamic import (not a top-level static import): a static import would evaluate
   // gateway.ts's module-level code eagerly, before the test above sets

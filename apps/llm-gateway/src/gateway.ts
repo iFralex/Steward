@@ -64,6 +64,17 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** USD per 1M tokens per tier — single source of truth for client cost display.
+ *  Verified against DeepSeek's official pricing (V4 Flash / V4 Pro, 2026). */
+export const rates: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
+  "tier-1": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  "tier-2": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
+  "tier-3": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
+  "tier-4": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
+  "tier-5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
+  "tier-6": { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0.435 },
+};
+
 /** Only availability failures are worth trying another tier; a 4xx is deterministic. */
 export function shouldFallback(status: number): boolean {
   return status === 429 || status >= 500;
@@ -334,6 +345,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   if (req.method === "GET" && url === "/v1/models") {
     json(res, 200, { object: "list", data: Object.keys(models).map((id) => ({ id, object: "model" })) });
+    return;
+  }
+  if (req.method === "GET" && url === "/rates") {
+    json(res, 200, rates);
     return;
   }
   if (req.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/v1/embeddings")) {

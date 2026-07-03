@@ -127,6 +127,25 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Recor
   }
 }
 
+/**
+ * Per-tier USD rates for the Usage page, fetched once from the gateway's
+ * `/rates` (single source of truth) and cached for the process lifetime.
+ * Falls back to `config.gateway.cost` (Pi's own registration cost) if the
+ * gateway is unreachable or slow, so `/usage` never blocks on it.
+ */
+let cachedRates: unknown | undefined;
+async function gatewayRates(baseUrl: string, fallback: unknown): Promise<unknown> {
+  if (cachedRates !== undefined) return cachedRates;
+  try {
+    const origin = baseUrl.replace(/\/v1\/?$/, "");
+    const res = await fetch(`${origin}/rates`, { signal: AbortSignal.timeout(1000) });
+    if (res.ok) return (cachedRates = await res.json());
+  } catch {
+    // gateway down or timed out — fall back to the static config cost.
+  }
+  return fallback;
+}
+
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
 function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
@@ -178,10 +197,11 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
     });
     return;
   }
-  if (url.startsWith("/usage")) {
-    const body = JSON.stringify({ ...(usageStore().summary() as object), rates: config.gateway.cost });
-    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
-    res.end(body);
+  if (url.startsWith("/usage") && req.method === "GET") {
+    void gatewayRates(config.gateway.baseUrl, config.gateway.cost).then((rates) => {
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ ...(usageStore().summary() as object), rates }));
+    });
     return;
   }
   // Make a file-card path actionable on demand (register → return its ref).
