@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const APP_NAME = "LLM Wiki Scheduler";
+const APP_NAME = "Steward Scheduler";
 const BUNDLE_ID = "com.llmwiki.scheduler";
 const node = process.execPath;
 const nodeDir = node.replace(/\/[^/]+$/, "");
