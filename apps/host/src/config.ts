@@ -51,10 +51,11 @@ const DEFAULT_SYSTEM_PROMPT = [
 ].join(" ");
 
 export function loadConfig(): HostConfig {
-  const bundled = process.env.LLM_WIKI_BUNDLED_SERVICES === "1";
-  const node = process.env.LLM_WIKI_NODE ?? process.execPath;
+  const bundled = (process.env.STEWARD_BUNDLED_SERVICES ?? process.env.LLM_WIKI_BUNDLED_SERVICES) === "1";
+  const node = process.env.STEWARD_NODE ?? process.env.LLM_WIKI_NODE ?? process.execPath;
   const nodeArgs = (entry: string) => bundled ? [entry] : ["--import", "tsx", entry];
   const llmWikiMcpEntry =
+    process.env.STEWARD_MCP_ENTRY ??
     process.env.LLM_WIKI_MCP_ENTRY ??
     fileURLToPath(new URL("../../llm-wiki/mcp-server/dist/src/index.js", import.meta.url));
   const mailMcpEntry =

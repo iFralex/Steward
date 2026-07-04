@@ -56,7 +56,7 @@ export async function loadSystemStatus(config: HostConfig): Promise<SystemStatus
   ]);
   return {
     generatedAt,
-    bundled: process.env.LLM_WIKI_BUNDLED_SERVICES === "1",
+    bundled: (process.env.STEWARD_BUNDLED_SERVICES ?? process.env.LLM_WIKI_BUNDLED_SERVICES) === "1",
     autostart: getAutostartStatus(),
     services: checks,
   };
@@ -185,7 +185,7 @@ async function schedulerStatus(): Promise<SystemServiceStatus> {
     return {
       id: "scheduler",
       label: "Scheduler",
-      state: process.env.LLM_WIKI_SCHEDULER === "0" ? "unknown" : "warning",
+      state: (process.env.STEWARD_SCHEDULER ?? process.env.LLM_WIKI_SCHEDULER) === "0" ? "unknown" : "warning",
       detail: "No scheduler log found yet.",
       updatedAt: Date.now(),
     };
@@ -297,10 +297,10 @@ function launchAgentPath(): string {
 }
 
 function resolveAppPath(): string | null {
-  const explicit = process.env.LLM_WIKI_APP_PATH;
+  const explicit = process.env.STEWARD_APP_PATH ?? process.env.LLM_WIKI_APP_PATH;
   if (explicit && explicit.endsWith(".app")) return explicit;
 
-  const root = process.env.LLM_WIKI_ROOT;
+  const root = process.env.STEWARD_ROOT ?? process.env.LLM_WIKI_ROOT;
   if (!root) return null;
   const marker = ".app/Contents/Resources";
   const idx = root.indexOf(marker);
