@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import webpush from "web-push";
 import { defaultPolicy, type ToolPolicy } from "./core/tool-policy.ts";
 import type { McpServerSpec } from "@steward/mcp-bridge";
 import type { GatewayConfig } from "./core/pi-provider.ts";
@@ -21,13 +22,45 @@ export interface HostConfig {
   mcpServers: Record<string, McpServerSpec>;
   /** Shared secret gating the WS + HTTP data routes (mobile-access M0). */
   authToken: string;
+  /** VAPID keypair for Web Push (mobile-access M2/M3). */
+  vapid: VapidKeys;
 }
 
 /** ~/Library/Application Support/Steward — created on demand. */
-function stewardConfigDir(): string {
+export function stewardConfigDir(): string {
   const dir = join(homedir(), "Library", "Application Support", "Steward");
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/** Where `PushRegistry` persists subscriptions (mobile-access M2/M3). */
+export function pushSubscriptionsPath(): string {
+  return join(stewardConfigDir(), "push-subscriptions.json");
+}
+
+export interface VapidKeys {
+  publicKey: string;
+  privateKey: string;
+}
+
+/**
+ * VAPID keypair for Web Push: generated once via `web-push.generateVAPIDKeys()`
+ * and persisted to `<Steward config dir>/vapid.json` (mode 0o600) so it survives
+ * restarts — a rotated key would invalidate every existing browser subscription.
+ */
+export function loadVapidKeys(): VapidKeys {
+  const path = join(stewardConfigDir(), "vapid.json");
+  if (existsSync(path)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<VapidKeys>;
+      if (parsed.publicKey && parsed.privateKey) return { publicKey: parsed.publicKey, privateKey: parsed.privateKey };
+    } catch {
+      /* corrupt file — regenerate below */
+    }
+  }
+  const keys = webpush.generateVAPIDKeys();
+  writeFileSync(path, JSON.stringify(keys, null, 2), { mode: 0o600 });
+  return keys;
 }
 
 /**
@@ -99,12 +132,16 @@ export function loadConfig(): HostConfig {
   const shellMcpEntry =
     process.env.SHELL_MCP_ENTRY ?? fileURLToPath(new URL("../../shell-mcp/src/index.ts", import.meta.url));
 
+  const vapid = loadVapidKeys();
+  webpush.setVapidDetails("mailto:steward@localhost", vapid.publicKey, vapid.privateKey);
+
   return {
     port: Number(process.env.HOST_PORT ?? 4317),
     systemPrompt: process.env.HOST_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT,
     policy: defaultPolicy,
     approvalTimeoutMs: Number(process.env.APPROVAL_TIMEOUT_MS ?? 5 * 60_000),
     authToken: loadAuthToken(),
+    vapid,
     gateway: {
       baseUrl: process.env.GATEWAY_BASE_URL ?? "http://127.0.0.1:4000/v1",
       tier: process.env.HOST_TIER ?? "tier-5",

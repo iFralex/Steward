@@ -12,14 +12,15 @@ import { extname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ClientEvent } from "@steward/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
-import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
+import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setPushRegistry } from "./core/action-center-service.ts";
 import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageStore } from "./core/usage-store.ts";
 import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
-import type { HostConfig } from "./config.ts";
+import { PushRegistry, type PushSubscriptionJSON } from "./core/push.ts";
+import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -212,7 +213,7 @@ async function gatewayRates(baseUrl: string, tier: string, fallback: unknown): P
 }
 
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
-function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerResponse): void {
+function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
   if (req.headers.origin !== undefined && !isAllowedOrigin(req.headers.origin, config.port)) {
     res.writeHead(403); res.end("forbidden origin"); return;
@@ -235,6 +236,40 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
   if (isDataRoute(url) && !tokenOk(url, req.headers.authorization, config.authToken)) {
     res.writeHead(401, { "Content-Type": "application/json", ...CORS });
     res.end(JSON.stringify({ error: "unauthorized" }));
+    return;
+  }
+  if (req.method === "GET" && url.startsWith("/push/vapid")) {
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify({ publicKey: config.vapid.publicKey }));
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/push/subscribe")) {
+    void readRequestBody(req).then((raw) => {
+      const sub = raw ? (JSON.parse(raw) as PushSubscriptionJSON) : null;
+      if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "invalid subscription" }));
+        return;
+      }
+      pushRegistry.subscribe(sub);
+      res.writeHead(204, CORS);
+      res.end();
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/push/unsubscribe")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? (JSON.parse(raw) as { endpoint?: string }) : {};
+      if (body.endpoint) pushRegistry.unsubscribe(body.endpoint);
+      res.writeHead(204, CORS);
+      res.end();
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
     return;
   }
   if (req.method === "GET" && url.startsWith("/system/status")) {
@@ -312,7 +347,9 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
 }
 
 export function startServer(config: HostConfig): WebSocketServer {
-  const httpServer = createServer((req, res) => handleHttp(config, req, res));
+  const pushRegistry = new PushRegistry(pushSubscriptionsPath());
+  setPushRegistry(pushRegistry);
+  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, req, res));
   const wss = new WebSocketServer({
     server: httpServer,
     verifyClient: ({ req }: { req: IncomingMessage }) =>

@@ -11,16 +11,18 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.2",
     "@earendil-works/pi-coding-agent": "^0.80.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@steward/action-center": "*",
     "@steward/mcp-bridge": "*",
     "@steward/protocol": "*",
     "@steward/sensitive-path": "*",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "web-push": "^3.6.7",
     "ws": "^8.18.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.5.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
