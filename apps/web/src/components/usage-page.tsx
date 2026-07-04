@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 interface Totals {
@@ -84,7 +85,7 @@ const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1
 /** Strip the `mcp__server__` prefix so tool names read cleanly. */
 const bareTool = (name: string) => name.replace(/^mcp__[^_]+__/, "") || name;
 
-export function UsagePage({ httpBase }: { httpBase: string }) {
+export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const [data, setData] = useState<UsageSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -93,7 +94,7 @@ export function UsagePage({ httpBase }: { httpBase: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${httpBase}/usage`);
+      const res = await authFetch(`${httpBase}/usage`, token, onUnauthorized);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData((await res.json()) as UsageSummary);
     } catch (e) {
@@ -101,7 +102,7 @@ export function UsagePage({ httpBase }: { httpBase: string }) {
     } finally {
       setLoading(false);
     }
-  }, [httpBase]);
+  }, [httpBase, token, onUnauthorized]);
 
   useEffect(() => {
     void load();

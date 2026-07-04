@@ -6,10 +6,16 @@
  * that, but open/preview/reveal still work).
  */
 import { Button } from "@/components/ui/button";
+import { authTokenKey } from "@/lib/auth";
 import type { ChannelFile } from "@steward/protocol";
 
 const HTTP_BASE = (import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317").replace(/^ws/, "http");
-const fileUrl = (token: string) => `${HTTP_BASE}/file/${token}`;
+// /file/<fileToken> is a gated data route; an <img>/<a> can't set an Authorization
+// header, so the host's auth token rides along as a query param instead.
+const fileUrl = (fileToken: string) => {
+  const auth = localStorage.getItem(authTokenKey);
+  return `${HTTP_BASE}/file/${fileToken}${auth ? `?token=${encodeURIComponent(auth)}` : ""}`;
+};
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;

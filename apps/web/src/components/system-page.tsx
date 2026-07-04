@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Power, RefreshCw, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
+import QRCode from "qrcode";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type ServiceState = "ok" | "warning" | "error" | "unknown";
@@ -39,17 +41,18 @@ interface SystemStatus {
   services: SystemServiceStatus[];
 }
 
-export function SystemPage({ httpBase }: { httpBase: string }) {
+export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingAutostart, setSavingAutostart] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pairToken, setPairToken] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${httpBase}/system/status`);
+      const res = await authFetch(`${httpBase}/system/status`, token, onUnauthorized);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setStatus(await res.json() as SystemStatus);
     } catch (err) {
@@ -57,7 +60,7 @@ export function SystemPage({ httpBase }: { httpBase: string }) {
     } finally {
       setLoading(false);
     }
-  }, [httpBase]);
+  }, [httpBase, token, onUnauthorized]);
 
   useEffect(() => {
     void refresh();
@@ -65,11 +68,29 @@ export function SystemPage({ httpBase }: { httpBase: string }) {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
+  // /pair is localhost-only (403 from a phone/Tailscale caller) — that's expected,
+  // it just means the "Connetti il telefono" section stays hidden there.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(`${httpBase}/pair`);
+        if (res.ok && alive) {
+          const body = (await res.json()) as { token: string };
+          setPairToken(body.token);
+        }
+      } catch {
+        /* host unreachable — leave the pairing section hidden */
+      }
+    })();
+    return () => { alive = false; };
+  }, [httpBase]);
+
   const setAutostart = async (enabled: boolean) => {
     setSavingAutostart(true);
     setError(null);
     try {
-      const res = await fetch(`${httpBase}/system/autostart`, {
+      const res = await authFetch(`${httpBase}/system/autostart`, token, onUnauthorized, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -118,6 +139,8 @@ export function SystemPage({ httpBase }: { httpBase: string }) {
         />
       </div>
 
+      {pairToken && <PairingPanel token={pairToken} />}
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {(status?.services ?? []).map((service) => (
           <ServiceRow key={service.id} service={service} />
@@ -149,6 +172,39 @@ function SummaryTile({ label, value, state }: { label: string; value: number; st
           <div className="text-2xl font-semibold tabular-nums">{value}</div>
         </div>
         <StateIcon state={state} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Pairing QR for a phone: /pair (localhost-only) hands us the token; the QR
+ *  encodes this page's own origin (works over Tailscale too — it's whatever
+ *  origin served this page) with ?token= so the phone auto-pairs on scan. */
+function PairingPanel({ token }: { token: string }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const pairUrl = `${window.location.origin}/?token=${encodeURIComponent(token)}`;
+  const canceledRef = useRef(false);
+
+  useEffect(() => {
+    canceledRef.current = false;
+    void QRCode.toDataURL(pairUrl, { margin: 1, width: 220 }).then((dataUrl) => {
+      if (!canceledRef.current) setQr(dataUrl);
+    }).catch(() => setQr(null));
+    return () => { canceledRef.current = true; };
+  }, [pairUrl]);
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Smartphone className="size-4" />
+          Connetti il telefono
+        </CardTitle>
+        <CardDescription>Scansiona dal telefono (stessa rete Tailscale) per collegarlo.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-center gap-4">
+        {qr && <img src={qr} alt="QR di pairing" className="size-[110px] rounded-md border bg-white p-1" />}
+        <p className="text-muted-foreground min-w-0 flex-1 break-all font-mono text-xs">{pairUrl}</p>
       </CardContent>
     </Card>
   );

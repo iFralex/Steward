@@ -5,7 +5,8 @@
  */
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream, statSync, type Stats } from "node:fs";
+import { createReadStream, readFileSync, statSync, type Stats } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
 import { extname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +47,44 @@ function corsHeaders(origin: string | undefined, port: number): Record<string, s
     Vary: "Origin",
   };
 }
+/** Constant-time compare; `timingSafeEqual` throws on a length mismatch, so guard that case first. */
+function tokensEqual(candidate: string, token: string): boolean {
+  const a = Buffer.from(candidate, "utf8");
+  const b = Buffer.from(token, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Auth check for the WS + HTTP data routes: the token may arrive as `?token=`
+ * (WS URL, `<img src>`/`<a href>` for `/file/<t>`) or an `Authorization:
+ * Bearer <token>` header (fetches). Either is accepted; missing/invalid → false.
+ */
+export function tokenOk(url: string | undefined, header: string | undefined, token: string): boolean {
+  let fromQuery: string | null = null;
+  try {
+    fromQuery = new URL(url ?? "/", "http://x").searchParams.get("token");
+  } catch {
+    fromQuery = null;
+  }
+  const fromHeader = header?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null;
+  const candidate = fromQuery ?? fromHeader;
+  if (!candidate) return false;
+  return tokensEqual(candidate, token);
+}
+
+const LOCALHOST_ADDRS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+/** Only the Mac's own browser (the packaged app, or dev on :5173) counts as localhost — a phone over Tailscale never matches. */
+function isLocalhostRequest(req: IncomingMessage): boolean {
+  return LOCALHOST_ADDRS.has(req.socket.remoteAddress ?? "");
+}
+
+/** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
+const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/push/"];
+function isDataRoute(url: string): boolean {
+  return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
+}
+
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const WEB_DIST_DIR = process.env.HOST_STATIC_DIR ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
 const CONTENT_TYPES: Record<string, string> = {
@@ -71,7 +110,24 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): boolean {
+/**
+ * Serve index.html. On localhost only, inject `window.__STEWARD_TOKEN__` so
+ * the Mac's own browser auto-pairs (no manual pairing screen); a phone
+ * (non-localhost) gets the plain page and pairs via the `/pair` QR.
+ */
+function serveIndexHtml(config: HostConfig, req: IncomingMessage, res: ServerResponse, cors: Record<string, string>, filePath: string): void {
+  let html = readFileSync(filePath, "utf8");
+  if (isLocalhostRequest(req)) {
+    const inject = `<script>window.__STEWARD_TOKEN__=${JSON.stringify(config.authToken)}</script>`;
+    html = html.includes("</head>") ? html.replace("</head>", `${inject}</head>`) : html;
+  }
+  const body = Buffer.from(html, "utf8");
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": body.length, ...cors });
+  if (req.method === "HEAD") res.end();
+  else res.end(body);
+}
+
+function tryServeWebAsset(config: HostConfig, req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): boolean {
   if (req.method !== "GET" && req.method !== "HEAD") return false;
 
   let pathname = "/";
@@ -93,6 +149,10 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Recor
   try {
     const stat = statSync(file);
     if (!stat.isFile()) throw new Error("not a file");
+    if (extname(file) === ".html") {
+      serveIndexHtml(config, req, res, cors, file);
+      return true;
+    }
     res.writeHead(200, {
       "Content-Type": CONTENT_TYPES[extname(file)] ?? "application/octet-stream",
       "Content-Length": stat.size,
@@ -107,17 +167,8 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Recor
   } catch {
     if (file !== fallback) {
       try {
-        const stat = statSync(fallback);
-        res.writeHead(200, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Content-Length": stat.size,
-          ...cors,
-        });
-        if (req.method === "HEAD") {
-          res.end();
-        } else {
-          createReadStream(fallback).on("error", () => res.destroy()).pipe(res);
-        }
+        statSync(fallback);
+        serveIndexHtml(config, req, res, cors, fallback);
         return true;
       } catch {
         return false;
@@ -171,6 +222,19 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
   if (req.method === "GET" && url.startsWith("/health")) {
     res.writeHead(200, { "Content-Type": "application/json", ...CORS });
     res.end(JSON.stringify({ ok: true, port: config.port }));
+    return;
+  }
+  // Localhost-only: lets the System page fetch the token to render the pairing QR.
+  // Never answered for a non-localhost (phone/Tailscale) caller.
+  if (req.method === "GET" && url.startsWith("/pair")) {
+    if (!isLocalhostRequest(req)) { res.writeHead(403, CORS); res.end("forbidden"); return; }
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify({ token: config.authToken }));
+    return;
+  }
+  if (isDataRoute(url) && !tokenOk(url, req.headers.authorization, config.authToken)) {
+    res.writeHead(401, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify({ error: "unauthorized" }));
     return;
   }
   if (req.method === "GET" && url.startsWith("/system/status")) {
@@ -242,7 +306,7 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
     createReadStream(entry.path).on("error", () => res.destroy()).pipe(res);
     return;
   }
-  if (tryServeWebAsset(req, res, CORS)) return;
+  if (tryServeWebAsset(config, req, res, CORS)) return;
   res.writeHead(404, CORS);
   res.end("not found");
 }
@@ -252,7 +316,8 @@ export function startServer(config: HostConfig): WebSocketServer {
   const wss = new WebSocketServer({
     server: httpServer,
     verifyClient: ({ req }: { req: IncomingMessage }) =>
-      isAllowedOrigin(req.headers.origin, config.port),
+      isAllowedOrigin(req.headers.origin, config.port) &&
+      tokenOk(req.url, req.headers.authorization, config.authToken),
   });
 
   // Startup housekeeping: drop unsaved temporary chats from previous runs.

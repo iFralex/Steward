@@ -4,6 +4,7 @@
  * approvals, and exposes `sendMessage` / `respondApproval`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { authFetch } from "@/lib/auth";
 import type {
   ActionCenterState,
   ActionStatus,
@@ -104,7 +105,7 @@ export interface HostSocket {
   ) => void;
 }
 
-export function useHostSocket(url: string): HostSocket {
+export function useHostSocket(url: string, token: string | null, onUnauthorized: () => void): HostSocket {
   const httpBase = url.replace(/^ws/, "http"); // host's HTTP origin (upload/resolve/file)
   const wsRef = useRef<WebSocket | null>(null);
   const sessionRef = useRef<string>("");
@@ -150,7 +151,8 @@ export function useHostSocket(url: string): HostSocket {
 
     const connect = () => {
       if (disposed) return;
-      const ws = new WebSocket(url);
+      const wsUrl = token ? `${url}/?token=${encodeURIComponent(token)}` : url;
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.onopen = () => {
         retryMs = 500;
@@ -274,7 +276,7 @@ export function useHostSocket(url: string): HostSocket {
       if (timer) clearTimeout(timer);
       wsRef.current?.close();
     };
-  }, [url]);
+  }, [url, token]);
 
   const send = useCallback((event: ClientEvent) => {
     const ws = wsRef.current;
@@ -297,14 +299,14 @@ export function useHostSocket(url: string): HostSocket {
   const stop = useCallback(() => send({ type: "stop", chatId: activeChatId ?? undefined }), [send, activeChatId]);
 
   const uploadFile = useCallback(async (file: File): Promise<ChannelFile> => {
-    const res = await fetch(`${httpBase}/upload?name=${encodeURIComponent(file.name)}`, {
+    const res = await authFetch(`${httpBase}/upload?name=${encodeURIComponent(file.name)}`, token, onUnauthorized, {
       method: "POST",
       headers: { "Content-Type": file.type || "application/octet-stream" },
       body: file,
     });
     if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`);
     return (await res.json()) as ChannelFile;
-  }, [httpBase]);
+  }, [httpBase, token, onUnauthorized]);
 
   const createChat = useCallback(() => send({ type: "chat_create" }), [send]);
   const selectChat = useCallback((chatId: string) => send({ type: "chat_select", chatId }), [send]);
@@ -376,7 +378,7 @@ export function useHostSocket(url: string): HostSocket {
     const cached = filesRef.current.get(key);
     if (cached) return cached;
     try {
-      const res = await fetch(`${httpBase}/resolve?path=${encodeURIComponent(key)}`);
+      const res = await authFetch(`${httpBase}/resolve?path=${encodeURIComponent(key)}`, token, onUnauthorized);
       if (!res.ok) return undefined;
       const file = (await res.json()) as ChannelFile;
       if (file.path) filesRef.current.set(file.path, file);
@@ -385,7 +387,7 @@ export function useHostSocket(url: string): HostSocket {
     } catch {
       return undefined;
     }
-  }, [httpBase]);
+  }, [httpBase, token, onUnauthorized]);
 
   // Approvals/questions are per-chat (chatId is optional for back-compat): a
   // card with no chatId is treated as belonging to whatever chat is active so

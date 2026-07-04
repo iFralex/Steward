@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type For
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useHostSocket } from "@/lib/host-socket";
+import { resolveToken, setToken } from "@/lib/auth";
 import { ApprovalCard } from "@/components/approval-card";
 import { QuestionCard } from "@/components/question-card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -40,7 +41,13 @@ const HOST_URL = resolveHostUrl();
 const HTTP_BASE = HOST_URL.replace(/^ws/, "http");
 
 function App() {
-  const host = useHostSocket(HOST_URL);
+  // Localhost (the Mac) auto-pairs via the host-injected global; a phone pairs
+  // by scanning the System page's QR (?token=…, consumed once then stripped
+  // from the address bar). No token yet → show the pairing screen instead of
+  // the app; a 401 from any data route (wrong/rotated token) drops back to it.
+  const [authToken, setAuthToken] = useState<string | null>(() => resolveToken());
+  const onUnauthorized = () => setAuthToken(null);
+  const host = useHostSocket(HOST_URL, authToken, onUnauthorized);
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<"chat" | "usage" | "system">("chat");
@@ -178,6 +185,17 @@ function App() {
     host.openActionChat(action.id);
   };
 
+  if (!authToken) {
+    return (
+      <PairingScreen
+        onPaired={(t) => {
+          setToken(t);
+          window.location.reload();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="bg-background text-foreground flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 py-3">
@@ -231,11 +249,11 @@ function App() {
 
       {view === "usage" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <UsagePage httpBase={HTTP_BASE} />
+          <UsagePage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
         </div>
       ) : view === "system" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <SystemPage httpBase={HTTP_BASE} />
+          <SystemPage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
         </div>
       ) : (
       <>
@@ -419,6 +437,39 @@ function App() {
 }
 
 export default App;
+
+/**
+ * Shown instead of the app when no auth token is known yet — a phone landing
+ * on the host over Tailscale for the first time. Paste the token from the
+ * Mac's System page (either read off the QR pairing URL, or typed by hand).
+ */
+function PairingScreen({ onPaired }: { onPaired: (token: string) => void }) {
+  const [value, setValue] = useState("");
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = value.trim();
+    if (trimmed) onPaired(trimmed);
+  };
+  return (
+    <div className="bg-background text-foreground flex h-screen items-center justify-center p-4">
+      <form onSubmit={submit} className="w-full max-w-sm space-y-3 rounded-lg border p-5">
+        <h1 className="text-sm font-semibold">Steward</h1>
+        <p className="text-muted-foreground text-sm">
+          Incolla il token dal tuo Mac (pagina System).
+        </p>
+        <Input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Token di pairing"
+        />
+        <Button type="submit" className="w-full" disabled={!value.trim()}>
+          Salva
+        </Button>
+      </form>
+    </div>
+  );
+}
 
 function ChatSidebar({
   chats,

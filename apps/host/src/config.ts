@@ -4,6 +4,10 @@
  * DEEPSEEK_API_KEY is set in the gateway's env (not here).
  */
 import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { defaultPolicy, type ToolPolicy } from "./core/tool-policy.ts";
 import type { McpServerSpec } from "@steward/mcp-bridge";
 import type { GatewayConfig } from "./core/pi-provider.ts";
@@ -15,6 +19,32 @@ export interface HostConfig {
   approvalTimeoutMs: number;
   gateway: GatewayConfig;
   mcpServers: Record<string, McpServerSpec>;
+  /** Shared secret gating the WS + HTTP data routes (mobile-access M0). */
+  authToken: string;
+}
+
+/** ~/Library/Application Support/Steward — created on demand. */
+function stewardConfigDir(): string {
+  const dir = join(homedir(), "Library", "Application Support", "Steward");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/**
+ * Resolve the host's auth token: `STEWARD_AUTH_TOKEN` env var if set, else a
+ * value persisted at `<Steward config dir>/auth-token`, else a freshly
+ * generated one (written to that file, mode 0o600, for reuse across restarts).
+ */
+export function loadAuthToken(): string {
+  if (process.env.STEWARD_AUTH_TOKEN) return process.env.STEWARD_AUTH_TOKEN;
+  const path = join(stewardConfigDir(), "auth-token");
+  if (existsSync(path)) {
+    const existing = readFileSync(path, "utf8").trim();
+    if (existing) return existing;
+  }
+  const token = randomBytes(24).toString("base64url");
+  writeFileSync(path, token, { mode: 0o600 });
+  return token;
 }
 
 const DEFAULT_SYSTEM_PROMPT = [
@@ -74,6 +104,7 @@ export function loadConfig(): HostConfig {
     systemPrompt: process.env.HOST_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT,
     policy: defaultPolicy,
     approvalTimeoutMs: Number(process.env.APPROVAL_TIMEOUT_MS ?? 5 * 60_000),
+    authToken: loadAuthToken(),
     gateway: {
       baseUrl: process.env.GATEWAY_BASE_URL ?? "http://127.0.0.1:4000/v1",
       tier: process.env.HOST_TIER ?? "tier-5",
