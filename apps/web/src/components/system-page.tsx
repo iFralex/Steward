@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { authFetch } from "@/lib/auth";
+import { enablePush, pushSubscribed, type EnablePushResult } from "@/lib/push";
 import { cn } from "@/lib/utils";
 
 type ServiceState = "ok" | "warning" | "error" | "unknown";
@@ -47,6 +48,9 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   const [savingAutostart, setSavingAutostart] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pairToken, setPairToken] = useState<string | null>(null);
+  const [pushOn, setPushOn] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState<EnablePushResult | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -85,6 +89,17 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     })();
     return () => { alive = false; };
   }, [httpBase]);
+
+  useEffect(() => { void pushSubscribed().then(setPushOn); }, []);
+
+  const turnOnNotifications = async () => {
+    setPushBusy(true);
+    setPushMsg(null);
+    const r = await enablePush(httpBase, token, onUnauthorized);
+    setPushMsg(r);
+    if (r === "ok") setPushOn(true);
+    setPushBusy(false);
+  };
 
   const setAutostart = async (enabled: boolean) => {
     setSavingAutostart(true);
@@ -140,6 +155,31 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
       </div>
 
       {pairToken && <PairingPanel token={pairToken} />}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Smartphone className="size-4" /> Notifiche push
+          </CardTitle>
+          <CardDescription>
+            Ricevi una notifica quando c'è una proposta da approvare, anche ad app chiusa. Su iPhone: aggiungi prima Steward alla schermata Home.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <Button onClick={() => void turnOnNotifications()} disabled={pushBusy || pushOn}>
+            {pushOn ? "Notifiche attive ✓" : pushBusy ? "Attivazione…" : "Attiva notifiche"}
+          </Button>
+          {pushMsg && pushMsg !== "ok" && (
+            <span className="text-muted-foreground text-sm">
+              {pushMsg === "denied"
+                ? "Permesso negato — abilitalo nelle impostazioni del browser."
+                : pushMsg === "unsupported"
+                  ? "Questo browser non supporta le notifiche push (su iPhone serve iOS 16.4+ e l'app in Home)."
+                  : "Attivazione non riuscita — riprova."}
+            </span>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {(status?.services ?? []).map((service) => (

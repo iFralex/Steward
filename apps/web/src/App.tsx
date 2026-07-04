@@ -99,6 +99,27 @@ function App() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [host.messages, host.approvals, host.questions, host.state]);
 
+  // Tapping a push notification: the service worker forwards the payload here so
+  // we jump to the relevant action proposal (or chat).
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      const msg = (e.data ?? {}) as { type?: string; data?: { actionId?: number; chatId?: string } };
+      if (msg.type !== "notification-click") return;
+      const p = msg.data ?? {};
+      setView("chat");
+      if (typeof p.actionId === "number") {
+        setMobilePanel("actions");
+        setSelectedActionId(p.actionId);
+      } else if (typeof p.chatId === "string") {
+        setMobilePanel("chat");
+        host.selectChat(p.chatId);
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, [host]);
+
   const doSend = () => {
     if (!draft.trim() && attachments.length === 0) return;
     host.sendMessage(draft, attachments);
