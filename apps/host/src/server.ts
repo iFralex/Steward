@@ -5,6 +5,7 @@
  */
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { createReadStream, readFileSync, statSync, type Stats } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -370,7 +371,15 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
 export function startServer(config: HostConfig): WebSocketServer {
   const pushRegistry = new PushRegistry(pushSubscriptionsPath());
   setPushRegistry(pushRegistry);
-  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, req, res));
+  // Serve HTTPS if a TLS cert+key are provided (e.g. `tailscale cert`). A secure
+  // context is what unlocks service workers + Web Push on the phone over Tailscale;
+  // over plain http:// those are disabled by the browser. Falls back to http.
+  const tlsCert = process.env.STEWARD_TLS_CERT;
+  const tlsKey = process.env.STEWARD_TLS_KEY;
+  const useTls = !!(tlsCert && tlsKey);
+  const httpServer = useTls
+    ? createHttpsServer({ cert: readFileSync(tlsCert), key: readFileSync(tlsKey) }, (req, res) => handleHttp(config, pushRegistry, req, res))
+    : createServer((req, res) => handleHttp(config, pushRegistry, req, res));
   const wss = new WebSocketServer({
     server: httpServer,
     verifyClient: ({ req }: { req: IncomingMessage }) =>
@@ -573,8 +582,9 @@ export function startServer(config: HostConfig): WebSocketServer {
   // Localhost-only by default; set STEWARD_BIND_HOST=0.0.0.0 to reach the host
   // from the phone over Tailscale (the auth token + origin check still gate it).
   const bindHost = process.env.STEWARD_BIND_HOST ?? "127.0.0.1";
+  const scheme = useTls ? "https" : "http";
   httpServer.listen(config.port, bindHost, () => {
-    console.log(`[host] WebSocket listening on ws://${bindHost}:${config.port} (files at http://${bindHost}:${config.port}/file/<token>)`);
+    console.log(`[host] listening on ${scheme}://${bindHost}:${config.port} (TLS ${useTls ? "on" : "off"})`);
   });
   return wss;
 }

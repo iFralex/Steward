@@ -170,8 +170,11 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
         if (activeChatRef.current) setMessages(messagesByChat.current.get(activeChatRef.current) ?? []);
       };
       ws.onclose = () => {
+        // Ignore a close from a socket that's been disposed or already replaced
+        // by a newer one — otherwise a stale close can flip `connected` back to
+        // false right after a reconnect opened (Send button stuck "disabled").
+        if (disposed || wsRef.current !== ws) return;
         setConnected(false);
-        if (disposed) return;
         timer = setTimeout(connect, retryMs);
         retryMs = Math.min(retryMs * 2, 5000); // 0.5s → 5s cap
       };

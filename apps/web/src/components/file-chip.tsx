@@ -5,6 +5,7 @@
  * it on Finder copies the file out (Chrome/Edge via DownloadURL; Safari ignores
  * that, but open/preview/reveal still work).
  */
+import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authTokenKey, isLocalClient } from "@/lib/auth";
 import { hostHttpBase } from "@/lib/host-url";
@@ -78,8 +79,18 @@ export function FileChip({
         </>
       ) : (
         // On the phone, "open in the native app" / "reveal in Finder" would act on
-        // the Mac — meaningless here. Offer opening the file in the browser instead.
-        <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => window.open(url, "_blank")} title="Apri nel browser">Apri</Button>
+        // the Mac — meaningless here. Offer a download instead (tapping the name
+        // still previews the file; iOS shows PDFs/images natively with a share sheet).
+        <a
+          href={url}
+          download={file.name}
+          onClick={(e) => e.stopPropagation()}
+          className="text-muted-foreground hover:text-foreground rounded p-1"
+          title="Scarica il file"
+          aria-label="Scarica il file"
+        >
+          <Download className="size-4" />
+        </a>
       )}
     </div>
   );
