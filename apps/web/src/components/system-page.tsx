@@ -173,9 +173,11 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
             <span className="text-muted-foreground text-sm">
               {pushMsg === "denied"
                 ? "Permesso negato — abilitalo nelle impostazioni del browser."
-                : pushMsg === "unsupported"
-                  ? "Questo browser non supporta le notifiche push (su iPhone serve iOS 16.4+ e l'app in Home)."
-                  : "Attivazione non riuscita — riprova."}
+                : pushMsg === "needs-home-screen"
+                  ? "Su iPhone: prima aggiungi Steward alla schermata Home (Condividi → Aggiungi a Home), poi apri l'app dall'icona e riprova."
+                  : pushMsg === "unsupported"
+                    ? "Questo browser non supporta le notifiche push (le notifiche funzionano dall'app aggiunta alla Home sul telefono, non dalla finestra sul Mac)."
+                    : "Attivazione non riuscita — riprova."}
             </span>
           )}
         </CardContent>

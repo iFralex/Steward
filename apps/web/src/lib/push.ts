@@ -18,12 +18,30 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-export type EnablePushResult = "ok" | "denied" | "unsupported" | "error";
+export type EnablePushResult = "ok" | "denied" | "unsupported" | "needs-home-screen" | "error";
+
+/** iOS only exposes Web Push to a PWA launched from the Home screen (standalone),
+ *  never in a Safari tab — so a missing PushManager there means "add to Home", not
+ *  "unsupported". */
+function isIOS(): boolean {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); // iPadOS reports as Mac
+}
+function isStandalone(): boolean {
+  return (
+    ("standalone" in navigator && (navigator as { standalone?: boolean }).standalone === true) ||
+    window.matchMedia("(display-mode: standalone)").matches
+  );
+}
 
 /** Request permission, subscribe via the SW, and register with the host. Must be
  *  called from a user gesture (iOS requires it). */
 export async function enablePush(httpBase: string, token: string | null, onUnauthorized: () => void): Promise<EnablePushResult> {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return "unsupported";
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    // On iOS the push APIs only appear once the app is installed to the Home
+    // screen — steer the user there instead of saying "unsupported".
+    return isIOS() && !isStandalone() ? "needs-home-screen" : "unsupported";
+  }
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return "denied";
   try {

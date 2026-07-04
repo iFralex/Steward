@@ -6,15 +6,16 @@
  * that, but open/preview/reveal still work).
  */
 import { Button } from "@/components/ui/button";
-import { authTokenKey } from "@/lib/auth";
+import { authTokenKey, isLocalClient } from "@/lib/auth";
+import { hostHttpBase } from "@/lib/host-url";
 import type { ChannelFile } from "@steward/protocol";
 
-const HTTP_BASE = (import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317").replace(/^ws/, "http");
 // /file/<fileToken> is a gated data route; an <img>/<a> can't set an Authorization
-// header, so the host's auth token rides along as a query param instead.
+// header, so the host's auth token rides along as a query param instead. The base
+// is origin-aware so the URL resolves to the Mac's address from the phone too.
 const fileUrl = (fileToken: string) => {
   const auth = localStorage.getItem(authTokenKey);
-  return `${HTTP_BASE}/file/${fileToken}${auth ? `?token=${encodeURIComponent(auth)}` : ""}`;
+  return `${hostHttpBase()}/file/${fileToken}${auth ? `?token=${encodeURIComponent(auth)}` : ""}`;
 };
 
 function fmtSize(n: number): string {
@@ -43,6 +44,7 @@ export function FileChip({
   onReveal: (token: string) => void;
 }) {
   const url = fileUrl(file.token);
+  const local = isLocalClient(); // Mac-only actions (native open / Finder) hidden on the phone
   return (
     <div
       draggable
@@ -69,8 +71,16 @@ export function FileChip({
         {file.name}
       </button>
       <span className="text-muted-foreground tabular-nums">{fmtSize(file.size)}</span>
-      <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onOpen(file.token)} title="Apri nell'app di sistema">Apri</Button>
-      <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title="Mostra nel Finder">Finder</Button>
+      {local ? (
+        <>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onOpen(file.token)} title="Apri nell'app di sistema">Apri</Button>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title="Mostra nel Finder">Finder</Button>
+        </>
+      ) : (
+        // On the phone, "open in the native app" / "reveal in Finder" would act on
+        // the Mac — meaningless here. Offer opening the file in the browser instead.
+        <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => window.open(url, "_blank")} title="Apri nel browser">Apri</Button>
+      )}
     </div>
   );
 }

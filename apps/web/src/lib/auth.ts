@@ -38,6 +38,16 @@ export function clearToken() {
 export const authTokenKey = KEY;
 
 /**
+ * True when this browser is the Mac itself (localhost). The host injects
+ * `window.__STEWARD_TOKEN__` into the page only for localhost requests, so its
+ * presence means "on the Mac" — used to gate Mac-only actions (open a file in
+ * the native app, reveal in Finder) that make no sense from the phone.
+ */
+export function isLocalClient(): boolean {
+  return typeof window !== "undefined" && !!(window as { __STEWARD_TOKEN__?: string }).__STEWARD_TOKEN__;
+}
+
+/**
  * `fetch` with the auth token attached as `Authorization: Bearer <token>`.
  * On a 401 (token missing/wrong/rotated) it clears the stored token and
  * calls `onUnauthorized` so the caller can fall back to the pairing screen.

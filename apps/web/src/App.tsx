@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useHostSocket } from "@/lib/host-socket";
 import { resolveToken, setToken } from "@/lib/auth";
+import { hostWsUrl, hostHttpBase } from "@/lib/host-url";
 import { ApprovalCard } from "@/components/approval-card";
 import { QuestionCard } from "@/components/question-card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -26,19 +27,8 @@ import { UsagePage } from "@/components/usage-page";
 import { SystemPage } from "@/components/system-page";
 import type { ActionCenterItem, ChannelFile, ChatSummary } from "@steward/protocol";
 
-/**
- * Where to reach the host. In dev, vite (:5173) is not the host, so `VITE_HOST_URL`
- * points at it (:4317). When the host serves this page itself — on localhost OR
- * over Tailscale from the phone — connect back to whatever origin served us, so
- * the WS/HTTP address follows the page (the WS shares the host's HTTP server).
- */
-function resolveHostUrl(): string {
-  if (import.meta.env.VITE_HOST_URL) return import.meta.env.VITE_HOST_URL as string;
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}`;
-}
-const HOST_URL = resolveHostUrl();
-const HTTP_BASE = HOST_URL.replace(/^ws/, "http");
+const HOST_URL = hostWsUrl();
+const HTTP_BASE = hostHttpBase();
 
 function App() {
   // Localhost (the Mac) auto-pairs via the host-injected global; a phone pairs
