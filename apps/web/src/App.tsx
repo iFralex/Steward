@@ -25,7 +25,18 @@ import { UsagePage } from "@/components/usage-page";
 import { SystemPage } from "@/components/system-page";
 import type { ActionCenterItem, ChannelFile, ChatSummary } from "@steward/protocol";
 
-const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
+/**
+ * Where to reach the host. In dev, vite (:5173) is not the host, so `VITE_HOST_URL`
+ * points at it (:4317). When the host serves this page itself — on localhost OR
+ * over Tailscale from the phone — connect back to whatever origin served us, so
+ * the WS/HTTP address follows the page (the WS shares the host's HTTP server).
+ */
+function resolveHostUrl(): string {
+  if (import.meta.env.VITE_HOST_URL) return import.meta.env.VITE_HOST_URL as string;
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}`;
+}
+const HOST_URL = resolveHostUrl();
 const HTTP_BASE = HOST_URL.replace(/^ws/, "http");
 
 function App() {
@@ -33,6 +44,9 @@ function App() {
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
   const [view, setView] = useState<"chat" | "usage" | "system">("chat");
+  // On phones the 4-column layout shows one panel at a time (bottom nav switches).
+  // Ignored at lg+ where all columns render side by side.
+  const [mobilePanel, setMobilePanel] = useState<"chats" | "chat" | "actions">("chat");
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
@@ -168,7 +182,7 @@ function App() {
     <div className="bg-background text-foreground flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-sm font-semibold">Personal Agent</h1>
+          <h1 className="text-sm font-semibold">Steward</h1>
           <div className="bg-muted flex rounded-md p-0.5 text-xs">
             {(["chat", "usage", "system"] as const).map((v) => (
               <button
@@ -224,19 +238,20 @@ function App() {
           <SystemPage httpBase={HTTP_BASE} />
         </div>
       ) : (
-      <div className="grid min-h-0 flex-1 grid-cols-[210px_330px_minmax(0,1fr)_minmax(330px,0.85fr)]">
-        <aside className="min-h-0 border-r">
+      <>
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[210px_330px_minmax(0,1fr)_minmax(330px,0.85fr)]">
+        <aside className={cn("min-h-0 border-r lg:block", mobilePanel === "chats" ? "block" : "hidden")}>
           <ChatSidebar
             chats={host.chats}
             activeChatId={host.activeChatId}
-            onSelect={host.selectChat}
+            onSelect={(id) => { host.selectChat(id); setMobilePanel("chat"); }}
             onCreate={host.createChat}
             onRename={host.renameChat}
             onDelete={host.deleteChat}
             onSave={host.saveChat}
           />
         </aside>
-        <aside className="min-h-0 border-r">
+        <aside className={cn("min-h-0 border-r lg:block", mobilePanel === "actions" && !selectedAction ? "block" : "hidden")}>
           <ActionCenterPanel
             items={host.actionCenter?.items ?? []}
             diagnostics={host.actionCenter?.diagnostics}
@@ -254,7 +269,7 @@ function App() {
           />
         </aside>
 
-        <main className="flex min-h-0 flex-col">
+        <main className={cn("min-h-0 flex-col lg:flex", mobilePanel === "chat" ? "flex" : "hidden")}>
           <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
             {host.messages.map((m, i) => {
               const prev = host.messages[i - 1];
@@ -369,7 +384,10 @@ function App() {
           </form>
         </main>
 
-        <aside className="min-h-0 overflow-y-auto border-l p-4">
+        <aside className={cn("min-h-0 overflow-y-auto border-l p-4 lg:block", mobilePanel === "actions" && selectedAction ? "block" : "hidden")}>
+          <button type="button" className="text-muted-foreground mb-2 text-xs lg:hidden" onClick={() => setSelectedActionId(null)}>
+            ← Azioni
+          </button>
           <ActionDetail
             action={selectedAction}
             onOpenChat={openActionInChat}
@@ -379,6 +397,22 @@ function App() {
           />
         </aside>
       </div>
+      <nav className="flex border-t lg:hidden">
+        {([["chats", "💬 Chat"], ["chat", "🗨 Agente"], ["actions", "⚡ Azioni"]] as const).map(([p, label]) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => setMobilePanel(p)}
+            className={cn(
+              "flex-1 py-2.5 text-center text-xs transition",
+              mobilePanel === p ? "text-foreground font-medium" : "text-muted-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+      </>
       )}
     </div>
   );
