@@ -26,7 +26,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     override init() {
         let env = ProcessInfo.processInfo.environment
-        let fromEnv = env["LLM_WIKI_LAUNCHER_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fromEnv = (env["STEWARD_LAUNCHER_URL"] ?? env["LLM_WIKI_LAUNCHER_URL"])?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fromArg = CommandLine.arguments.dropFirst().first?.trimmingCharacters(in: .whitespacesAndNewlines)
         let explicit = [fromArg, fromEnv].contains { value in
             value?.isEmpty == false
@@ -36,7 +36,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         }.first ?? defaultURL
         self.appURL = URL(string: rawURL) ?? URL(string: defaultURL)!
         self.explicitURL = explicit
-        self.shouldStartServices = env["LLM_WIKI_LAUNCHER_START_SERVICES"] != "0"
+        self.shouldStartServices = (env["STEWARD_LAUNCHER_START_SERVICES"] ?? env["LLM_WIKI_LAUNCHER_START_SERVICES"]) != "0"
         self.repoRoot = findRepoRoot()
         let resources = Bundle.main.resourceURL
         let services = resources?.appendingPathComponent("services")
@@ -161,7 +161,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             return
         }
         guard let repoRoot else {
-            loadStatus("Could not find the LLM Wiki repository root. Set LLM_WIKI_REPO_ROOT or launch from the repo.")
+            loadStatus("Could not find the Steward repository root. Set STEWARD_REPO_ROOT or launch from the repo.")
             load(appURL, after: 2)
             return
         }
@@ -224,7 +224,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
                 _ = await waitUntilReachable(modelGatewayURL.appendingPathComponent("health"), timeoutSeconds: 20)
             }
 
-            if ProcessInfo.processInfo.environment["LLM_WIKI_SCHEDULER"] != "0" {
+            if (ProcessInfo.processInfo.environment["STEWARD_SCHEDULER"] ?? ProcessInfo.processInfo.environment["LLM_WIKI_SCHEDULER"]) != "0" {
                 await MainActor.run {
                     startProcess([node.path, servicesRoot.appendingPathComponent("scheduler/index.js").path], in: resourcesRoot, logName: "scheduler")
                 }
@@ -437,7 +437,7 @@ private func fourCharCode(_ string: String) -> FourCharCode {
 private func findRepoRoot() -> URL? {
     let env = ProcessInfo.processInfo.environment
     let candidates = [
-        env["LLM_WIKI_REPO_ROOT"],
+        env["STEWARD_REPO_ROOT"] ?? env["LLM_WIKI_REPO_ROOT"],
         env["npm_package_json"].flatMap { URL(fileURLWithPath: $0).deletingLastPathComponent().path },
         FileManager.default.currentDirectoryPath,
     ].compactMap { $0 }.map { URL(fileURLWithPath: $0) }
@@ -534,9 +534,14 @@ private func escapeHTML(_ value: String) -> String {
 }
 
 private func loadUserConfig(into env: inout [String: String]) {
-    let config = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Steward/config.env")
-    guard let text = try? String(contentsOf: config, encoding: .utf8) else {
+    // Prefer the new Steward path; fall back to the legacy "LLM Wiki" location so
+    // an existing install keeps its keys/overrides after the rename.
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let config = home.appendingPathComponent("Library/Application Support/Steward/config.env")
+    let legacy = home.appendingPathComponent("Library/Application Support/LLM Wiki/config.env")
+    let loaded = (try? String(contentsOf: config, encoding: .utf8))
+        ?? (try? String(contentsOf: legacy, encoding: .utf8))
+    guard let text = loaded else {
         return
     }
     for rawLine in text.split(whereSeparator: \.isNewline) {
