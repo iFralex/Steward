@@ -8,7 +8,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
-import { isUnreadableSecret, RG_IGNORE_GLOBS } from "@llm-wiki/sensitive-path";
+import { isUnreadableSecret, RG_IGNORE_GLOBS } from "@steward/sensitive-path";
 
 /** Read-only inspection/search binaries — safe to run without approval. */
 export const READ_BINARIES = new Set([

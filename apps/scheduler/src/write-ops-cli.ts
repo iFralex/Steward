@@ -9,7 +9,7 @@ import { runOsa } from "../../mail-mcp/src/osascript.ts";
 import type { ReplyArgs, SendArgs } from "../../mail-mcp/src/types.ts";
 import { IndexDb } from "../../calendar-mcp/src/index-db.ts";
 import { indexDbPath as calendarIndexDbPath } from "../../calendar-mcp/src/paths.ts";
-import { WriteOpsStore, type WriteOpRow } from "@llm-wiki/write-ops";
+import { WriteOpsStore, type WriteOpRow } from "@steward/write-ops";
 
 const execFileAsync = promisify(execFile);
 

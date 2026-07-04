@@ -5,7 +5,7 @@
  */
 import { fileURLToPath } from "node:url";
 import { defaultPolicy, type ToolPolicy } from "./core/tool-policy.ts";
-import type { McpServerSpec } from "@llm-wiki/mcp-bridge";
+import type { McpServerSpec } from "@steward/mcp-bridge";
 import type { GatewayConfig } from "./core/pi-provider.ts";
 
 export interface HostConfig {

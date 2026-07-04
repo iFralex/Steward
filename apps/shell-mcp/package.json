@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/shell-mcp",
+  "name": "@steward/shell-mcp",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/sensitive-path": "*",
+    "@steward/sensitive-path": "*",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {

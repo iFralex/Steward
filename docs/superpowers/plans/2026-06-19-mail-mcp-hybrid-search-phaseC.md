@@ -6,7 +6,7 @@
 
 **Architecture:** A pure RRF module fuses an FTS ranking and a vector ranking. `db-search` opens the Mail DB read-only (via a new `Store.openReadonly`), builds SQL filters from `SearchArgs`, runs filtered FTS + (when embeddings exist and dims agree) KNN, fuses with RRF, groups by `thread_id`, and returns `MessageSummary[]`. `read_message` reads from the DB and falls back to a scoped AppleScript read (account+mailbox) when the body is not downloaded. mail-mcp imports the Store + embedding client from `apps/mail-mirror` (cross-workspace, as the AppleScript fallback already does the reverse).
 
-**Tech Stack:** TypeScript ESM, `better-sqlite3` + `sqlite-vec` (via mail-mirror's Store), `@llm-wiki/embedding`. Tests: `node --import tsx --test`.
+**Tech Stack:** TypeScript ESM, `better-sqlite3` + `sqlite-vec` (via mail-mirror's Store), `@steward/embedding`. Tests: `node --import tsx --test`.
 
 Spec: `docs/superpowers/specs/2026-06-18-mail-hybrid-search-design.md` (Phase C). Builds on `apps/mail-mirror` (Store, `knn`, `embedText`, `loadEmbedConfig`, `dbPath`, vec_dim sentinel) and `packages/embedding`.
 
@@ -20,13 +20,13 @@ Spec: `docs/superpowers/specs/2026-06-18-mail-hybrid-search-design.md` (Phase C)
 - `account` filter matches the stored `m.account` value (the account UUID — sub-project 1). Friendly account-name filtering is a documented follow-up (the mirror would need to store names). `mailbox` matches the `.mbox` base name (e.g. INBOX, Sent Items).
 - Reuse: import `Store`/`dbPath`/`loadEmbedConfig`/`embedText` from `apps/mail-mirror` via relative paths; the scoped read reuses mail-mcp's `osascript`/`parse`.
 - Mail DB missing/empty → `search_messages` returns a clear "mirror not populated — run mail-mirror backfill" message, not silence.
-- ESM TypeScript; new mail-mcp deps allowed: `better-sqlite3`, `sqlite-vec`, `@llm-wiki/embedding` (resolve the cross-workspace imports). No others.
+- ESM TypeScript; new mail-mcp deps allowed: `better-sqlite3`, `sqlite-vec`, `@steward/embedding` (resolve the cross-workspace imports). No others.
 - Commit messages end with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`; no apostrophes in heredoc commit bodies.
 
 ## File Structure
 
 - `apps/mail-mirror/src/store.ts` — MODIFY: add `Store.openReadonly(path)` (open `{ readonly: true }`, skip WAL pragma + schema).
-- `apps/mail-mcp/package.json` — MODIFY: add `better-sqlite3`, `sqlite-vec`, `@llm-wiki/embedding` deps.
+- `apps/mail-mcp/package.json` — MODIFY: add `better-sqlite3`, `sqlite-vec`, `@steward/embedding` deps.
 - `apps/mail-mcp/src/rrf.ts` — CREATE: pure reciprocal rank fusion.
 - `apps/mail-mcp/src/filters.ts` — CREATE: `SearchArgs` → SQL WHERE clause + params (pure).
 - `apps/mail-mcp/src/db-search.ts` — CREATE: `searchDb(store, args, embedQuery?)` → `MessageSummary[]`.
@@ -128,7 +128,7 @@ git commit -m "feat(mail-mcp): reciprocal rank fusion module"
 
 - [ ] **Step 1: Add deps to mail-mcp**
 
-In `apps/mail-mcp/package.json` `dependencies`, add: `"better-sqlite3": "^11.0.0"`, `"sqlite-vec": "^0.1.7-alpha.2"`, `"@llm-wiki/embedding": "*"`. Run `npm install` from the repo root.
+In `apps/mail-mcp/package.json` `dependencies`, add: `"better-sqlite3": "^11.0.0"`, `"sqlite-vec": "^0.1.7-alpha.2"`, `"@steward/embedding": "*"`. Run `npm install` from the repo root.
 
 - [ ] **Step 2: Write failing tests**
 

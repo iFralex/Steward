@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/embedding",
+  "name": "@steward/embedding",
   "version": "0.0.0",
   "private": true,
   "type": "module",

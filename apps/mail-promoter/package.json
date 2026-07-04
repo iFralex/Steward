@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/mail-promoter",
+  "name": "@steward/mail-promoter",
   "version": "0.0.0",
   "private": true,
   "type": "module",

@@ -1,8 +1,8 @@
 {
-  "name": "llm-wiki-monorepo",
+  "name": "steward-monorepo",
   "private": true,
   "scripts": {
-    "build:web-host": "npm run build -w @llm-wiki/web && npm run typecheck -w @llm-wiki/host",
+    "build:web-host": "npm run build -w @steward/web && npm run typecheck -w @steward/host",
     "launcher:mac": "swift run --package-path apps/mac-launcher LLMWikiLauncher",
     "package:mac": "node --import tsx apps/mac-launcher/package-mac.mts"
   },

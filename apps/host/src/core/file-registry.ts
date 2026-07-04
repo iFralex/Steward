@@ -7,8 +7,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
-import type { ChannelFile } from "@llm-wiki/protocol";
-import { isServableSecret } from "@llm-wiki/sensitive-path";
+import type { ChannelFile } from "@steward/protocol";
+import { isServableSecret } from "@steward/sensitive-path";
 
 const MIME: Record<string, string> = {
   ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",

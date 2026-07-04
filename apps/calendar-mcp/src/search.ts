@@ -1,4 +1,4 @@
-import { rrf } from "@llm-wiki/search";
+import { rrf } from "@steward/search";
 import type { EventFilter, IndexDb } from "./index-db.ts";
 
 /**

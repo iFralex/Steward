@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/sensitive-path",
+  "name": "@steward/sensitive-path",
   "version": "0.0.0",
   "private": true,
   "type": "module",

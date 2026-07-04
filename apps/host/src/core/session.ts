@@ -4,7 +4,7 @@
  * decision) and the channel (which delivers it).
  */
 import { randomUUID } from "node:crypto";
-import type { ServerEvent } from "@llm-wiki/protocol";
+import type { ServerEvent } from "@steward/protocol";
 import type { ApprovalOutcome, ApprovalRequest, RequestApproval } from "./permission-gate.ts";
 
 export type Emit = (event: ServerEvent) => void;

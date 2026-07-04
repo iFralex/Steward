@@ -1,1 +1,1 @@
-export { rrf } from "@llm-wiki/search";
+export { rrf } from "@steward/search";

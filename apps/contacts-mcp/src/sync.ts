@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { embedTexts } from "@llm-wiki/search";
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import { embedTexts } from "@steward/search";
+import type { EmbeddingConfig } from "@steward/embedding";
 import { displayNameOf, type IndexDb } from "./index-db.ts";
 import type { Contact } from "./types.ts";
 

@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { VectorStore } from "@llm-wiki/search";
+import { VectorStore } from "@steward/search";
 import type { CalEvent } from "./types.ts";
 
 /** Candidate-restricting filters, applied to the `events` mirror before ranking. */

@@ -157,7 +157,7 @@ mkdirSync(macosDir, { recursive: true });
 mkdirSync(resourcesDir, { recursive: true });
 mkdirSync(servicesDir, { recursive: true });
 
-run("npm", ["run", "build", "-w", "@llm-wiki/web"]);
+run("npm", ["run", "build", "-w", "@steward/web"]);
 if (skipLLMWikiBuild) {
   console.log("$ PACKAGE_SKIP_LLM_WIKI_BUILD=1: reusing existing LLM Wiki Tauri bundle");
   findLLMWikiAppBundle();

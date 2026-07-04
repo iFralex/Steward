@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/mail-mcp",
+  "name": "@steward/mail-mcp",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,12 +9,12 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/applescript": "*",
-    "@llm-wiki/embedding": "*",
-    "@llm-wiki/mail-mirror": "*",
-    "@llm-wiki/search": "*",
-    "@llm-wiki/sensitive-path": "*",
-    "@llm-wiki/write-ops": "*",
+    "@steward/applescript": "*",
+    "@steward/embedding": "*",
+    "@steward/mail-mirror": "*",
+    "@steward/search": "*",
+    "@steward/sensitive-path": "*",
+    "@steward/write-ops": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.7-alpha.2"

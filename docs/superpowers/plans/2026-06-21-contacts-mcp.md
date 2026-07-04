@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build `apps/contacts-mcp`, an MCP server that searches/reads/resolves/writes macOS Contacts, reusing the shared `@llm-wiki/applescript` and `@llm-wiki/search` packages.
+**Goal:** Build `apps/contacts-mcp`, an MCP server that searches/reads/resolves/writes macOS Contacts, reusing the shared `@steward/applescript` and `@steward/search` packages.
 
 **Architecture:** Reads come from Apple's per-source AddressBook stores (read-only, FDA), aggregated across `Sources/*/AddressBook-v22.abcddb` and deduped; writes go through AppleScript (Automation). Hybrid keyword+semantic search runs over a connector-owned sidecar index (FTS5 + sqlite-vec) populated by a sync step that embeds via the LLM gateway. `resolve_recipient` turns a free-text descriptor into ranked email-bearing candidates.
 
-**Tech Stack:** TypeScript (ESM, `tsx`), `@modelcontextprotocol/sdk`, `better-sqlite3`, `sqlite-vec`, `@llm-wiki/search`, `@llm-wiki/applescript`, `@llm-wiki/embedding`, `node:test`, macOS `osascript`.
+**Tech Stack:** TypeScript (ESM, `tsx`), `@modelcontextprotocol/sdk`, `better-sqlite3`, `sqlite-vec`, `@steward/search`, `@steward/applescript`, `@steward/embedding`, `node:test`, macOS `osascript`.
 
 ## Global Constraints
 
@@ -15,7 +15,7 @@
 - Commit only on the current feature branch; never `main`. Commit trailer exactly: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` (heredoc, no apostrophes in the body).
 - Embeddings route through the LLM gateway by default (model `local-embed`, endpoint `http://127.0.0.1:4000/v1/embeddings`); `MAIL_EMBED_ENDPOINT=off` disables.
 - No new TCC permission: reads use existing FDA, writes use the existing Automation grant.
-- All user-supplied strings interpolated into AppleScript only via `esc()` from `@llm-wiki/applescript`.
+- All user-supplied strings interpolated into AppleScript only via `esc()` from `@steward/applescript`.
 - `"type": "module"`; test script `node --import tsx --test "test/**/*.test.ts"`.
 - The new app must be added explicitly to the root `package.json` `workspaces` array (apps are listed explicitly there; only `packages/*` is globbed).
 - Contacts live across `~/Library/Application Support/AddressBook/Sources/<UUID>/AddressBook-v22.abcddb`. Schema: `ZABCDRECORD(Z_PK, ZUNIQUEID, ZFIRSTNAME, ZLASTNAME, ZNICKNAME, ZORGANIZATION, ZNOTE)`; `ZABCDEMAILADDRESS(ZOWNER→Z_PK, ZADDRESS, ZADDRESSNORMALIZED, ZLABEL)`; `ZABCDPHONENUMBER(ZOWNER→Z_PK, ZFULLNUMBER, ZLABEL)`. Labels look like `_$!<Home>!$_` or plain (`Gmail`).
@@ -56,7 +56,7 @@
 `apps/contacts-mcp/package.json`:
 ```json
 {
-  "name": "@llm-wiki/contacts-mcp",
+  "name": "@steward/contacts-mcp",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -66,9 +66,9 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/applescript": "*",
-    "@llm-wiki/embedding": "*",
-    "@llm-wiki/search": "*",
+    "@steward/applescript": "*",
+    "@steward/embedding": "*",
+    "@steward/search": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.7-alpha.2"
@@ -444,7 +444,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/contacts-mcp/test/index-db.test.ts`
 
 **Interfaces:**
-- Consumes: `VectorStore` (`@llm-wiki/search`), `Contact` (types.ts).
+- Consumes: `VectorStore` (`@steward/search`), `Contact` (types.ts).
 - Produces: `interface ContactFilter {}` (reserved; no scalar filters in v1 — see note); `class IndexDb` with `static open(path)`, `getState/setState`, `upsertContact(c: Contact, sourceHash: string): number`, `deleteMissing(keepUids: string[]): number`, `allUids(): string[]`, `embedStateFor(uid)`, `recordEmbed(uid, sourceHash, dim, model)`, `vectors: VectorStore`, `ftsSearch(query: string, limit: number): string[]`, `rowidToUid(rowid)`, `close()`. `displayNameOf(c)` helper exported.
 
 > v1 has no scalar contact filters (account/date make no sense for contacts), so search needs no pre-limit filter pass — the calendar under-return fix does not apply here. `ftsSearch` therefore takes no filter argument.
@@ -500,7 +500,7 @@ Expected: FAIL — module not found.
 `apps/contacts-mcp/src/index-db.ts`:
 ```ts
 import Database from "better-sqlite3";
-import { VectorStore } from "@llm-wiki/search";
+import { VectorStore } from "@steward/search";
 import type { Contact } from "./types.ts";
 
 export function displayNameOf(c: Contact): string {
@@ -625,7 +625,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/contacts-mcp/test/sync.test.ts`
 
 **Interfaces:**
-- Consumes: `IndexDb`, `displayNameOf`, `Contact`; `embedTexts` (`@llm-wiki/search`); `EmbeddingConfig` (`@llm-wiki/embedding`).
+- Consumes: `IndexDb`, `displayNameOf`, `Contact`; `embedTexts` (`@steward/search`); `EmbeddingConfig` (`@steward/embedding`).
 - Produces: `sourceHash(c: Contact): string`; `loadEmbedConfig(env?)`; `syncIndex(deps: { store: { allForIndex(): Contact[] }; index: IndexDb; embedConfig: EmbeddingConfig | null; embedBatch?: (texts: string[], cfg: EmbeddingConfig) => Promise<(number[] | null)[]> }): Promise<{ upserted: number; embedded: number; deleted: number }>`.
 
 - [ ] **Step 1: Write the failing test**
@@ -674,7 +674,7 @@ Expected: FAIL — module not found.
 
 `apps/contacts-mcp/src/embed-config.ts`:
 ```ts
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import type { EmbeddingConfig } from "@steward/embedding";
 
 export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig | null {
   const endpoint = env.MAIL_EMBED_ENDPOINT ?? "http://127.0.0.1:4000/v1/embeddings";
@@ -690,8 +690,8 @@ export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): Embedding
 `apps/contacts-mcp/src/sync.ts`:
 ```ts
 import { createHash } from "node:crypto";
-import { embedTexts } from "@llm-wiki/search";
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import { embedTexts } from "@steward/search";
+import type { EmbeddingConfig } from "@steward/embedding";
 import { displayNameOf, type IndexDb } from "./index-db.ts";
 import type { Contact } from "./types.ts";
 
@@ -765,7 +765,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/contacts-mcp/test/search.test.ts`
 
 **Interfaces:**
-- Consumes: `IndexDb`, `rrf` (`@llm-wiki/search`).
+- Consumes: `IndexDb`, `rrf` (`@steward/search`).
 - Produces: `hybridSearch(deps: { index: IndexDb; embedQuery?: (text: string) => Promise<number[] | null> }, query: string, limit: number): Promise<string[]>`.
 
 - [ ] **Step 1: Write the failing test**
@@ -816,7 +816,7 @@ Expected: FAIL — module not found.
 
 `apps/contacts-mcp/src/search.ts`:
 ```ts
-import { rrf } from "@llm-wiki/search";
+import { rrf } from "@steward/search";
 import type { IndexDb } from "./index-db.ts";
 
 const CANDIDATE_POOL = 200;
@@ -982,7 +982,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/contacts-mcp/test/applescript.test.ts`
 
 **Interfaces:**
-- Consumes: `esc`, `runOsa`, `OsaExec` (`@llm-wiki/applescript`).
+- Consumes: `esc`, `runOsa`, `OsaExec` (`@steward/applescript`).
 - Produces: `mapContactsError(stderr: string): string`; `buildCreate(a: CreateArgs): string`; `buildUpdate(a: UpdateArgs): string`; runners `createContact(a, exec?): Promise<string>`, `updateContact(a, exec?): Promise<void>`. Types `CreateArgs { firstName?; lastName?; organization?; nickname?; note?; emails?: { address: string; label?: string }[]; phones?: { number: string; label?: string }[] }`, `UpdateArgs extends CreateArgs { uid... }` — see note: update is keyed by AppleScript person `id`, passed as `personId: string`.
 
 > Contacts.app AppleScript references a person by its `id`. The connector's sidecar `uid` is a dedup hash, NOT the AppleScript id. For v1, `update_contact` takes the AppleScript `personId` directly (the create path returns it; a future task can map sidecar uid -> personId). Keep `UpdateArgs = { personId: string } & Partial<CreateArgs>`.
@@ -1027,7 +1027,7 @@ Expected: FAIL — module not found.
 
 `apps/contacts-mcp/src/applescript.ts`:
 ```ts
-import { esc, runOsa, type OsaExec } from "@llm-wiki/applescript";
+import { esc, runOsa, type OsaExec } from "@steward/applescript";
 
 export interface CreateArgs {
   firstName?: string; lastName?: string; organization?: string; nickname?: string; note?: string;
@@ -1319,7 +1319,7 @@ import { IndexDb } from "./index-db.ts";
 import { hybridSearch } from "./search.ts";
 import { resolveRecipient } from "./resolve.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
-import { embedText } from "@llm-wiki/search";
+import { embedText } from "@steward/search";
 import { createContact, updateContact } from "./applescript.ts";
 import { parseSearchArgs, parseResolveArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { sourceDbPaths, indexDbPath } from "./paths.ts";
@@ -1397,7 +1397,7 @@ Expected: tsc clean. Fix any signature drift against earlier tasks.
 import { AddressBookStore } from "./src/addressbook-store.ts";
 import { sourceDbPaths } from "./src/paths.ts";
 import { createContact } from "./src/applescript.ts";
-import { runOsa, esc } from "@llm-wiki/applescript";
+import { runOsa, esc } from "@steward/applescript";
 
 const store = AddressBookStore.load(sourceDbPaths());
 console.log("contacts:", store.listContacts().length);
@@ -1429,7 +1429,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ## Notes for the executor
 
-- No extraction phase: `@llm-wiki/applescript` and `@llm-wiki/search` already exist and are consumed directly.
+- No extraction phase: `@steward/applescript` and `@steward/search` already exist and are consumed directly.
 - The vec dim state key is `vec_contacts_dim` (VectorStore default `${table}_dim` for table `vec_contacts`); `search.ts` reads that literal.
 - `realtest.mts` creates and deletes a throwaway contact via AppleScript — never run it in CI; it is outside the `test/**/*.test.ts` glob.
 - Unlike calendar-mcp, contacts have no scalar filters (no account/date), so there is no pre-limit-filter concern; `ftsSearch` takes no filter argument and search returns the top `limit` after RRF over a 200-candidate pool.

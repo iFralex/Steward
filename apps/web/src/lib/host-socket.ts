@@ -1,5 +1,5 @@
 /**
- * React hook for the host WebSocket: speaks the shared `@llm-wiki/protocol`
+ * React hook for the host WebSocket: speaks the shared `@steward/protocol`
  * event contract. Accumulates the chat transcript, tracks pending tool
  * approvals, and exposes `sendMessage` / `respondApproval`.
  */
@@ -14,7 +14,7 @@ import type {
   PersistedMessage,
   ServerEvent,
   SessionState,
-} from "@llm-wiki/protocol";
+} from "@steward/protocol";
 
 export interface ChatMessage {
   id: string;

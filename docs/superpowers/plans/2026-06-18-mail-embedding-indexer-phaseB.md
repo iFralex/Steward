@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a vector index (sqlite-vec) to the Mail DB and an embedding indexer in `apps/mail-mirror` that embeds each message via the shared `@llm-wiki/embedding` package and a configured OpenAI-compatible endpoint — recent-first, resumable, degrading gracefully to no-op when the endpoint is unreachable.
+**Goal:** Add a vector index (sqlite-vec) to the Mail DB and an embedding indexer in `apps/mail-mirror` that embeds each message via the shared `@steward/embedding` package and a configured OpenAI-compatible endpoint — recent-first, resumable, degrading gracefully to no-op when the endpoint is unreachable.
 
 **Architecture:** A `vec_messages` sqlite-vec virtual table (rowid = `messages.rowid`, like FTS) plus an `embed_state` table track embeddings. `embed-config` reads the endpoint/model from env; `embed-client.embedText` wraps the shared package with Node `fetch`; `embed.embedMessage`/`embedBackfill` embed messages needing it (new or changed), skipping unchanged ones via a source hash; a worker drains the queue in the daemon and an `embed` CLI does the backfill.
 
-**Tech Stack:** TypeScript ESM, `better-sqlite3` + `sqlite-vec`, `@llm-wiki/embedding`. Tests: `node --import tsx --test`.
+**Tech Stack:** TypeScript ESM, `better-sqlite3` + `sqlite-vec`, `@steward/embedding`. Tests: `node --import tsx --test`.
 
 Spec: `docs/superpowers/specs/2026-06-18-mail-hybrid-search-design.md` (Phase B). Builds on `apps/mail-mirror` (sub-project 1) and `packages/embedding` (Phase A).
 
@@ -15,15 +15,15 @@ Spec: `docs/superpowers/specs/2026-06-18-mail-hybrid-search-design.md` (Phase B)
 - sqlite-vec VALIDATED API (from the spike): `import * as sqliteVec from "sqlite-vec"; sqliteVec.load(db)` (v0.1.x); table `CREATE VIRTUAL TABLE vec_messages USING vec0(embedding float[D])`; INSERT binds rowid as a **BigInt** and the vector as **JSON text** (`JSON.stringify(vector)`); KNN as a SUBQUERY: `SELECT rowid, distance FROM vec_messages WHERE embedding MATCH ? ORDER BY distance LIMIT ?` (L2 distance, smaller = nearer), then JOIN to `messages`.
 - Vectors stored ON DISK (low RAM, <250MB budget). One vector per message (subject + body, truncated). No chunking.
 - Embeddings are an OPTIONAL enhancement: if `MAIL_EMBED_ENDPOINT` is unset or the endpoint is unreachable, the indexer no-ops and search stays FTS-only. Never throw on an unreachable endpoint.
-- Reuse: embedding goes through `@llm-wiki/embedding`'s `fetchEmbedding` (Phase A). Both Node global `fetch` and the package's `EmbeddingDeps.fetch` are structurally compatible (verified) — no casts needed.
+- Reuse: embedding goes through `@steward/embedding`'s `fetchEmbedding` (Phase A). Both Node global `fetch` and the package's `EmbeddingDeps.fetch` are structurally compatible (verified) — no casts needed.
 - The mirror/indexer is the only SQLite writer (WAL).
-- ESM TypeScript; new deps allowed: `sqlite-vec` (runtime), `@llm-wiki/embedding` (workspace). No others.
+- ESM TypeScript; new deps allowed: `sqlite-vec` (runtime), `@steward/embedding` (workspace). No others.
 - Tests: `node --import tsx --test "test/**/*.test.ts"`. sqlite-vec tests use a real in-memory DB (the extension loads — validated).
 - Commit messages end with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`; no apostrophes in heredoc commit bodies.
 
 ## File Structure
 
-- `apps/mail-mirror/package.json` — MODIFY: add `sqlite-vec` + `@llm-wiki/embedding` deps.
+- `apps/mail-mirror/package.json` — MODIFY: add `sqlite-vec` + `@steward/embedding` deps.
 - `apps/mail-mirror/src/embed-config.ts` — CREATE: `loadEmbedConfig(env)` → `EmbeddingConfig | null`.
 - `apps/mail-mirror/src/embed-client.ts` — CREATE: `embedText(text, cfg, fetchImpl?)` → `number[] | null`.
 - `apps/mail-mirror/src/store.ts` — MODIFY: sqlite-vec load, `vec_messages` + `embed_state`, embedding upsert/knn/state queries.
@@ -43,11 +43,11 @@ Spec: `docs/superpowers/specs/2026-06-18-mail-hybrid-search-design.md` (Phase B)
 **Interfaces:**
 - Produces:
   - `loadEmbedConfig(env?: NodeJS.ProcessEnv): EmbeddingConfig | null` — null when `MAIL_EMBED_ENDPOINT` is unset.
-  - `embedText(text: string, cfg: EmbeddingConfig, fetchImpl?: typeof fetch): Promise<number[] | null>` — wraps `@llm-wiki/embedding`'s `fetchEmbedding`; returns the vector or null on any failure.
+  - `embedText(text: string, cfg: EmbeddingConfig, fetchImpl?: typeof fetch): Promise<number[] | null>` — wraps `@steward/embedding`'s `fetchEmbedding`; returns the vector or null on any failure.
 
 - [ ] **Step 1: Add dependencies**
 
-In `apps/mail-mirror/package.json`, add to `dependencies`: `"sqlite-vec": "^0.1.7-alpha.2"` and `"@llm-wiki/embedding": "*"`. Run `npm install` from the repo root. (If the exact sqlite-vec version errors, use the latest `0.1.x` that installs; the API in this plan is stable across 0.1.x.)
+In `apps/mail-mirror/package.json`, add to `dependencies`: `"sqlite-vec": "^0.1.7-alpha.2"` and `"@steward/embedding": "*"`. Run `npm install` from the repo root. (If the exact sqlite-vec version errors, use the latest `0.1.x` that installs; the API in this plan is stable across 0.1.x.)
 
 - [ ] **Step 2: Write failing tests**
 
@@ -101,7 +101,7 @@ Expected: FAIL — cannot find the new modules.
 
 `apps/mail-mirror/src/embed-config.ts`:
 ```ts
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import type { EmbeddingConfig } from "@steward/embedding";
 
 export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig | null {
   const endpoint = env.MAIL_EMBED_ENDPOINT;
@@ -116,7 +116,7 @@ export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): Embedding
 
 `apps/mail-mirror/src/embed-client.ts`:
 ```ts
-import { fetchEmbedding, type EmbeddingConfig } from "@llm-wiki/embedding";
+import { fetchEmbedding, type EmbeddingConfig } from "@steward/embedding";
 
 /** Embed text via the shared package using Node fetch. Returns null on any failure. */
 export async function embedText(
@@ -725,5 +725,5 @@ git commit -m "feat(mail-mirror): embed CLI command, status count, and worker in
 
 - **Spec coverage (Phase B):** config (T1), client over the shared package (T1), sqlite-vec load + vec/state schema (T2), upsert/KNN/state queries (T3), embedMessage with skip-unchanged + no-op-when-down + re-embed-on-change via source hash (T4), recent-first backfill + worker (T5), `embed` CLI + status + daemon worker (T6). On-disk vectors, FTS-only degradation, one-vector-per-message — all honoured.
 - **sqlite-vec API:** matches the validated spike (load, `vec0(float[D])`, BigInt rowid, JSON-text vector, KNN subquery + JOIN).
-- **Type consistency:** `EmbedDeps { store, embed, model }`, `EmbeddingConfig` (from `@llm-wiki/embedding`), `Store` methods (`enableVectors`, `ensureVecTable`, `upsertEmbedding`, `knn`, `embedStateFor`, `messagesNeedingEmbedding`, `embeddedCount`) used consistently from definition (T2/T3) through consumers (T4/T5/T6).
+- **Type consistency:** `EmbedDeps { store, embed, model }`, `EmbeddingConfig` (from `@steward/embedding`), `Store` methods (`enableVectors`, `ensureVecTable`, `upsertEmbedding`, `knn`, `embedStateFor`, `messagesNeedingEmbedding`, `embeddedCount`) used consistently from definition (T2/T3) through consumers (T4/T5/T6).
 - **Phase C (mail-mcp hybrid search) gets its own plan after Phase B executes.**

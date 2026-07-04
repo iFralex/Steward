@@ -24,7 +24,7 @@ import { searchDb, type SearchDbArgs } from "./db-search.ts";
 import { readDb, type MailDetail } from "./db-read.ts";
 import { getThread } from "./db-thread.ts";
 import { parseEmlxFile } from "../../mail-mirror/src/emlx.ts";
-import { bodySnippet, sha256, WriteOpsStore, type WriteOpKind } from "@llm-wiki/write-ops";
+import { bodySnippet, sha256, WriteOpsStore, type WriteOpKind } from "@steward/write-ops";
 
 /** Result of a send/reply: sent now, or queued for later delivery. */
 type WriteResult = { sent: true; operationId?: string } | { scheduled: true; sendAt: string; operationId: string };

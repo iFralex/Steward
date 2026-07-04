@@ -1,4 +1,4 @@
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import type { EmbeddingConfig } from "@steward/embedding";
 
 export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig | null {
   // Default to the unified LLM gateway (sub-project 3). Override with

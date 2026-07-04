@@ -178,7 +178,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             if !gatewayIsUp {
                 await MainActor.run {
                     loadStatus("Starting model gateway on 127.0.0.1:4000...")
-                    startProcess(["npm", "run", "dev", "-w", "@llm-wiki/llm-gateway"], in: repoRoot, logName: "llm-gateway")
+                    startProcess(["npm", "run", "dev", "-w", "@steward/llm-gateway"], in: repoRoot, logName: "llm-gateway")
                 }
                 _ = await waitUntilReachable(modelGatewayURL.appendingPathComponent("health"), timeoutSeconds: 20)
             }
@@ -187,7 +187,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             if !hostIsUp {
                 await MainActor.run {
                     loadStatus("Starting host on 127.0.0.1:4317...")
-                    startProcess(["npm", "run", "dev", "-w", "@llm-wiki/host"], in: repoRoot, logName: "host")
+                    startProcess(["npm", "run", "dev", "-w", "@steward/host"], in: repoRoot, logName: "host")
                 }
                 _ = await waitUntilReachable(hostURL.appendingPathComponent("health"), timeoutSeconds: 20)
             }
@@ -197,7 +197,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
                 if !webIsUp {
                     await MainActor.run {
                         loadStatus("Starting web UI on 127.0.0.1:5173...")
-                        startProcess(["npm", "run", "dev", "-w", "@llm-wiki/web", "--", "--host", "127.0.0.1"], in: repoRoot, logName: "web")
+                        startProcess(["npm", "run", "dev", "-w", "@steward/web", "--", "--host", "127.0.0.1"], in: repoRoot, logName: "web")
                     }
                     _ = await waitUntilReachable(webDevURL, timeoutSeconds: 30)
                 }

@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { VectorStore } from "@llm-wiki/search";
+import { VectorStore } from "@steward/search";
 
 export type BodyState = "full" | "partial" | "none";
 

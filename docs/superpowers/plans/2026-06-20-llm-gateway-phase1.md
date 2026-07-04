@@ -82,7 +82,7 @@ Expected: FAIL (module `extract-json.ts` not found).
 
 ```json
 {
-  "name": "@llm-wiki/llm-gateway",
+  "name": "@steward/llm-gateway",
   "version": "0.0.0",
   "private": true,
   "type": "module",

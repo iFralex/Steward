@@ -1,4 +1,4 @@
-import { esc, runOsa, type OsaExec } from "@llm-wiki/applescript";
+import { esc, runOsa, type OsaExec } from "@steward/applescript";
 
 export interface CreateArgs {
   calendar: string; summary: string; start: string; end: string;

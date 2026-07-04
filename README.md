@@ -129,23 +129,23 @@ Prerequisites: Node ≥ 20, npm, Xcode CLT (launcher), [Ollama](https://ollama.c
 npm install
 
 # 1. Gateway (put DEEPSEEK_API_KEY in apps/llm-gateway/.env — see .env.example)
-npm run dev -w @llm-wiki/llm-gateway
+npm run dev -w @steward/llm-gateway
 
 # 2. The LLM Wiki desktop app must be running (its MCP server talks to the local API)
 
 # 3. Host + web UI (dev)
-npm run dev -w @llm-wiki/host
-npm run dev -w @llm-wiki/web        # → http://localhost:5173
+npm run dev -w @steward/host
+npm run dev -w @steward/web        # → http://localhost:5173
 
 # One-time data bootstrap
 node --import tsx apps/mail-mirror/src/cli.ts backfill   # mirror your mailboxes
 node --import tsx apps/mail-mirror/src/cli.ts migrate    # enrich (advanced search)
 
 # Background daemon (or let the packaged app / launchd manage it)
-npm run start -w @llm-wiki/scheduler
+npm run start -w @steward/scheduler
 ```
 
-macOS launcher (menu-bar app with health checks): `npm run build -w @llm-wiki/web && npm run launcher:mac`.
+macOS launcher (menu-bar app with health checks): `npm run build -w @steward/web && npm run launcher:mac`.
 Self-contained production bundle: `npm run package:mac` → `dist/mac/LLM Wiki.app` (bundles node, esbuilt entrypoints for every service, the wiki app, and native modules).
 
 ## Background jobs (scheduler)
@@ -173,7 +173,7 @@ Intervals are overridable via `SCHED_*_MIN` env vars; logs at `/tmp/llmwiki-sche
 
 ## Development
 
-- Per-workspace: `npm run typecheck -w @llm-wiki/<app>` and `npm test -w @llm-wiki/<app>` (Node's built-in test runner via tsx; no build step).
+- Per-workspace: `npm run typecheck -w @steward/<app>` and `npm test -w @steward/<app>` (Node's built-in test runner via tsx; no build step).
 - Web UI: `npm run build:web-host` builds web and typechecks the host together.
 - The wiki fork has its own toolchain (`vitest`, `vite`, Tauri) — see [apps/llm-wiki](apps/llm-wiki/).
 - Conventions: TypeScript ESM everywhere, `type: module`, tsx for execution, better-sqlite3 + sqlite-vec for storage/search, reuse over reimplement (shared code goes in `packages/`).

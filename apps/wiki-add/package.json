@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/wiki-add",
+  "name": "@steward/wiki-add",
   "version": "0.0.0",
   "private": true,
   "type": "module",

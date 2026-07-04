@@ -8,11 +8,11 @@ import { IndexDb } from "./index-db.ts";
 import type { CalEvent } from "./types.ts";
 import { hybridSearch } from "./search.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
-import { embedText } from "@llm-wiki/search";
+import { embedText } from "@steward/search";
 import { createEvent, updateEvent, deleteEvent } from "./applescript.ts";
 import { parseSearchArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { applePath, indexDbPath } from "./paths.ts";
-import { WriteOpsStore } from "@llm-wiki/write-ops";
+import { WriteOpsStore } from "@steward/write-ops";
 
 let store: AppleStore | null = null;
 let storeError: string | null = null;

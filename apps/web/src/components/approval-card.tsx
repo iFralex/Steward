@@ -16,7 +16,7 @@ import { FileChip } from "@/components/file-chip";
 import { DateTimePicker } from "@/components/datetime-picker";
 import { CardView, cardForApproval, type FileApi } from "@/components/cards";
 import type { PendingApproval } from "@/lib/host-socket";
-import type { ApprovalDecision } from "@llm-wiki/protocol";
+import type { ApprovalDecision } from "@steward/protocol";
 
 type Kind = "text" | "textarea" | "csv" | "bool" | "numbers" | "datetime" | "files";
 interface Field { key: string; label: string; kind: Kind }

@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/contacts-mcp",
+  "name": "@steward/contacts-mcp",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,9 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/applescript": "*",
-    "@llm-wiki/embedding": "*",
-    "@llm-wiki/search": "*",
+    "@steward/applescript": "*",
+    "@steward/embedding": "*",
+    "@steward/search": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.7-alpha.2"

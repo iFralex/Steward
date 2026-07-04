@@ -40,7 +40,7 @@ import {
   googleEmbeddingBody,
   volcengineEmbeddingEndpoint,
   doubaoMultimodalEmbeddingBody,
-} from "@llm-wiki/embedding"
+} from "@steward/embedding"
 
 // ── Re-export helpers consumed by tests ─────────────────────────────────────
 export {

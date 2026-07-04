@@ -8,7 +8,7 @@ import { IndexDb } from "./index-db.ts";
 import { hybridSearch } from "./search.ts";
 import { resolveRecipient } from "./resolve.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
-import { embedText } from "@llm-wiki/search";
+import { embedText } from "@steward/search";
 import { createContact, updateContact } from "./applescript.ts";
 import { parseSearchArgs, parseResolveArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { sourceDbPaths, indexDbPath } from "./paths.ts";

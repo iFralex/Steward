@@ -5,7 +5,7 @@ import type {
   ActionStatus,
   PersistedMessage,
   ServerEvent,
-} from "@llm-wiki/protocol";
+} from "@steward/protocol";
 import { chatStore, toolMessage } from "./chat-store.ts";
 import { randomUUID } from "node:crypto";
 import { ActionStore } from "../../../action-center/src/store.ts";

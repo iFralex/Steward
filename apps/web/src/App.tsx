@@ -23,7 +23,7 @@ import { CardView, type FileApi } from "@/components/cards";
 import { FileChip } from "@/components/file-chip";
 import { UsagePage } from "@/components/usage-page";
 import { SystemPage } from "@/components/system-page";
-import type { ActionCenterItem, ChannelFile, ChatSummary } from "@llm-wiki/protocol";
+import type { ActionCenterItem, ChannelFile, ChatSummary } from "@steward/protocol";
 
 const HOST_URL = import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317";
 const HTTP_BASE = HOST_URL.replace(/^ws/, "http");

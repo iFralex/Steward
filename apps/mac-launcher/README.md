@@ -35,7 +35,7 @@ ollama pull bge-m3
 For a host-served production-like UI, build the web UI first:
 
 ```sh
-npm run build -w @llm-wiki/web
+npm run build -w @steward/web
 npm run launcher:mac
 ```
 

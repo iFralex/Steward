@@ -6,7 +6,7 @@
  * that, but open/preview/reveal still work).
  */
 import { Button } from "@/components/ui/button";
-import type { ChannelFile } from "@llm-wiki/protocol";
+import type { ChannelFile } from "@steward/protocol";
 
 const HTTP_BASE = (import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317").replace(/^ws/, "http");
 const fileUrl = (token: string) => `${HTTP_BASE}/file/${token}`;

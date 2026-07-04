@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ChannelFile, ChatSummary, PersistedMessage } from "@llm-wiki/protocol";
+import type { ChannelFile, ChatSummary, PersistedMessage } from "@steward/protocol";
 
 /**
  * Build a tool-result transcript message. Shared by the agent turn loop and the
