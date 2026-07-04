@@ -1,11 +1,13 @@
 /**
  * A file a tool produced (e.g. a saved attachment), served by the host at
- * /file/<token>. Click the name to preview in a tab; "Apri" opens it in the
- * macOS default app; "Finder" reveals it; and the chip is draggable so dropping
- * it on Finder copies the file out (Chrome/Edge via DownloadURL; Safari ignores
- * that, but open/preview/reveal still work).
+ * /file/<token>. On the Mac: "Apri" opens it in the native app, "Finder" reveals
+ * it, and the chip is draggable to copy the file out. On the phone (a remote
+ * client) those Mac-only actions are hidden and tapping the file opens an in-app
+ * preview overlay instead — so it never navigates out of the PWA (from where iOS
+ * gives no way back).
  */
-import { Download } from "lucide-react";
+import { useState } from "react";
+import { Eye, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authTokenKey, isLocalClient } from "@/lib/auth";
 import { hostHttpBase } from "@/lib/host-url";
@@ -35,6 +37,38 @@ function iconFor(mime: string): string {
   return "📎";
 }
 
+/** Full-screen in-app preview: images render inline, PDFs in an iframe, anything
+ *  else offers a download. The overlay's close button is the way back — no
+ *  breaking out of the PWA. */
+function FilePreview({ url, file, onClose }: { url: string; file: ChannelFile; onClose: () => void }) {
+  const isImage = file.mime.startsWith("image/");
+  const isPdf = file.mime === "application/pdf";
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-black/90" onClick={onClose}>
+      <div className="flex items-center gap-3 p-3 text-white" onClick={(e) => e.stopPropagation()}>
+        <span className="min-w-0 flex-1 truncate text-sm">{file.name}</span>
+        <a href={url} download={file.name} className="text-sm underline" onClick={(e) => e.stopPropagation()}>
+          Scarica
+        </a>
+        <button type="button" onClick={onClose} className="flex items-center gap-1 rounded px-2 py-1 text-sm hover:bg-white/10" aria-label="Chiudi">
+          <X className="size-4" /> Chiudi
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-2" onClick={(e) => e.stopPropagation()}>
+        {isImage ? (
+          <img src={url} alt={file.name} className="mx-auto max-h-full max-w-full object-contain" />
+        ) : isPdf ? (
+          <iframe src={url} title={file.name} className="h-full w-full rounded bg-white" />
+        ) : (
+          <div className="flex h-full items-center justify-center px-6 text-center text-white/80">
+            <p>Anteprima non disponibile per questo tipo di file. Usa “Scarica”.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function FileChip({
   file,
   onOpen,
@@ -46,6 +80,9 @@ export function FileChip({
 }) {
   const url = fileUrl(file.token);
   const local = isLocalClient(); // Mac-only actions (native open / Finder) hidden on the phone
+  const [preview, setPreview] = useState(false);
+  // On the Mac a browser tab is fine; on the phone stay in the PWA via the overlay.
+  const openFile = () => (local ? window.open(url, "_blank") : setPreview(true));
   return (
     <div
       draggable
@@ -65,9 +102,9 @@ export function FileChip({
       <span aria-hidden>{iconFor(file.mime)}</span>
       <button
         type="button"
-        onClick={() => window.open(url, "_blank")}
+        onClick={openFile}
         className="min-w-0 flex-1 truncate text-left font-medium hover:underline"
-        title="Anteprima nel browser"
+        title={local ? "Anteprima nel browser" : "Anteprima"}
       >
         {file.name}
       </button>
@@ -78,20 +115,17 @@ export function FileChip({
           <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title="Mostra nel Finder">Finder</Button>
         </>
       ) : (
-        // On the phone, "open in the native app" / "reveal in Finder" would act on
-        // the Mac — meaningless here. Offer a download instead (tapping the name
-        // still previews the file; iOS shows PDFs/images natively with a share sheet).
-        <a
-          href={url}
-          download={file.name}
-          onClick={(e) => e.stopPropagation()}
+        <button
+          type="button"
+          onClick={() => setPreview(true)}
           className="text-muted-foreground hover:text-foreground rounded p-1"
-          title="Scarica il file"
-          aria-label="Scarica il file"
+          title="Apri l'anteprima"
+          aria-label="Apri l'anteprima"
         >
-          <Download className="size-4" />
-        </a>
+          <Eye className="size-4" />
+        </button>
       )}
+      {preview && <FilePreview url={url} file={file} onClose={() => setPreview(false)} />}
     </div>
   );
 }

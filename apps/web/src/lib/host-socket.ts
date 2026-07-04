@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/auth";
+import { uid } from "@/lib/utils";
 import type {
   ActionCenterState,
   ActionStatus,
@@ -208,7 +209,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
           case "tool_call":
             updateChat(msg.chatId ?? null, (prev) => [
               ...prev,
-              { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
+              { id: uid(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
             ]);
             break;
           case "tool_result":
@@ -266,7 +267,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
           case "error":
             updateChat(msg.chatId ?? null, (prev) => [
               ...prev,
-              { id: crypto.randomUUID(), role: "assistant", text: `⚠️ ${msg.message}` },
+              { id: uid(), role: "assistant", text: `⚠️ ${msg.message}` },
             ]);
             break;
         }
@@ -292,7 +293,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
       if (!trimmed) return;
       updateChat(activeChatId, (prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: "user", text: trimmed, ts: Date.now(), ...(attachments?.length ? { attachments } : {}) },
+        { id: uid(), role: "user", text: trimmed, ts: Date.now(), ...(attachments?.length ? { attachments } : {}) },
       ]);
       send({ type: "user_message", sessionId: sessionRef.current, text: trimmed, chatId: activeChatId ?? undefined, attachments });
     },
@@ -411,7 +412,7 @@ function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {
   if (last && last.role === "assistant" && last.open) {
     return [...prev.slice(0, -1), { ...last, text: last.text + text }];
   }
-  return [...prev, { id: crypto.randomUUID(), role: "assistant", text, ts: Date.now(), open: true }];
+  return [...prev, { id: uid(), role: "assistant", text, ts: Date.now(), open: true }];
 }
 
 function closeAssistant(prev: ChatMessage[]): ChatMessage[] {

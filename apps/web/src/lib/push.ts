@@ -18,7 +18,7 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-export type EnablePushResult = "ok" | "denied" | "unsupported" | "needs-home-screen" | "error";
+export type EnablePushResult = "ok" | "denied" | "unsupported" | "needs-home-screen" | "insecure-context" | "error";
 
 /** iOS only exposes Web Push to a PWA launched from the Home screen (standalone),
  *  never in a Safari tab — so a missing PushManager there means "add to Home", not
@@ -37,6 +37,9 @@ function isStandalone(): boolean {
 /** Request permission, subscribe via the SW, and register with the host. Must be
  *  called from a user gesture (iOS requires it). */
 export async function enablePush(httpBase: string, token: string | null, onUnauthorized: () => void): Promise<EnablePushResult> {
+  // Service workers + push require a secure context (https or localhost). Over
+  // plain http on the phone (Tailscale IP) they're disabled — the real blocker.
+  if (!window.isSecureContext) return "insecure-context";
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
     // On iOS the push APIs only appear once the app is installed to the Home
     // screen — steer the user there instead of saying "unsupported".

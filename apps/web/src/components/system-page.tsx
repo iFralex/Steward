@@ -173,11 +173,13 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
             <span className="text-muted-foreground text-sm">
               {pushMsg === "denied"
                 ? "Permesso negato — abilitalo nelle impostazioni del browser."
-                : pushMsg === "needs-home-screen"
-                  ? "Su iPhone: prima aggiungi Steward alla schermata Home (Condividi → Aggiungi a Home), poi apri l'app dall'icona e riprova."
-                  : pushMsg === "unsupported"
-                    ? "Questo browser non supporta le notifiche push (le notifiche funzionano dall'app aggiunta alla Home sul telefono, non dalla finestra sul Mac)."
-                    : "Attivazione non riuscita — riprova."}
+                : pushMsg === "insecure-context"
+                  ? "Le notifiche richiedono una connessione sicura (HTTPS). Sul telefono via http non sono disponibili: serve abilitare HTTPS su Tailscale e aprire l'app via https://…"
+                  : pushMsg === "needs-home-screen"
+                    ? "Su iPhone: prima aggiungi Steward alla schermata Home (Condividi → Aggiungi a Home), poi apri l'app dall'icona e riprova."
+                    : pushMsg === "unsupported"
+                      ? "Questo browser non supporta le notifiche push (funzionano dall'app in Home sul telefono, non dalla finestra sul Mac)."
+                      : "Attivazione non riuscita — riprova."}
             </span>
           )}
         </CardContent>
