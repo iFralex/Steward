@@ -9,6 +9,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ChannelFile, ChatSummary, PersistedMessage } from "@steward/protocol";
+import { migrateLegacyPath } from "./migrate.ts";
 
 /**
  * Build a tool-result transcript message. Shared by the agent turn loop and the
@@ -70,7 +71,10 @@ export class ChatStore {
   }
 
   static open(): ChatStore {
-    const dir = process.env.CHATS_DIR ?? join(homedir(), "Library", "Application Support", "llmwiki-chats");
+    const dir = process.env.CHATS_DIR ?? join(homedir(), "Library", "Application Support", "steward-chats");
+    if (!process.env.CHATS_DIR) {
+      migrateLegacyPath(join(homedir(), "Library", "Application Support", "llmwiki-chats"), dir);
+    }
     const sessionDir = join(dir, "sessions");
     mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
     return new ChatStore(new Database(join(dir, "chats.db")), sessionDir);
