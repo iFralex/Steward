@@ -371,21 +371,22 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
 export function startServer(config: HostConfig): WebSocketServer {
   const pushRegistry = new PushRegistry(pushSubscriptionsPath());
   setPushRegistry(pushRegistry);
-  // Serve HTTPS if a TLS cert+key are provided (e.g. `tailscale cert`). A secure
-  // context is what unlocks service workers + Web Push on the phone over Tailscale;
-  // over plain http:// those are disabled by the browser. Falls back to http.
+  // Two listeners: plain HTTP on localhost (the Mac's own WebView — a secure
+  // context anyway, auto-pairs, keeps native "open/reveal" actions), and — when a
+  // TLS cert+key are provided (e.g. `tailscale cert`) — HTTPS on all interfaces
+  // for the phone over Tailscale. A secure context (https) is what unlocks service
+  // workers + Web Push there; plain http stays localhost-only, never on the tailnet.
   const tlsCert = process.env.STEWARD_TLS_CERT;
   const tlsKey = process.env.STEWARD_TLS_KEY;
   const useTls = !!(tlsCert && tlsKey);
-  const httpServer = useTls
-    ? createHttpsServer({ cert: readFileSync(tlsCert), key: readFileSync(tlsKey) }, (req, res) => handleHttp(config, pushRegistry, req, res))
-    : createServer((req, res) => handleHttp(config, pushRegistry, req, res));
-  const wss = new WebSocketServer({
-    server: httpServer,
-    verifyClient: ({ req }: { req: IncomingMessage }) =>
+  const wss = new WebSocketServer({ noServer: true });
+  const acceptUpgrade = (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
+    const ok =
       (isAllowedOrigin(req.headers.origin, config.port) || originMatchesHost(req.headers.origin, req.headers.host)) &&
-      tokenOk(req.url, req.headers.authorization, config.authToken),
-  });
+      tokenOk(req.url, req.headers.authorization, config.authToken);
+    if (!ok) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+  };
 
   // Startup housekeeping: drop unsaved temporary chats from previous runs.
   // Done once per process — NOT per connection (a second tab must not delete
@@ -579,12 +580,24 @@ export function startServer(config: HostConfig): WebSocketServer {
     });
   });
 
-  // Localhost-only by default; set STEWARD_BIND_HOST=0.0.0.0 to reach the host
-  // from the phone over Tailscale (the auth token + origin check still gate it).
-  const bindHost = process.env.STEWARD_BIND_HOST ?? "127.0.0.1";
-  const scheme = useTls ? "https" : "http";
-  httpServer.listen(config.port, bindHost, () => {
-    console.log(`[host] listening on ${scheme}://${bindHost}:${config.port} (TLS ${useTls ? "on" : "off"})`);
+  // HTTP for the Mac's own WebView — localhost only, never exposed on the tailnet.
+  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, req, res));
+  httpServer.on("upgrade", acceptUpgrade);
+  httpServer.listen(config.port, "127.0.0.1", () => {
+    console.log(`[host] http://127.0.0.1:${config.port} (localhost)`);
   });
+
+  // HTTPS on all interfaces for the phone over Tailscale (secure context → push).
+  if (useTls) {
+    const tlsPort = Number(process.env.STEWARD_TLS_PORT ?? config.port + 1);
+    const httpsServer = createHttpsServer(
+      { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) },
+      (req, res) => handleHttp(config, pushRegistry, req, res),
+    );
+    httpsServer.on("upgrade", acceptUpgrade);
+    httpsServer.listen(tlsPort, "0.0.0.0", () => {
+      console.log(`[host] https://0.0.0.0:${tlsPort} (Tailscale/phone)`);
+    });
+  }
   return wss;
 }
