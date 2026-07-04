@@ -58,7 +58,7 @@ function contactsPermissionError(err?: unknown): string {
   const detail = err instanceof Error ? err.message : err ? String(err) : "";
   return [
     "Apple Contacts store is not readable.",
-    "Grant Full Disk Access to LLM Wiki.app in System Settings -> Privacy & Security -> Full Disk Access, then restart LLM Wiki.",
+    "Grant Full Disk Access to Steward.app in System Settings -> Privacy & Security -> Full Disk Access, then restart Steward.",
     detail ? `Detail: ${detail}` : "",
   ].filter(Boolean).join(" ");
 }

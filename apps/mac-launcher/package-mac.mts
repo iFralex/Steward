@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 
-const APP_NAME = "LLM Wiki";
-const BUNDLE_ID = "com.llmwiki.launcher";
+const APP_NAME = "Steward";
+const BUNDLE_ID = "com.steward.launcher";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const appDir = join(repoRoot, "dist", "mac", `${APP_NAME}.app`);
@@ -179,12 +179,12 @@ mkdirSync(nodeDir, { recursive: true });
 cpSync(process.execPath, nodePath);
 chmodSync(nodePath, 0o755);
 
-const launcher = join(repoRoot, "apps", "mac-launcher", ".build", "release", "LLMWikiLauncher");
+const launcher = join(repoRoot, "apps", "mac-launcher", ".build", "release", "StewardLauncher");
 if (!existsSync(launcher)) {
   throw new Error(`Missing launcher executable: ${launcher}`);
 }
-cpSync(launcher, join(macosDir, "LLMWikiLauncher"));
-chmodSync(join(macosDir, "LLMWikiLauncher"), 0o755);
+cpSync(launcher, join(macosDir, "StewardLauncher"));
+chmodSync(join(macosDir, "StewardLauncher"), 0o755);
 
 writeFileSync(
   join(contentsDir, "Info.plist"),
@@ -198,7 +198,7 @@ writeFileSync(
   <key>CFBundleVersion</key><string>0.1.0</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>LLMWikiLauncher</string>
+  <key>CFBundleExecutable</key><string>StewardLauncher</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
 </dict>
@@ -209,5 +209,5 @@ writeFileSync(
 console.log("");
 console.log(`Built ${appDir}`);
 console.log(`Run it with: open "${appDir}"`);
-console.log("Config file: ~/Library/Application Support/LLM Wiki/config.env");
-console.log("Logs: ~/Library/Logs/LLM Wiki/");
+console.log("Config file: ~/Library/Application Support/Steward/config.env");
+console.log("Logs: ~/Library/Logs/Steward/");

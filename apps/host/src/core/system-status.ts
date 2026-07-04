@@ -93,7 +93,7 @@ export function setAutostart(enabled: boolean): AutostartStatus {
 
   const appPath = resolveAppPath();
   if (!appPath) {
-    return { ...getAutostartStatus(), detail: "Cannot resolve the current LLM Wiki.app path." };
+    return { ...getAutostartStatus(), detail: "Cannot resolve the current Steward.app path." };
   }
 
   mkdirSync(dirname(plistPath), { recursive: true });
@@ -169,7 +169,7 @@ async function ollamaStatus(): Promise<SystemServiceStatus> {
 }
 
 async function schedulerStatus(): Promise<SystemServiceStatus> {
-  const logPath = process.env.SCHED_LOG ?? join(homedir(), "Library", "Logs", "LLM Wiki", "scheduler.jsonl");
+  const logPath = process.env.SCHED_LOG ?? join(homedir(), "Library", "Logs", "Steward", "scheduler.jsonl");
   try {
     const stat = statSync(logPath);
     const ageMs = Date.now() - stat.mtimeMs;

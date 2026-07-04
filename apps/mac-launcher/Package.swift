@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "LLMWikiLauncher",
+    name: "StewardLauncher",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "LLMWikiLauncher", targets: ["LLMWikiLauncher"]),
+        .executable(name: "StewardLauncher", targets: ["StewardLauncher"]),
     ],
     targets: [
-        .executableTarget(name: "LLMWikiLauncher"),
+        .executableTarget(name: "StewardLauncher"),
     ]
 )

@@ -100,10 +100,10 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private func makeStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.title = "LW"
-        item.button?.toolTip = "LLM Wiki Launcher (\(defaultHotKey))"
+        item.button?.toolTip = "Steward (\(defaultHotKey))"
 
         let menu = NSMenu()
-        menu.addItem(menuItem("Show LLM Wiki", #selector(showFromMenu)))
+        menu.addItem(menuItem("Show Steward", #selector(showFromMenu)))
         menu.addItem(menuItem("Reload", #selector(reloadFromMenu), keyEquivalent: "r"))
         menu.addItem(.separator())
         menu.addItem(menuItem("Quit", #selector(quitFromMenu), keyEquivalent: "q"))
@@ -131,7 +131,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             backing: .buffered,
             defer: false
         )
-        window.title = "LLM Wiki"
+        window.title = "Steward"
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.center()
@@ -140,12 +140,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
         self.webView = webView
         self.window = window
-        loadStatus("Starting LLM Wiki...")
+        loadStatus("Starting Steward...")
     }
 
     private func showWindow() {
         if webView?.url == nil {
-            loadStatus("Starting LLM Wiki...")
+            loadStatus("Starting Steward...")
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -313,7 +313,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     private func logFile(named name: String) -> FileHandle? {
         let logs = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/LLM Wiki", isDirectory: true)
+            .appendingPathComponent("Library/Logs/Steward", isDirectory: true)
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         let url = logs.appendingPathComponent("\(name).log")
         if !FileManager.default.fileExists(atPath: url.path) {
@@ -356,7 +356,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             env["CALENDAR_MCP_CLI"] = servicesRoot.appendingPathComponent("cli/calendar.js").path
             env["CONTACTS_MCP_CLI"] = servicesRoot.appendingPathComponent("cli/contacts.js").path
             env["SCHED_LOG"] = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Logs/LLM Wiki/scheduler.jsonl").path
+                .appendingPathComponent("Library/Logs/Steward/scheduler.jsonl").path
             loadUserConfig(into: &env)
         }
         return env
@@ -380,7 +380,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             strong { display: block; font-size: 16px; margin-bottom: 6px; }
           </style>
         </head>
-        <body><main><strong>LLM Wiki</strong>\(escapeHTML(message))</main></body>
+        <body><main><strong>Steward</strong>\(escapeHTML(message))</main></body>
         </html>
         """
         webView?.loadHTMLString(html, baseURL: nil)
@@ -535,7 +535,7 @@ private func escapeHTML(_ value: String) -> String {
 
 private func loadUserConfig(into env: inout [String: String]) {
     let config = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/LLM Wiki/config.env")
+        .appendingPathComponent("Library/Application Support/Steward/config.env")
     guard let text = try? String(contentsOf: config, encoding: .utf8) else {
         return
     }
