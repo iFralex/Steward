@@ -39,6 +39,23 @@ export function isAllowedOrigin(origin: string | undefined, port: number): boole
   return allowed.has(origin);
 }
 
+/**
+ * True when the browser's Origin matches the Host it connected to (a same-origin
+ * request — the served page calling back to itself). This is what makes the phone
+ * work over Tailscale without listing its address: the page loads from
+ * `http://<mac-tailnet>:4317` and its WS/fetch Origin equals that Host. A
+ * cross-site attacker's Origin differs from Host, so it stays rejected — and the
+ * data channels also require the auth token regardless.
+ */
+export function originMatchesHost(origin: string | undefined, hostHeader: string | undefined): boolean {
+  if (!origin || !hostHeader) return false;
+  try {
+    return new URL(origin).host === hostHeader;
+  } catch {
+    return false;
+  }
+}
+
 function corsHeaders(origin: string | undefined, port: number): Record<string, string> {
   if (origin === undefined || !isAllowedOrigin(origin, port)) return {};
   return {
@@ -215,7 +232,11 @@ async function gatewayRates(baseUrl: string, tier: string, fallback: unknown): P
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
 function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
-  if (req.headers.origin !== undefined && !isAllowedOrigin(req.headers.origin, config.port)) {
+  if (
+    req.headers.origin !== undefined &&
+    !isAllowedOrigin(req.headers.origin, config.port) &&
+    !originMatchesHost(req.headers.origin, req.headers.host)
+  ) {
     res.writeHead(403); res.end("forbidden origin"); return;
   }
   const CORS = corsHeaders(req.headers.origin, config.port);
@@ -353,7 +374,7 @@ export function startServer(config: HostConfig): WebSocketServer {
   const wss = new WebSocketServer({
     server: httpServer,
     verifyClient: ({ req }: { req: IncomingMessage }) =>
-      isAllowedOrigin(req.headers.origin, config.port) &&
+      (isAllowedOrigin(req.headers.origin, config.port) || originMatchesHost(req.headers.origin, req.headers.host)) &&
       tokenOk(req.url, req.headers.authorization, config.authToken),
   });
 
@@ -549,8 +570,11 @@ export function startServer(config: HostConfig): WebSocketServer {
     });
   });
 
-  httpServer.listen(config.port, "127.0.0.1", () => {
-    console.log(`[host] WebSocket listening on ws://127.0.0.1:${config.port} (files at http://127.0.0.1:${config.port}/file/<token>)`);
+  // Localhost-only by default; set STEWARD_BIND_HOST=0.0.0.0 to reach the host
+  // from the phone over Tailscale (the auth token + origin check still gate it).
+  const bindHost = process.env.STEWARD_BIND_HOST ?? "127.0.0.1";
+  httpServer.listen(config.port, bindHost, () => {
+    console.log(`[host] WebSocket listening on ws://${bindHost}:${config.port} (files at http://${bindHost}:${config.port}/file/<token>)`);
   });
   return wss;
 }
