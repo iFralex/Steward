@@ -142,3 +142,14 @@ body {
   overflow-x: hidden;
   touch-action: pan-x;
 }
+
+/* Empty-chat aurora: the agent's "presence" breathing behind the greeting,
+   and the staggered rise-in of the greeting/suggestions. */
+@keyframes steward-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.18; }
+  50% { transform: scale(1.18); opacity: 0.32; }
+}
+@keyframes steward-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}

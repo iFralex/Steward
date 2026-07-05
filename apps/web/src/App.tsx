@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -289,9 +289,28 @@ function App() {
   // Existing thread-scroller + composer JSX, held in a local variable (not a
   // component) so it can be dropped into the content area without remounting
   // or losing composer focus.
+  const chatEmpty =
+    !host.historyLoading &&
+    host.messages.length === 0 &&
+    host.approvals.length === 0 &&
+    host.questions.length === 0;
+
   const chatPane = (
     <>
       <div ref={attachChatScroller} className="flex-1 overflow-y-auto p-4">
+        {chatEmpty ? (
+          <EmptyChat
+            newActionCount={newActionCount}
+            onSuggestion={(text) => {
+              setDraft(text);
+              focusComposer();
+            }}
+            onOpenActions={() => {
+              setTab("actions");
+              setMobileDrill(false);
+            }}
+          />
+        ) : (
         <div className="mx-auto w-full max-w-[52rem] space-y-3">
           {host.historyLoading && host.messages.length === 0 && (
             <div className="flex justify-center py-10" aria-label="caricamento chat">
@@ -347,6 +366,7 @@ function App() {
             return host.state === "running" && !streaming ? <ThinkingIndicator /> : null;
           })()}
         </div>
+        )}
       </div>
 
       <form
@@ -751,6 +771,89 @@ function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) 
       {text}
     </ReactMarkdown>
   );
+}
+
+/** Suggestion chips for the empty chat: label is what you see, draft is what
+ *  lands in the composer (open-ended ones leave a trailing space to finish). */
+const SUGGESTIONS: { icon: string; tint: string; label: string; draft: string }[] = [
+  { icon: "✉️", tint: "border-indigo-500/25 bg-indigo-500/10", label: "Riassumi le mail importanti di oggi", draft: "Riassumi le mail importanti di oggi" },
+  { icon: "📅", tint: "border-violet-500/25 bg-violet-500/10", label: "Che impegni ho questa settimana?", draft: "Che impegni ho questa settimana?" },
+  { icon: "↩️", tint: "border-amber-500/25 bg-amber-500/10", label: "Prepara una risposta all'ultima mail di…", draft: "Prepara una bozza di risposta all'ultima mail di " },
+  { icon: "📚", tint: "border-pink-500/25 bg-pink-500/10", label: "Cosa sai di…?", draft: "Cosa sai di " },
+];
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 6) return "Buonanotte";
+  if (h < 13) return "Buongiorno";
+  if (h < 18) return "Buon pomeriggio";
+  return "Buonasera";
+}
+
+/** Empty-state of a fresh chat: breathing aurora behind a gradient greeting,
+ *  actionable suggestion chips, pending-actions pill, desktop shortcut hints. */
+function EmptyChat({
+  newActionCount,
+  onSuggestion,
+  onOpenActions,
+}: {
+  newActionCount: number;
+  onSuggestion: (draft: string) => void;
+  onOpenActions: () => void;
+}) {
+  return (
+    <div className="relative flex h-full flex-col items-center justify-center gap-7 overflow-hidden px-4">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-1/2 size-72 -translate-x-1/2 -translate-y-[80%] rounded-full bg-[radial-gradient(closest-side,rgba(99,102,241,0.55),rgba(139,92,246,0.35),rgba(245,158,11,0.18),transparent)] blur-3xl motion-reduce:animate-none"
+        style={{ animation: "steward-breathe 7s ease-in-out infinite" }}
+      />
+      <div className="relative text-center motion-reduce:animate-none" style={{ animation: "steward-rise 0.5s ease-out both" }}>
+        <h2 className="bg-gradient-to-r from-indigo-500 via-violet-500 to-amber-500 bg-clip-text text-3xl font-semibold text-transparent">
+          {greeting()}, Alessio
+        </h2>
+        <p className="text-muted-foreground mt-2 text-sm">Chiedimi qualcosa o affidami un compito.</p>
+      </div>
+      <div className="relative grid w-full max-w-md gap-2 sm:grid-cols-2">
+        {SUGGESTIONS.map((s, i) => (
+          <button
+            key={s.label}
+            type="button"
+            onClick={() => onSuggestion(s.draft)}
+            className="bg-card hover:border-violet-500/40 group flex items-center gap-3 rounded-xl border p-3 text-left text-sm transition hover:-translate-y-0.5 hover:shadow-md motion-reduce:animate-none"
+            style={{ animation: "steward-rise 0.5s ease-out both", animationDelay: `${120 + i * 70}ms` }}
+          >
+            <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border text-base", s.tint)}>
+              {s.icon}
+            </span>
+            <span className="text-foreground/90">{s.label}</span>
+          </button>
+        ))}
+      </div>
+      {newActionCount > 0 && (
+        <button
+          type="button"
+          onClick={onOpenActions}
+          className="relative flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-500 transition hover:bg-amber-500/20 motion-reduce:animate-none"
+          style={{ animation: "steward-rise 0.5s ease-out both", animationDelay: "430ms" }}
+        >
+          ⚡ {newActionCount} {newActionCount === 1 ? "azione in attesa" : "azioni in attesa"}
+        </button>
+      )}
+      <div
+        className="text-muted-foreground/70 relative hidden items-center gap-3 text-[11px] lg:flex motion-reduce:animate-none"
+        style={{ animation: "steward-rise 0.5s ease-out both", animationDelay: "500ms" }}
+      >
+        <span><Kbd>/</Kbd> scrivi</span>
+        <span><Kbd>c</Kbd> nuova chat</span>
+        <span><Kbd>?</Kbd> scorciatoie</span>
+      </div>
+    </div>
+  );
+}
+
+function Kbd({ children }: { children: ReactNode }) {
+  return <kbd className="bg-muted rounded px-1 py-0.5 font-mono text-[10px]">{children}</kbd>;
 }
 
 function MoreList({ onOpen }: { onOpen: (pane: "usage" | "system") => void }) {
