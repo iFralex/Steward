@@ -544,7 +544,7 @@ function App() {
       </div>
 
       {/* Bottom nav (mobile only) */}
-      <nav className="flex border-t pb-[env(safe-area-inset-bottom)] lg:hidden">
+      <nav className="flex border-t lg:hidden">
         {([["chat", "💬 Chat"], ["actions", "⚡ Azioni"], ["more", "⚙ Altro"]] as const).map(([t, label]) => (
           <button
             key={t}
@@ -552,7 +552,7 @@ function App() {
             onClick={() => { setTab(t); setMobileDrill(false); }}
             aria-current={tab === t ? "page" : undefined}
             className={cn(
-              "relative flex-1 py-4 text-center text-xs transition",
+              "relative flex-1 pt-4 pb-[max(env(safe-area-inset-bottom),1rem)] text-center text-xs transition",
               tab === t ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
