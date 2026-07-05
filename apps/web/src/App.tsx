@@ -435,7 +435,7 @@ function App() {
 
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
 
-      <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[300px_minmax(0,1fr)]">
         {/* List layer: unified sidebar (or the "Altro" list on mobile). On mobile it stays
             mounted UNDER the drilled-in content, so the swipe-back gesture reveals it. */}
         <aside className="min-h-0 lg:border-r" aria-hidden={!isDesktop && mobileDrill}>

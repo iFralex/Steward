@@ -128,3 +128,10 @@
     @apply font-sans;
     }
 }
+/* The swipe-back gesture translates the content panel; never let that (or any
+   transient overflow) leave the page horizontally pannable on iOS. */
+html,
+body {
+  overscroll-behavior-x: none;
+  overflow-x: hidden;
+}
