@@ -22,6 +22,7 @@ import { SystemPage } from "@/components/system-page";
 import { ActionDetail } from "@/components/action-detail";
 import { UnifiedSidebar } from "@/components/sidebar";
 import { useIsDesktop } from "@/lib/use-is-desktop";
+import { useEdgeSwipeBack } from "@/lib/use-edge-swipe-back";
 import type { ActionCenterItem, ChannelFile } from "@steward/protocol";
 
 const HOST_URL = hostWsUrl();
@@ -47,6 +48,7 @@ function App() {
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [splitActionId, setSplitActionId] = useState<number | null>(null);
   const isDesktop = useIsDesktop();
+  const swipeBack = useEdgeSwipeBack(!isDesktop, () => setMobileDrill(false));
   const splitAction = host.actionCenter?.items.find((a) => a.id === splitActionId) ?? null;
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
@@ -441,7 +443,11 @@ function App() {
         </aside>
 
         {/* Content layer. Hidden on mobile until drilled in. */}
-        <main className={cn("min-h-0 flex-col lg:flex", mobileDrill ? "flex" : "hidden")}>
+        <main
+          className={cn("min-h-0 flex-col lg:flex", mobileDrill ? "flex" : "hidden")}
+          {...swipeBack.handlers}
+          style={isDesktop ? undefined : swipeBack.style}
+        >
           <div className="flex items-center gap-2 border-b px-3 py-2 lg:hidden">
             <button type="button" aria-label="Indietro" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
             <span className="truncate text-sm font-medium">
