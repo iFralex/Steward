@@ -51,7 +51,7 @@ export function useEdgeSwipeBack(enabled: boolean, onBack: () => void) {
 
   const style: CSSProperties =
     dragX > 0
-      ? { transform: `translateX(${dragX}px)`, transition: "none" }
+      ? { transform: `translateX(${dragX}px)`, transition: "none", boxShadow: "-8px 0 24px rgba(0,0,0,0.35)" }
       : { transform: "translateX(0)", transition: "transform 150ms ease-out" };
 
   return {

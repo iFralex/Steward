@@ -141,6 +141,23 @@ function App() {
     return () => navigator.serviceWorker.removeEventListener("message", onMsg);
   }, [host]);
 
+  // Action Center auto-refresh: every 2 minutes while connected, plus whenever
+  // the app returns to the foreground (PWA reopened / tab refocused).
+  const { connected: hostConnected, refreshActions } = host;
+  useEffect(() => {
+    if (!hostConnected) return;
+    const tick = () => refreshActions(showDone);
+    const id = window.setInterval(tick, 120_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [hostConnected, refreshActions, showDone]);
+
   const doSend = () => {
     if (!draft.trim() && attachments.length === 0) return;
     host.sendMessage(draft, attachments);
@@ -412,9 +429,10 @@ function App() {
 
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]">
-        {/* List layer: unified sidebar (or the "Altro" list on mobile). Hidden on mobile when drilled in. */}
-        <aside className={cn("min-h-0 lg:block lg:border-r", mobileDrill ? "hidden" : "block")}>
+      <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]">
+        {/* List layer: unified sidebar (or the "Altro" list on mobile). On mobile it stays
+            mounted UNDER the drilled-in content, so the swipe-back gesture reveals it. */}
+        <aside className="min-h-0 lg:border-r" aria-hidden={!isDesktop && mobileDrill}>
           {!isDesktop && tab === "more" ? (
             <MoreList onOpen={(p) => { setMorePane(p); setPane(p); setMobileDrill(true); }} />
           ) : (
@@ -442,9 +460,13 @@ function App() {
           )}
         </aside>
 
-        {/* Content layer. Hidden on mobile until drilled in. */}
+        {/* Content layer. On mobile it overlays the list (absolute) so dragging it
+            right reveals the parent screen underneath. */}
         <main
-          className={cn("min-h-0 flex-col lg:flex", mobileDrill ? "flex" : "hidden")}
+          className={cn(
+            "min-h-0 flex-col lg:static lg:z-auto lg:flex lg:bg-transparent",
+            mobileDrill ? "bg-background absolute inset-0 z-10 flex" : "hidden",
+          )}
           {...swipeBack.handlers}
           style={isDesktop ? undefined : swipeBack.style}
         >
