@@ -21,7 +21,7 @@ test("chat tiers map to DeepSeek and local/embed tiers map to Ollama", () => {
 
 test("paid tiers fall back across the paid DeepSeek ladder only", () => {
   assert.deepEqual(fallbackOrder["tier-5"], ["tier-5", "tier-6", "tier-4", "tier-3", "tier-2"]);
-  assert.deepEqual(attemptsFor("tier-5").map((m) => m.model), [
+  assert.deepEqual(attemptsFor("tier-5").map((a) => a.target.model), [
     "deepseek-v4-flash",
     "deepseek-v4-pro",
     "deepseek-v4-flash",

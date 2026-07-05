@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { usageLedger } from "@steward/usage-ledger";
+import { USAGE_ACTION_HEADER, USAGE_SERVICE_HEADER, USAGE_SESSION_HEADER, USAGE_UNKNOWN } from "@steward/protocol";
 
 type Json = Record<string, unknown>;
 type GatewayModel = {
@@ -75,14 +77,68 @@ export const rates: Record<string, { input: number; output: number; cacheRead: n
   "tier-6": { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0.435 },
 };
 
+interface CallMeta {
+  service: string;
+  action: string;
+  sessionId: string | null;
+  t0: number;
+  tierRequested: string;
+}
+
+function callMeta(req: IncomingMessage, body: Json): CallMeta {
+  const h = (name: string): string | null => {
+    const v = req.headers[name];
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  return {
+    service: h(USAGE_SERVICE_HEADER) ?? USAGE_UNKNOWN,
+    action: h(USAGE_ACTION_HEADER) ?? USAGE_UNKNOWN,
+    sessionId: h(USAGE_SESSION_HEADER),
+    t0: Date.now(),
+    tierRequested: typeof body.model === "string" ? body.model : "",
+  };
+}
+
+/** Normalize an OpenAI-compatible usage block. DeepSeek reports cache hits as
+ *  prompt_cache_hit_tokens; newer providers as prompt_tokens_details.cached_tokens.
+ *  Embeddings responses have prompt_tokens only. */
+export function tokensFromUsage(usage: unknown): { input: number; output: number; cacheRead: number; cacheWrite: number } {
+  const u = usage as { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | null;
+  const prompt = typeof u?.prompt_tokens === "number" ? u.prompt_tokens : 0;
+  const cacheRead = u?.prompt_tokens_details?.cached_tokens ?? u?.prompt_cache_hit_tokens ?? 0;
+  return {
+    input: Math.max(0, prompt - cacheRead),
+    output: typeof u?.completion_tokens === "number" ? u.completion_tokens : 0,
+    cacheRead,
+    cacheWrite: 0,
+  };
+}
+
+/** Best-effort ledger write — metering must never break an LLM call. */
+function recordCall(meta: CallMeta, servedTier: string | null, model: string, status: number, ok: boolean, usage: unknown): void {
+  try {
+    const t = tokensFromUsage(usage);
+    const r = servedTier ? rates[servedTier] : undefined;
+    const cost = r ? (t.input * r.input + t.output * r.output + t.cacheRead * r.cacheRead + t.cacheWrite * r.cacheWrite) / 1_000_000 : 0;
+    usageLedger().recordLlmCall({
+      ts: Date.now(), service: meta.service, action: meta.action, sessionId: meta.sessionId,
+      tier: servedTier ?? meta.tierRequested, model,
+      inputTokens: t.input, outputTokens: t.output, cacheReadTokens: t.cacheRead, cacheWriteTokens: t.cacheWrite,
+      costUsd: cost, durationMs: Date.now() - meta.t0, ok, status,
+    });
+  } catch (err) {
+    console.warn(`[llm-gateway] usage ledger write failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** Only availability failures are worth trying another tier; a 4xx is deterministic. */
 export function shouldFallback(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-export function attemptsFor(model: string): GatewayModel[] {
+export function attemptsFor(model: string): { name: string; target: GatewayModel }[] {
   const names = fallbackOrder[model] ?? [model];
-  return names.map((name) => models[name]).filter(Boolean);
+  return names.flatMap((name) => (models[name] ? [{ name, target: models[name] }] : []));
 }
 
 /** Base URL of a provider's OpenAI-compatible API. */
@@ -131,7 +187,7 @@ function prepareProviderBody(body: Json, target: GatewayModel): Json {
   return next;
 }
 
-async function proxyJson(path: string, body: Json, res: ServerResponse): Promise<void> {
+async function proxyJson(path: string, body: Json, res: ServerResponse, meta: CallMeta): Promise<void> {
   const requestedModel = typeof body.model === "string" ? body.model : "";
   const attempts = attemptsFor(requestedModel);
   if (attempts.length === 0) {
@@ -141,18 +197,22 @@ async function proxyJson(path: string, body: Json, res: ServerResponse): Promise
 
   let lastStatus = 502;
   let lastText = "";
-  for (const target of attempts) {
+  for (const { name, target } of attempts) {
     const base = directOpenAIBaseUrl(target);
     if (!base) { lastText = `no route for provider ${target.provider}`; continue; }
     try {
       const upstream = await callProvider(base, path, body, target);
       const text = await upstream.text();
       if (upstream.ok) {
+        let parsed: { usage?: unknown; model?: unknown } = {};
+        try { parsed = JSON.parse(text) as typeof parsed; } catch { /* pass-through body untouched */ }
+        recordCall(meta, name, typeof parsed.model === "string" ? parsed.model : target.model, upstream.status, true, parsed.usage ?? null);
         res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
         res.end(text);
         return;
       }
       if (!shouldFallback(upstream.status)) {
+        recordCall(meta, name, target.model, upstream.status, false, null);
         res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
         res.end(text);
         return;
@@ -165,6 +225,7 @@ async function proxyJson(path: string, body: Json, res: ServerResponse): Promise
     }
   }
 
+  recordCall(meta, null, "", lastStatus, false, null);
   json(res, lastStatus, {
     error: {
       message: `All gateway attempts failed for ${requestedModel}: ${lastText.slice(0, 500)}`,
@@ -173,7 +234,8 @@ async function proxyJson(path: string, body: Json, res: ServerResponse): Promise
   });
 }
 
-async function proxyStream(path: string, body: Json, res: ServerResponse): Promise<void> {
+// `meta` is threaded through but unused until Task 4 wires up streaming metering.
+async function proxyStream(path: string, body: Json, res: ServerResponse, meta: CallMeta): Promise<void> {
   const requestedModel = typeof body.model === "string" ? body.model : "";
   const attempts = attemptsFor(requestedModel);
   if (attempts.length === 0) {
@@ -183,7 +245,7 @@ async function proxyStream(path: string, body: Json, res: ServerResponse): Promi
 
   let lastStatus = 502;
   let lastText = "";
-  for (const target of attempts) {
+  for (const { target } of attempts) {
     const base = directOpenAIBaseUrl(target);
     if (!base) { lastText = `no route for provider ${target.provider}`; continue; }
 
@@ -358,11 +420,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   try {
     const body = JSON.parse(await readBody(req)) as Json;
+    const meta = callMeta(req, body);
     const path = url.replace(/^\/v1/, "");
     if (body.stream === true) {
-      await proxyStream(path, body, res);
+      await proxyStream(path, body, res, meta);
     } else {
-      await proxyJson(path, body, res);
+      await proxyJson(path, body, res, meta);
     }
   } catch (err) {
     json(res, 500, { error: { message: err instanceof Error ? err.message : String(err), type: "gateway_error" } });

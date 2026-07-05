@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+
+// Every real request through the gateway now writes a usage-ledger row
+// (Task 3 metering). Isolate this file's ledger so exercising the gateway
+// here never touches the real on-disk ledger at the default USAGE_DIR.
+process.env.USAGE_DIR = mkdtempSync(join(tmpdir(), "gw-test-"));
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
