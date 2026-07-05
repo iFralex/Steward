@@ -133,7 +133,11 @@ export function loadConfig(): HostConfig {
     process.env.SHELL_MCP_ENTRY ?? fileURLToPath(new URL("../../shell-mcp/src/index.ts", import.meta.url));
 
   const vapid = loadVapidKeys();
-  webpush.setVapidDetails("mailto:steward@localhost", vapid.publicKey, vapid.privateKey);
+  // Apple's push service (web.push.apple.com) VALIDATES the VAPID subject and
+  // rejects fake domains with 403 BadJwtToken ("mailto:steward@localhost"
+  // meant no push ever reached an iPhone). Must be a real mailto: or https: URI.
+  const pushContact = process.env.STEWARD_PUSH_CONTACT ?? "mailto:ifralex.developer@gmail.com";
+  webpush.setVapidDetails(pushContact, vapid.publicKey, vapid.privateKey);
 
   return {
     port: Number(process.env.HOST_PORT ?? 4317),
