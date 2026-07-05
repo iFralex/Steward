@@ -16,7 +16,7 @@ import { ChatManager } from "./core/agent-runner.ts";
 import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setPushRegistry } from "./core/action-center-service.ts";
 import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
-import { usageStore } from "./core/usage-store.ts";
+import { usageLedger } from "@steward/usage-ledger";
 import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
@@ -222,37 +222,41 @@ function tryServeWebAsset(config: HostConfig, req: IncomingMessage, res: ServerR
   }
 }
 
-/**
- * The gateway's `/rates` is a per-tier map (`{ "tier-5": { input, output, … } }`);
- * the Usage page wants the FLAT rate for THIS host's tier. Pick it out, falling
- * back to `fallback` (the flat `config.gateway.cost`) if the tier is absent.
- */
-export function pickTierRates(ratesMap: unknown, tier: string, fallback: unknown): unknown {
-  const flat = (ratesMap as Record<string, unknown> | null)?.[tier];
-  return flat && typeof flat === "object" ? flat : fallback;
-}
+interface FlatRates { input: number; output: number; cacheRead: number; cacheWrite: number }
 
 /**
- * Flat USD rates for the Usage page, fetched once from the gateway's `/rates`
- * (single source of truth) and cached for the process lifetime. Falls back to
- * `config.gateway.cost` (Pi's own registration cost) if the gateway is
- * unreachable/slow or doesn't know this tier, so `/usage` never blocks on it.
+ * Attribute token-kind costs across tiers: each tier's tokens × that tier's
+ * rates (USD per 1M), summed. Unknown tiers (e.g. local-embed) fall back to
+ * the flat config cost so the split stays sane if the gateway map is stale.
  */
-let cachedRates: unknown | undefined;
-async function gatewayRates(baseUrl: string, tier: string, fallback: unknown): Promise<unknown> {
-  if (cachedRates !== undefined) return cachedRates;
+export function costByKindFromTiers(
+  byTier: { tier: string; input: number; output: number; cacheRead: number; cacheWrite: number }[],
+  ratesMap: Record<string, FlatRates> | null,
+  fallback: FlatRates,
+): FlatRates {
+  const out = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  for (const t of byTier) {
+    const r = ratesMap?.[t.tier] ?? fallback;
+    out.input += (t.input * r.input) / 1_000_000;
+    out.output += (t.output * r.output) / 1_000_000;
+    out.cacheRead += (t.cacheRead * r.cacheRead) / 1_000_000;
+    out.cacheWrite += (t.cacheWrite * r.cacheWrite) / 1_000_000;
+  }
+  return out;
+}
+
+/** Full per-tier rates map from the gateway, cached for the process lifetime. */
+let cachedRatesMap: Record<string, FlatRates> | null | undefined;
+async function gatewayRatesMap(baseUrl: string): Promise<Record<string, FlatRates> | null> {
+  if (cachedRatesMap !== undefined) return cachedRatesMap;
   try {
     const origin = baseUrl.replace(/\/v1\/?$/, "");
     const res = await fetch(`${origin}/rates`, { signal: AbortSignal.timeout(1000) });
-    if (res.ok) {
-      const flat = pickTierRates(await res.json(), tier, fallback);
-      // only cache a real hit; on a miss keep trying next request
-      if (flat !== fallback) return (cachedRates = flat);
-    }
+    if (res.ok) return (cachedRatesMap = await res.json() as Record<string, FlatRates>);
   } catch {
     // gateway down or timed out — fall back to the static config cost.
   }
-  return fallback;
+  return null; // don't cache a miss; retry next request
 }
 
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
@@ -433,9 +437,13 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     return;
   }
   if (url.startsWith("/usage") && req.method === "GET") {
-    void gatewayRates(config.gateway.baseUrl, config.gateway.tier, config.gateway.cost).then((rates) => {
+    const daysParam = new URL(url, "http://x").searchParams.get("days") ?? "30";
+    const days = daysParam === "all" ? undefined : Math.max(1, Number(daysParam) || 30);
+    void gatewayRatesMap(config.gateway.baseUrl).then((ratesMap) => {
+      const summary = usageLedger().summary(days);
+      const costByKind = costByKindFromTiers(summary.byTier, ratesMap, config.gateway.cost);
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
-      res.end(JSON.stringify({ ...(usageStore().summary() as object), rates }));
+      res.end(JSON.stringify({ ...summary, costByKind }));
     });
     return;
   }

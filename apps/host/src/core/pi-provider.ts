@@ -6,6 +6,7 @@
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { streamSimple as openAICompletionsStreamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import type { Model } from "@earendil-works/pi-ai";
+import { usageHeaders } from "@steward/protocol";
 
 export interface GatewayConfig {
   baseUrl: string;
@@ -23,6 +24,7 @@ export function registerGatewayModel(cfg: GatewayConfig): { modelRegistry: Model
     name: "LLM Gateway",
     baseUrl: cfg.baseUrl,
     apiKey: cfg.apiKey,
+    headers: usageHeaders("host", "agent-turn"),
     api: "openai-completions",
     streamSimple: openAICompletionsStreamSimple as any,
     models: [{

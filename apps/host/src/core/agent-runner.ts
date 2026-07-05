@@ -16,7 +16,7 @@ import { buildAskUserTool } from "./ask-user-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
 import { chatStore, toolMessage } from "./chat-store.ts";
-import { usageStore } from "./usage-store.ts";
+import { usageLedger } from "@steward/usage-ledger";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 import type { ChannelFile } from "@steward/protocol";
@@ -233,7 +233,7 @@ export class ChatManager {
       const output = extractToolOutput(e.result);
       const files = filesFromOutput(output);
       const error = ok ? undefined : (typeof output === "string" ? output : JSON.stringify(output));
-      try { usageStore().recordTool({ ts: Date.now(), sessionId: runtime.chatId, tool: e.toolName, durationMs, ok }); } catch { /* ledger optional */ }
+      try { usageLedger().recordTool({ ts: Date.now(), sessionId: runtime.chatId, tool: e.toolName, durationMs, ok }); } catch { /* ledger optional */ }
       try {
         store.addMessage(runtime.chatId, toolMessage({
           tool: e.toolName, input, toolCallId: e.toolCallId ?? "", ok, output, durationMs, error, files,
@@ -299,13 +299,6 @@ export class ChatManager {
         };
         runtime.lastCostUsd = stats.cost;
         runtime.lastTokens = { input: stats.tokens.input, output: stats.tokens.output, cacheRead: stats.tokens.cacheRead, cacheWrite: stats.tokens.cacheWrite };
-        try {
-          usageStore().record({
-            ts: Date.now(), sessionId: runtime.chatId, model: this.config.gateway.tier,
-            inputTokens: turn.input, outputTokens: turn.output, cacheReadTokens: turn.cacheRead, cacheWriteTokens: turn.cacheWrite,
-            costUsd: turnCostUsd,
-          });
-        } catch { /* ledger optional */ }
         this.emit({ type: "usage", sessionId: this.session.id, chatId, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
       } catch { /* stats unavailable */ }
       this.emit({ type: "status", sessionId: this.session.id, chatId, state: "idle" });
