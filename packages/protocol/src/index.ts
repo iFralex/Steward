@@ -208,3 +208,20 @@ export interface ActionCenterState {
   items: ActionCenterItem[];
   diagnostics: ActionCenterDiagnostics;
 }
+
+// ── LLM usage metering (gateway ledger attribution) ─────────────────────────
+// Callers of the LLM gateway attribute themselves with these headers; the
+// gateway records them in the shared usage ledger. Missing headers are
+// recorded as USAGE_UNKNOWN so unlabeled spend stays visible.
+export const USAGE_SERVICE_HEADER = "x-usage-service";
+export const USAGE_ACTION_HEADER = "x-usage-action";
+export const USAGE_SESSION_HEADER = "x-usage-session";
+export const USAGE_UNKNOWN = "unknown";
+
+export function usageHeaders(service: string, action: string, sessionId?: string): Record<string, string> {
+  return {
+    [USAGE_SERVICE_HEADER]: service,
+    [USAGE_ACTION_HEADER]: action,
+    ...(sessionId ? { [USAGE_SESSION_HEADER]: sessionId } : {}),
+  };
+}
