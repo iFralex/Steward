@@ -330,14 +330,21 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     void readRequestBody(req).then((raw) => {
       const body = raw ? (JSON.parse(raw) as { text?: unknown }) : {};
       const text = typeof body.text === "string" ? body.text.trim() : "";
-      if (!text) {
-        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
-        res.end(JSON.stringify({ error: "text required" }));
-        return;
-      }
       const chat = chatStore().createChat();
       res.writeHead(202, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ chatId: chat.id }));
+      // No text (e.g. the Shortcut prompt was left empty): just hand back a
+      // fresh chat — the push tap opens the app right on it, ready to type.
+      if (!text) {
+        void pushRegistry.sendAll({
+          title: "Steward",
+          body: "Nuova chat pronta — tocca per scrivere ✍️",
+          tag: `chat-${chat.id}`,
+          chatId: chat.id,
+          type: "chat-open",
+        }).catch(() => { /* best-effort */ });
+        return;
+      }
       void getQuickRunner(config)
         .runTurn(chat.id, text)
         .then(() => {
