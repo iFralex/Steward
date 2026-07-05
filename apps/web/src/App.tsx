@@ -45,7 +45,9 @@ function App() {
   const [mobileDrill, setMobileDrill] = useState(false); // mobile: list screen (false) vs content screen (true)
   const [morePane, setMorePane] = useState<"usage" | "system">("usage");
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
+  const [splitActionId, setSplitActionId] = useState<number | null>(null);
   const isDesktop = useIsDesktop();
+  const splitAction = host.actionCenter?.items.find((a) => a.id === splitActionId) ?? null;
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -222,6 +224,7 @@ function App() {
     host.markAction(action.id, "read");
     // Runs in a temporary chat dedicated to this action (server-side).
     host.openActionChat(action.id);
+    setSplitActionId(action.id);
     setTab("chat");
     setPane("chat");
     setMobileDrill(true);
@@ -466,6 +469,31 @@ function App() {
                   onRevise={(proposalId, instruction) => selectedAction && host.reviseProposal(selectedAction.id, proposalId, instruction)}
                 />
               </div>
+            </div>
+          ) : splitAction && isDesktop ? (
+            <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_400px]">
+              <div className="flex min-h-0 flex-col">
+                {chatPane}
+              </div>
+              <aside className="min-h-0 overflow-y-auto border-l p-4">
+                <div className="mb-2 flex justify-end">
+                  <button
+                    type="button"
+                    title="Chiudi pannello azione"
+                    className="text-muted-foreground hover:text-foreground rounded p-1 text-sm"
+                    onClick={() => setSplitActionId(null)}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <ActionDetail
+                  action={splitAction}
+                  onOpenChat={openActionInChat}
+                  onMark={(status) => host.markAction(splitAction.id, status)}
+                  onExecute={(proposalId) => host.executeProposal(splitAction.id, proposalId)}
+                  onRevise={(proposalId, instruction) => host.reviseProposal(splitAction.id, proposalId, instruction)}
+                />
+              </aside>
             </div>
           ) : (
             chatPane
