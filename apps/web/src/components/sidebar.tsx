@@ -141,7 +141,7 @@ function ChatList({
   onSave: (id: string) => void;
 }) {
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-end border-b p-2">
         <Button size="sm" onClick={onCreate} title="Nuova chat">+ Nuova</Button>
       </div>

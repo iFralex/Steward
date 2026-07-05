@@ -77,14 +77,15 @@ function App() {
     setPane("chat");
     setMobileDrill(true);
   };
+  const createChat = () => { setSplitActionId(null); setPane("chat"); host.createChat(); };
   const selectAction = (a: ActionCenterItem) => {
     setSelectedActionId(a.id);
     if (a.status === "new") host.markAction(a.id, "read");
     setPane("action");
     setMobileDrill(true);
   };
-  const openUsage = () => { setPane("usage"); setTab("more"); setMorePane("usage"); setMobileDrill(true); };
-  const openSystem = () => { setPane("system"); setTab("more"); setMorePane("system"); setMobileDrill(true); };
+  const openUsage = () => { setPane("usage"); if (!isDesktop) setTab("more"); setMorePane("usage"); setMobileDrill(true); };
+  const openSystem = () => { setPane("system"); if (!isDesktop) setTab("more"); setMorePane("system"); setMobileDrill(true); };
 
   const copyJson = async () => {
     const json = JSON.stringify(
@@ -131,9 +132,7 @@ function App() {
         setMobileDrill(true);
       } else if (typeof p.chatId === "string") {
         setTab("chat");
-        setPane("chat");
-        setMobileDrill(true);
-        host.selectChat(p.chatId);
+        selectChat(p.chatId);
       }
     };
     navigator.serviceWorker.addEventListener("message", onMsg);
@@ -157,7 +156,7 @@ function App() {
     if (list.length === 0) return;
     const idx = list.findIndex((c) => c.id === host.activeChatId);
     const next = list[Math.min(Math.max((idx < 0 ? 0 : idx) + delta, 0), list.length - 1)];
-    if (next && next.id !== host.activeChatId) host.selectChat(next.id);
+    if (next && next.id !== host.activeChatId) selectChat(next.id);
   };
 
   // Global keyboard shortcuts. Single-key (no Cmd/Ctrl) so they don't clash with
@@ -177,7 +176,7 @@ function App() {
 
       switch (e.key) {
         case "/": focusComposer(); e.preventDefault(); break;
-        case "c": host.createChat(); e.preventDefault(); break;
+        case "c": createChat(); e.preventDefault(); break;
         case "j": stepChat(1); e.preventDefault(); break;
         case "k": stepChat(-1); e.preventDefault(); break;
         case "u": setPane((p) => (p === "usage" ? "chat" : "usage")); e.preventDefault(); break;
@@ -247,7 +246,7 @@ function App() {
   // or losing composer focus.
   const chatPane = (
     <>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+      <div ref={(el) => { scrollRef.current = el; if (el) el.scrollTop = el.scrollHeight; }} className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto w-full max-w-[52rem] space-y-3">
           {host.messages.map((m, i) => {
             const prev = host.messages[i - 1];
@@ -423,7 +422,7 @@ function App() {
               chats={host.chats}
               activeChatId={host.activeChatId}
               onSelectChat={selectChat}
-              onCreateChat={host.createChat}
+              onCreateChat={createChat}
               onRenameChat={host.renameChat}
               onDeleteChat={host.deleteChat}
               onSaveChat={host.saveChat}
@@ -444,10 +443,10 @@ function App() {
         {/* Content layer. Hidden on mobile until drilled in. */}
         <main className={cn("min-h-0 flex-col lg:flex", mobileDrill ? "flex" : "hidden")}>
           <div className="flex items-center gap-2 border-b px-3 py-2 lg:hidden">
-            <button type="button" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
+            <button type="button" aria-label="Indietro" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
             <span className="truncate text-sm font-medium">
               {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title ?? "Chat")
-                : tab === "actions" ? "Azioni"
+                : tab === "actions" ? (selectedAction?.title ?? "Azioni")
                 : morePane === "usage" ? "Usage" : "System"}
             </span>
           </div>
@@ -490,7 +489,7 @@ function App() {
                 <ActionDetail
                   action={splitAction}
                   onOpenChat={openActionInChat}
-                  onMark={(status) => host.markAction(splitAction.id, status)}
+                  onMark={(status) => { host.markAction(splitAction.id, status); if (status === "done" || status === "dismissed") setSplitActionId(null); }}
                   onExecute={(proposalId) => host.executeProposal(splitAction.id, proposalId)}
                   onRevise={(proposalId, instruction) => host.reviseProposal(splitAction.id, proposalId, instruction)}
                 />
@@ -509,6 +508,7 @@ function App() {
             key={t}
             type="button"
             onClick={() => { setTab(t); setMobileDrill(false); }}
+            aria-current={tab === t ? "page" : undefined}
             className={cn(
               "relative flex-1 py-2.5 text-center text-xs transition",
               tab === t ? "text-foreground font-medium" : "text-muted-foreground",
