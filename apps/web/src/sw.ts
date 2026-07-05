@@ -4,11 +4,18 @@
  * Web Push: shows a notification on `push`, and on `notificationclick` focuses
  * (or opens) the app and forwards the payload so it can route to the chat/action.
  */
-import { precacheAndRoute } from "workbox-precaching";
+import { cleanupOutdatedCaches, precacheAndRoute } from "workbox-precaching";
+import { clientsClaim } from "workbox-core";
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>;
 };
+
+// injectManifest mode: registerType "autoUpdate" does NOT inject these — without
+// them a new SW sits in "waiting" forever and clients keep the old precache.
+self.skipWaiting();
+clientsClaim();
+cleanupOutdatedCaches();
 
 precacheAndRoute(self.__WB_MANIFEST);
 
