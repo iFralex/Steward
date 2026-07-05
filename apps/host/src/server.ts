@@ -297,6 +297,20 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     });
     return;
   }
+  // Delayed test push: fire-and-forget so the user can background/close the
+  // app and verify real delivery (not just the in-page permission state).
+  if (req.method === "POST" && url.startsWith("/push/test")) {
+    res.writeHead(202, CORS);
+    res.end();
+    setTimeout(() => {
+      void pushRegistry.sendAll({
+        title: "Steward",
+        body: "Notifica di test — le push funzionano ✅",
+        tag: "push-test",
+      }).catch(() => { /* best-effort */ });
+    }, 15_000);
+    return;
+  }
   if (req.method === "POST" && url.startsWith("/push/unsubscribe")) {
     void readRequestBody(req).then((raw) => {
       const body = raw ? (JSON.parse(raw) as { endpoint?: string }) : {};

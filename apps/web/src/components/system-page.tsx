@@ -51,6 +51,7 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   const [pushOn, setPushOn] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState<EnablePushResult | null>(null);
+  const [pushTest, setPushTest] = useState<"idle" | "scheduled" | "error">("idle");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -99,6 +100,17 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     setPushMsg(r);
     if (r === "ok") setPushOn(true);
     setPushBusy(false);
+  };
+
+  const sendTestPush = async () => {
+    try {
+      const res = await authFetch(`${httpBase}/push/test`, token, onUnauthorized, { method: "POST" });
+      setPushTest(res.ok ? "scheduled" : "error");
+    } catch {
+      setPushTest("error");
+    }
+    // Let the state be re-triggered after the notification should have landed.
+    window.setTimeout(() => setPushTest("idle"), 20_000);
   };
 
   const setAutostart = async (enabled: boolean) => {
@@ -169,6 +181,17 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
           <Button onClick={() => void turnOnNotifications()} disabled={pushBusy || pushOn}>
             {pushOn ? "Notifiche attive ✓" : pushBusy ? "Attivazione…" : "Attiva notifiche"}
           </Button>
+          {pushOn && (
+            <Button variant="outline" onClick={() => void sendTestPush()} disabled={pushTest === "scheduled"}>
+              {pushTest === "scheduled" ? "In arrivo tra ~15s…" : "Invia notifica di test"}
+            </Button>
+          )}
+          {pushTest === "scheduled" && (
+            <span className="text-muted-foreground text-sm">Puoi anche chiudere l'app: la notifica arriva comunque.</span>
+          )}
+          {pushTest === "error" && (
+            <span className="text-destructive text-sm">Invio non riuscito — riprova.</span>
+          )}
           {pushMsg && pushMsg !== "ok" && (
             <span className="text-muted-foreground text-sm">
               {pushMsg === "denied"
