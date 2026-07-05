@@ -128,10 +128,17 @@
     @apply font-sans;
     }
 }
-/* The swipe-back gesture translates the content panel; never let that (or any
-   transient overflow) leave the page horizontally pannable on iOS. */
+/* Lock the document itself: no horizontal panning (the swipe-back gesture
+   translates the content panel) and no user-driven vertical panning/bounce of
+   the layout (header + bottom nav must stay pinned). touch-action on the root
+   only affects gestures whose scroller IS the document — inner scrollers
+   (chat thread, lists, pages) resolve the gesture themselves and still pan
+   vertically. No overflow-y/height rules here on purpose: on-device the
+   layout viewport is reported shorter than the real screen, so clipping to it
+   hides the bottom nav. */
 html,
 body {
-  overscroll-behavior-x: none;
+  overscroll-behavior: none;
   overflow-x: hidden;
+  touch-action: pan-x;
 }
