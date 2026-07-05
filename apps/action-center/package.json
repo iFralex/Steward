@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@steward/mcp-bridge": "*",
+    "@steward/protocol": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0"
   },

@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   ];
   const deps: RunDeps = {
     store, state, wiki: apiClient,
-    chat: gatewayChat({ endpoint: cfg.llmEndpoint, model: cfg.triageModel, apiKey: cfg.apiKey }),
+    chat: gatewayChat({ endpoint: cfg.llmEndpoint, model: cfg.triageModel, apiKey: cfg.apiKey, usage: { service: "mail-promoter", action: "triage" } }),
     roleOf: (a, m) => store.roleForMailbox(a, m),
     accountLabelOf: (a) => (store.raw.prepare("SELECT emails FROM accounts WHERE uuid=?").get(a) as { emails: string } | undefined)?.emails ?? a,
     userAddrs,
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     const modelsRaw = process.env.MAIL_PROMOTER_EVAL_MODELS ?? cfg.triageModel;
     const models = modelsRaw.split(",").map((m) => m.trim()).filter(Boolean);
     for (const model of models) {
-      const chat = gatewayChat({ endpoint: cfg.llmEndpoint, model, apiKey: cfg.apiKey });
+      const chat = gatewayChat({ endpoint: cfg.llmEndpoint, model, apiKey: cfg.apiKey, usage: { service: "mail-promoter", action: "eval" } });
       const r = await evaluate(fixture.items, chat);
       console.log(`model=${model} precision=${r.precision.toFixed(3)} recall=${r.recall.toFixed(3)} tp=${r.tp} fp=${r.fp} tn=${r.tn} fn=${r.fn}`);
     }

@@ -1,4 +1,5 @@
 import { extractJson } from "../../llm-gateway/src/extract-json.ts";
+import { usageHeaders } from "@steward/protocol";
 
 export type Chat = (system: string, user: string) => Promise<string>;
 
@@ -12,7 +13,11 @@ export function gatewayChat(
   return async (system, user) => {
     const res = await fetchImpl(endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+      headers: {
+        "content-type": "application/json",
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        ...usageHeaders("action-center", "scan"),
+      },
       body: JSON.stringify({
         model,
         temperature: 0.2,

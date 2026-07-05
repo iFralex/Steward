@@ -1,4 +1,5 @@
 import type { Role } from "./mailbox-roles.ts";
+import { usageHeaders } from "@steward/protocol";
 
 const ROLES: Role[] = ["inbox", "drafts", "sent", "trash", "junk", "archive", "important", "flagged"];
 
@@ -31,7 +32,11 @@ export function makeRoleClassifier(cfg: ClassifyConfig, fetchImpl: typeof fetch 
     try {
       const res = await fetchImpl(cfg.endpoint, {
         method: "POST",
-        headers: { "content-type": "application/json", ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}) },
+        headers: {
+          "content-type": "application/json",
+          ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+          ...usageHeaders("mail-mirror", "role-classify"),
+        },
         body: JSON.stringify({
           model: cfg.model,
           temperature: 0,
