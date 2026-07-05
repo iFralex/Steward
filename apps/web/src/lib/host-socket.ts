@@ -80,6 +80,8 @@ export interface HostSocket {
   actionCenter: ActionCenterState | null;
   chats: ChatSummary[];
   activeChatId: string | null;
+  /** True while waiting for the server's chat_history after a chat switch. */
+  historyLoading: boolean;
   createChat: () => void;
   selectChat: (chatId: string) => void;
   renameChat: (chatId: string, title: string) => void;
@@ -123,6 +125,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
   /** Per-chat transcript, keyed by chatId; `messages` mirrors the active chat's list. */
   const messagesByChat = useRef<Map<string, ChatMessage[]>>(new Map());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const activeChatRef = useRef<string | null>(null);
   useEffect(() => {
     activeChatRef.current = activeChatId;
@@ -259,6 +262,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
             const merged = liveTail.length ? [...persisted, ...liveTail] : persisted;
             messagesByChat.current.set(msg.chatId, merged);
             setMessages(merged);
+            setHistoryLoading(false);
             break; // approvals/questions are NOT cleared — they're per-chat and filtered on read
           }
           case "action_center_state":
@@ -313,7 +317,16 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
   }, [httpBase, token, onUnauthorized]);
 
   const createChat = useCallback(() => send({ type: "chat_create" }), [send]);
-  const selectChat = useCallback((chatId: string) => send({ type: "chat_select", chatId }), [send]);
+  const selectChat = useCallback((chatId: string) => {
+    // Optimistic switch: show the cached transcript instantly (the server's
+    // chat_history reconciles it when it arrives). Without this the OLD
+    // chat stays on screen until the round-trip completes.
+    activeChatRef.current = chatId;
+    setActiveChatId(chatId);
+    setMessages(messagesByChat.current.get(chatId) ?? []);
+    setHistoryLoading(true);
+    send({ type: "chat_select", chatId });
+  }, [send]);
   const renameChat = useCallback((chatId: string, title: string) => {
     const trimmed = title.trim();
     if (trimmed) send({ type: "chat_rename", chatId, title: trimmed });
@@ -399,7 +412,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
   const visibleApprovals = approvals.filter((a) => !a.chatId || a.chatId === activeChatId);
   const visibleQuestions = questions.filter((q) => !q.chatId || q.chatId === activeChatId);
 
-  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, historyLoading, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */

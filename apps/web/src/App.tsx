@@ -48,7 +48,8 @@ function App() {
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [splitActionId, setSplitActionId] = useState<number | null>(null);
   const isDesktop = useIsDesktop();
-  const swipeBack = useEdgeSwipeBack(!isDesktop, () => setMobileDrill(false));
+  const swipePanelRef = useRef<HTMLElement | null>(null);
+  const swipeStyle = useEdgeSwipeBack(swipePanelRef, !isDesktop, () => setMobileDrill(false));
   const splitAction = host.actionCenter?.items.find((a) => a.id === splitActionId) ?? null;
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
@@ -267,6 +268,11 @@ function App() {
     <>
       <div ref={(el) => { scrollRef.current = el; if (el) el.scrollTop = el.scrollHeight; }} className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto w-full max-w-[52rem] space-y-3">
+          {host.historyLoading && host.messages.length === 0 && (
+            <div className="flex justify-center py-10" aria-label="caricamento chat">
+              <span className="border-muted-foreground/40 border-t-foreground size-5 animate-spin rounded-full border-2" />
+            </div>
+          )}
           {host.messages.map((m, i) => {
             const prev = host.messages[i - 1];
             const divider = m.ts && (!prev?.ts || !sameDay(prev.ts, m.ts)) ? <DateDivider ts={m.ts} /> : null;
@@ -467,8 +473,8 @@ function App() {
             "min-h-0 flex-col lg:static lg:z-auto lg:flex lg:bg-transparent",
             mobileDrill ? "bg-background absolute inset-0 z-10 flex" : "hidden",
           )}
-          {...swipeBack.handlers}
-          style={isDesktop ? undefined : swipeBack.style}
+          ref={swipePanelRef}
+          style={isDesktop ? undefined : swipeStyle}
         >
           <div className="flex items-center gap-2 border-b px-3 py-2 lg:hidden">
             <button type="button" aria-label="Indietro" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
