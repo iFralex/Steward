@@ -133,7 +133,8 @@
    (swipe-back translates the content panel) or vertically (iOS bounce drags
    header and bottom nav around). */
 html,
-body {
+body,
+#root {
   overscroll-behavior: none;
   overflow: hidden;
   height: 100%;

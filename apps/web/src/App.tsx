@@ -399,7 +399,7 @@ function App() {
   );
 
   return (
-    <div className="bg-background text-foreground flex h-screen flex-col">
+    <div className="bg-background text-foreground flex h-full flex-col">
       <header className="flex items-center justify-between border-b px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <h1 className="text-sm font-semibold">Steward</h1>
         <div className="flex items-center gap-3">
@@ -584,7 +584,7 @@ function PairingScreen({ onPaired }: { onPaired: (token: string) => void }) {
     if (trimmed) onPaired(trimmed);
   };
   return (
-    <div className="bg-background text-foreground flex h-screen items-center justify-center p-4">
+    <div className="bg-background text-foreground flex h-full items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-3 rounded-lg border p-5">
         <h1 className="text-sm font-semibold">Steward</h1>
         <p className="text-muted-foreground text-sm">
