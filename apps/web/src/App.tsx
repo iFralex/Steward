@@ -32,6 +32,17 @@ const HTTP_BASE = hostHttpBase();
 type Tab = "chat" | "actions" | "more";
 type Pane = "chat" | "action" | "usage" | "system";
 
+/** ?send=… deep link (iPhone Action button → Shortcut → "Apri URL"): consume
+ *  the param once, stripping it from the address bar like ?token. */
+function consumeSendParam(): { text: string; from?: string | null; created?: boolean } | null {
+  const url = new URL(window.location.href);
+  const text = url.searchParams.get("send")?.trim();
+  if (!text) return null;
+  url.searchParams.delete("send");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  return { text };
+}
+
 function App() {
   // Localhost (the Mac) auto-pairs via the host-injected global; a phone pairs
   // by scanning the System page's QR (?token=…, consumed once then stripped
@@ -164,6 +175,27 @@ function App() {
     navigator.serviceWorker.addEventListener("message", onMsg);
     return () => navigator.serviceWorker.removeEventListener("message", onMsg);
   }, [host]);
+
+  // ?send=… deep link: once connected and settled on a chat, create a fresh
+  // chat, wait for the server to make it active, then send the text there.
+  const pendingSendRef = useRef(consumeSendParam());
+  useEffect(() => {
+    const p = pendingSendRef.current;
+    if (!p || !host.connected || !host.activeChatId) return;
+    if (!p.created) {
+      p.from = host.activeChatId;
+      p.created = true;
+      host.createChat();
+      return;
+    }
+    if (host.activeChatId !== p.from) {
+      pendingSendRef.current = null;
+      host.sendMessage(p.text);
+      setTab("chat");
+      setPane("chat");
+      setMobileDrill(true);
+    }
+  }, [host, host.connected, host.activeChatId]);
 
   // Action Center auto-refresh: every 2 minutes while connected, plus whenever
   // the app returns to the foreground (PWA reopened / tab refocused).

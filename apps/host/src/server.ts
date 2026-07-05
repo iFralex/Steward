@@ -99,7 +99,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/push/"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/push/", "/quick-send"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -117,6 +117,21 @@ const CONTENT_TYPES: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
   ".wasm": "application/wasm",
 };
+
+/**
+ * Headless chat runner for /quick-send (iPhone Action button → Shortcut → POST):
+ * no WebSocket client is attached, so events go nowhere and a gated write that
+ * asks for approval simply times out (denied). One shared instance — turns are
+ * serialized per chat by ChatManager's own queue.
+ */
+let quickRunner: ChatManager | null = null;
+function getQuickRunner(config: HostConfig): ChatManager {
+  if (!quickRunner) {
+    const noop: Emit = () => {};
+    quickRunner = new ChatManager(config, new Session(noop, config.approvalTimeoutMs), noop);
+  }
+  return quickRunner;
+}
 
 function readRequestBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -288,6 +303,40 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       if (body.endpoint) pushRegistry.unsubscribe(body.endpoint);
       res.writeHead(204, CORS);
       res.end();
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  // Quick message from outside the app (iPhone Action button via Shortcuts):
+  // creates a fresh chat, runs the turn headless, then pushes the reply with
+  // the chatId so tapping the notification lands on that chat.
+  if (req.method === "POST" && url.startsWith("/quick-send")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? (JSON.parse(raw) as { text?: unknown }) : {};
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (!text) {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "text required" }));
+        return;
+      }
+      const chat = chatStore().createChat();
+      res.writeHead(202, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ chatId: chat.id }));
+      void getQuickRunner(config)
+        .runTurn(chat.id, text)
+        .then(() => {
+          const reply = [...chatStore().getMessages(chat.id)].reverse().find((m) => m.role === "assistant")?.text ?? "";
+          return pushRegistry.sendAll({
+            title: "Steward",
+            body: reply ? reply.slice(0, 140) : "Risposta pronta",
+            tag: `chat-${chat.id}`,
+            chatId: chat.id,
+            type: "chat-reply",
+          });
+        })
+        .catch(() => { /* best-effort: the chat + transcript persist regardless */ });
     }).catch((err) => {
       res.writeHead(400, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
