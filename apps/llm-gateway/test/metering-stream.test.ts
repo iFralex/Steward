@@ -79,3 +79,42 @@ test("streaming chat records usage from the final SSE chunk; absent usage record
   assert.equal(rows[1].output_tokens, 0);
   assert.equal(rows[1].ok, 1);
 });
+
+test("synthetic-fallback with unparseable upstream body records a failure matching the client's 502", async (t) => {
+  const provider = createServer(async (req, res) => {
+    const body = JSON.parse(await readBody(req)) as { stream?: boolean };
+    if (body.stream === true) {
+      // Fail the native streaming attempt so the gateway falls back.
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "stream broke" } }));
+      return;
+    }
+    // Non-streaming fallback: HTTP 200 but a body writeSyntheticSse cannot parse.
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("not json");
+  });
+  const providerPort = await listen(provider);
+  process.env.DEEPSEEK_BASE_URL = `http://127.0.0.1:${providerPort}/v1`;
+  process.env.DEEPSEEK_API_KEY = "sk-test";
+  const { startGateway } = await import("../src/gateway.ts");
+  const gw = startGateway(0);
+  await new Promise((resolve) => gw.on("listening", resolve));
+  const gwPort = (gw.address() as { port: number }).port;
+  const { usageLedger } = await import("@steward/usage-ledger");
+  t.after(() => { gw.close(); provider.close(); });
+
+  const r = await fetch(`http://127.0.0.1:${gwPort}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-usage-service": "host", "x-usage-action": "synthetic-fail" },
+    body: JSON.stringify({ model: "tier-5", stream: true, messages: [{ role: "user", content: "hi" }] }),
+  });
+  await r.text();
+  assert.equal(r.status, 502);
+
+  const rows = usageLedger().raw
+    .prepare(`SELECT * FROM llm_calls WHERE action = 'synthetic-fail' ORDER BY id`)
+    .all() as any[];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].ok, 0);
+  assert.equal(rows[0].status, 502);
+});

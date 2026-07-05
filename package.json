@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build:web-host": "npm run build -w @steward/web && npm run typecheck -w @steward/host",
+    "icon:mac": "node apps/mac-launcher/scripts/make-icon.mjs",
     "launcher:mac": "swift run --package-path apps/mac-launcher StewardLauncher",
     "package:mac": "node --import tsx apps/mac-launcher/package-mac.mts"
   },

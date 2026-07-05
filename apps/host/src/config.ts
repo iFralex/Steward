@@ -19,6 +19,7 @@ export interface HostConfig {
   policy: ToolPolicy;
   approvalTimeoutMs: number;
   gateway: GatewayConfig;
+  speech: SpeechConfig;
   mcpServers: Record<string, McpServerSpec>;
   /** Shared secret gating the WS + HTTP data routes (mobile-access M0). */
   authToken: string;
@@ -41,6 +42,15 @@ export function pushSubscriptionsPath(): string {
 export interface VapidKeys {
   publicKey: string;
   privateKey: string;
+}
+
+export interface SpeechConfig {
+  enabled: boolean;
+  whisperBin?: string;
+  whisperModel?: string;
+  language: string;
+  timeoutMs: number;
+  convertTimeoutMs: number;
 }
 
 /**
@@ -155,6 +165,14 @@ export function loadConfig(): HostConfig {
       // /rates endpoint (single source of truth); this is only the fallback
       // used if the gateway is unreachable.
       cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
+    },
+    speech: {
+      enabled: process.env.STEWARD_SPEECH_ENABLED !== "0",
+      whisperBin: process.env.STEWARD_WHISPER_BIN,
+      whisperModel: process.env.STEWARD_WHISPER_MODEL,
+      language: process.env.STEWARD_SPEECH_LANGUAGE ?? "it",
+      timeoutMs: Number(process.env.STEWARD_SPEECH_TIMEOUT_MS ?? 120_000),
+      convertTimeoutMs: Number(process.env.STEWARD_AUDIO_CONVERT_TIMEOUT_MS ?? 30_000),
     },
     mcpServers: {
       "llm-wiki": { command: node, args: [llmWikiMcpEntry] },

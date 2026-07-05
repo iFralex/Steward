@@ -355,4 +355,3 @@ function diagnostics(store: ActionStore, all: ActionCenterItem[]): ActionCenterD
     deferredReasons: lastScan?.result?.mail?.deferredReasons,
   };
 }
-

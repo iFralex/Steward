@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type ReactNode } from "react";
 import { flushSync } from "react-dom";
+import { Mic, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useHostSocket } from "@/lib/host-socket";
@@ -93,9 +94,13 @@ function App() {
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Stable callback ref: scrolls to the bottom only when the scroller actually
   // (re)mounts. An inline ref re-attaches on every render and would re-scroll
@@ -105,6 +110,7 @@ function App() {
     scrollRef.current = el;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
+  useEffect(() => () => streamSafeStop(recorderRef.current), []);
   const focusComposer = () => document.getElementById("composer-input")?.focus();
   const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile, register: host.registerPath };
 
@@ -264,6 +270,59 @@ function App() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     doSend();
+  };
+
+  const sendRecordedAudio = async (blob: Blob) => {
+    setTranscribing(true);
+    try {
+      const text = await host.transcribeAudio(blob);
+      host.sendMessage(text, attachments);
+      setDraft("");
+      setAttachments([]);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const startRecording = async () => {
+    if (recording || transcribing || host.state === "running") return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      window.alert("La registrazione audio non e' supportata da questo browser.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = preferredRecordingMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        stream.getTracks().forEach((track) => track.stop());
+        recorderRef.current = null;
+        recordingChunksRef.current = [];
+        setRecording(false);
+        if (blob.size > 0) void sendRecordedAudio(blob);
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch (err) {
+      streamSafeStop(recorderRef.current);
+      recorderRef.current = null;
+      setRecording(false);
+      window.alert(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const stopRecording = () => {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+    recorder.stop();
   };
 
   // Move focus between chats relative to the active one.
@@ -500,8 +559,23 @@ function App() {
               id="composer-input"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (/ per focus, trascina file per allegarli)"}
+              placeholder={
+                transcribing ? "Trascrizione audio..."
+                  : recording ? "Registrazione in corso..."
+                  : dragOver ? "Rilascia i file qui…"
+                  : "Message your agent…  (/ per focus, trascina file per allegarli)"
+              }
             />
+            <Button
+              type="button"
+              variant={recording ? "destructive" : "outline"}
+              size="icon"
+              title={recording ? "Ferma registrazione" : "Registra audio"}
+              disabled={!host.connected || transcribing || host.state === "running"}
+              onClick={recording ? stopRecording : startRecording}
+            >
+              {recording ? <Square className="size-4" /> : transcribing ? "…" : <Mic className="size-4" />}
+            </Button>
             {host.state === "running" ? (
               <Button type="button" variant="destructive" onClick={host.stop} title="Stop generazione (Esc)">
                 ■ Stop
@@ -944,4 +1018,15 @@ function EmptyChat({
 
 function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="bg-muted rounded px-1 py-0.5 font-mono text-[10px]">{children}</kbd>;
+}
+
+function streamSafeStop(recorder: MediaRecorder | null): void {
+  recorder?.stream.getTracks().forEach((track) => track.stop());
+}
+
+function preferredRecordingMimeType(): string | undefined {
+  for (const mimeType of ["audio/mp4", "audio/aac", "audio/webm;codecs=opus", "audio/webm"]) {
+    if (MediaRecorder.isTypeSupported(mimeType)) return mimeType;
+  }
+  return undefined;
 }

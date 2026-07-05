@@ -288,9 +288,15 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
         lastText = text;
         continue;
       }
-      let parsed: { usage?: unknown; model?: unknown } = {};
-      try { parsed = JSON.parse(text) as typeof parsed; } catch { /* writeSyntheticSse re-parses and reports */ }
-      recordCall(meta, name, typeof parsed.model === "string" ? parsed.model : target.model, 200, true, parsed.usage ?? null);
+      let parsed: { usage?: unknown; model?: unknown } | null = null;
+      try { parsed = JSON.parse(text) as { usage?: unknown; model?: unknown }; } catch { /* malformed upstream body */ }
+      if (parsed === null) {
+        // writeSyntheticSse will fail its own parse and answer the client 502 —
+        // record the same failed outcome, not a success.
+        recordCall(meta, name, target.model, 502, false, null);
+      } else {
+        recordCall(meta, name, typeof parsed.model === "string" ? parsed.model : target.model, 200, true, parsed.usage ?? null);
+      }
       writeSyntheticSse(text, res);
       return;
     } catch (err) {

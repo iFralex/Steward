@@ -89,6 +89,7 @@ export interface HostSocket {
   saveChat: (chatId: string) => void;
   openActionChat: (id: number) => void;
   uploadFile: (file: File) => Promise<ChannelFile>;
+  transcribeAudio: (blob: Blob) => Promise<string>;
   sendMessage: (text: string, attachments?: ChannelFile[]) => void;
   stop: () => void;
   respondQuestion: (requestId: string, selected: string[]) => void;
@@ -316,6 +317,24 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
     return (await res.json()) as ChannelFile;
   }, [httpBase, token, onUnauthorized]);
 
+  const transcribeAudio = useCallback(async (blob: Blob): Promise<string> => {
+    const res = await authFetch(`${httpBase}/transcribe`, token, onUnauthorized, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audio: {
+          data: await blobToBase64(blob),
+          mimeType: blob.type || "audio/webm",
+          filename: `recording.${audioExtension(blob.type)}`,
+        },
+      }),
+    });
+    const body = await res.json().catch(() => ({})) as { text?: unknown; error?: unknown };
+    if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : `transcribe failed: HTTP ${res.status}`);
+    if (typeof body.text !== "string" || !body.text.trim()) throw new Error("transcription returned empty text");
+    return body.text.trim();
+  }, [httpBase, token, onUnauthorized]);
+
   const createChat = useCallback(() => send({ type: "chat_create" }), [send]);
   const selectChat = useCallback((chatId: string) => {
     // Optimistic switch: show the cached transcript instantly (the server's
@@ -420,7 +439,27 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
     [questions, activeChatId],
   );
 
-  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, historyLoading, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, historyLoading, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, transcribeAudio, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function audioExtension(mimeType: string): string {
+  const lower = mimeType.toLowerCase();
+  if (lower.includes("mp4") || lower.includes("m4a")) return "m4a";
+  if (lower.includes("mpeg") || lower.includes("mp3")) return "mp3";
+  if (lower.includes("wav")) return "wav";
+  if (lower.includes("ogg")) return "ogg";
+  return "webm";
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSyn
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HostConfig } from "../config.ts";
+import { speechStatus } from "./speech.ts";
 
 type ServiceState = "ok" | "warning" | "error" | "unknown";
 
@@ -50,6 +51,7 @@ export async function loadSystemStatus(config: HostConfig): Promise<SystemStatus
     httpStatus("host", "Host", `http://127.0.0.1:${config.port}/health`),
     gatewayStatus(),
     ollamaStatus(),
+    Promise.resolve(localSpeechStatus(config)),
     httpStatus("llm-wiki", "LLM Wiki API", LLM_WIKI_URL),
     schedulerStatus(),
     ...Object.entries(config.mcpServers).map(([id, spec]) => mcpStatus(id, `MCP ${id}`, spec.command, spec.args)),
@@ -99,6 +101,18 @@ export function setAutostart(enabled: boolean): AutostartStatus {
   mkdirSync(dirname(plistPath), { recursive: true });
   writeFileSync(plistPath, launchAgentPlist(appPath), "utf8");
   return getAutostartStatus();
+}
+
+function localSpeechStatus(config: HostConfig): SystemServiceStatus {
+  const status = speechStatus(config);
+  return {
+    id: "speech",
+    label: "Speech",
+    state: status.ok ? "ok" : "warning",
+    detail: status.detail,
+    checks: [{ name: "whisper.cpp", ok: status.ok, detail: status.detail }],
+    updatedAt: Date.now(),
+  };
 }
 
 async function httpStatus(id: string, label: string, url: string): Promise<SystemServiceStatus> {

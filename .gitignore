@@ -6,6 +6,7 @@ node_modules/
 
 # Host build outputs
 dist/
+tmp/
 apps/host/dist/
 apps/web/dist/
 

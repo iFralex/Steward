@@ -22,6 +22,7 @@ import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
 import { PushRegistry, type PushSubscriptionJSON } from "./core/push.ts";
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
+import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -99,7 +100,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/push/", "/quick-send"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/push/", "/quick-send", "/transcribe"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -142,6 +143,15 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
     req.on("end", () => resolve(data));
     req.on("error", reject);
   });
+}
+
+type QuickSendBody = { text?: unknown; audio?: AudioPayload };
+
+async function textFromQuickSendBody(config: HostConfig, body: QuickSendBody): Promise<string> {
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (text) return text;
+  if (body.audio && typeof body.audio === "object") return transcribeAudioPayload(config, body.audio);
+  return "";
 }
 
 /**
@@ -323,13 +333,32 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     });
     return;
   }
+  if (req.method === "POST" && url.startsWith("/transcribe")) {
+    void readRequestBody(req).then(async (raw) => {
+      const body = raw ? (JSON.parse(raw) as { audio?: AudioPayload }) : {};
+      if (!body.audio || typeof body.audio !== "object") {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "audio is required" }));
+        return;
+      }
+      const text = await transcribeAudioPayload(config, body.audio);
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ text }));
+    }).catch((err) => {
+      console.error(`[quick-send] ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      const status = err instanceof SpeechUnavailableError ? 503 : 400;
+      res.writeHead(status, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
   // Quick message from outside the app (iPhone Action button via Shortcuts):
   // creates a fresh chat, runs the turn headless, then pushes the reply with
   // the chatId so tapping the notification lands on that chat.
   if (req.method === "POST" && url.startsWith("/quick-send")) {
-    void readRequestBody(req).then((raw) => {
-      const body = raw ? (JSON.parse(raw) as { text?: unknown }) : {};
-      const text = typeof body.text === "string" ? body.text.trim() : "";
+    void readRequestBody(req).then(async (raw) => {
+      const body = raw ? (JSON.parse(raw) as QuickSendBody) : {};
+      const text = await textFromQuickSendBody(config, body);
       const chat = chatStore().createChat();
       res.writeHead(202, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ chatId: chat.id }));
@@ -359,7 +388,8 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
         })
         .catch(() => { /* best-effort: the chat + transcript persist regardless */ });
     }).catch((err) => {
-      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      const status = err instanceof SpeechUnavailableError ? 503 : 400;
+      res.writeHead(status, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
     });
     return;

@@ -49,7 +49,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         makeMainMenu()
         makeStatusItem()
         makeWindow()
@@ -74,7 +74,6 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
-        NSApp.setActivationPolicy(.accessory)
         return false
     }
 
@@ -94,7 +93,6 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         guard let window else { return }
         if window.isVisible && NSApp.isActive {
             window.orderOut(nil)
-            NSApp.setActivationPolicy(.accessory)
             return
         }
         showWindow()
@@ -128,6 +126,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f"))
         windowMenu.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
@@ -166,12 +165,13 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Steward"
-        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = false
         window.isReleasedWhenClosed = false
         window.center()
         window.contentView = webView
@@ -186,8 +186,6 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         if webView?.url == nil {
             loadStatus("Starting Steward...")
         }
-        // Regular while the window is up: an accessory app owns no menu bar
-        // (and Cmd+C/V would be dead). Back to accessory on close/hide.
         NSApp.setActivationPolicy(.regular)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -385,6 +383,14 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             env["LLM_WIKI_NODE"] = bundledNode.path
             env["NODE_PATH"] = resourcesRoot.appendingPathComponent("node_modules").path
             env["HOST_STATIC_DIR"] = resourcesRoot.appendingPathComponent("web").path
+            let speechRoot = resourcesRoot.appendingPathComponent("speech")
+            let whisperBin = speechRoot.appendingPathComponent("whisper-cli")
+            let whisperModel = speechRoot.appendingPathComponent("models/ggml-base.bin")
+            if FileManager.default.fileExists(atPath: whisperBin.path), FileManager.default.fileExists(atPath: whisperModel.path) {
+                env["STEWARD_WHISPER_BIN"] = whisperBin.path
+                env["STEWARD_WHISPER_MODEL"] = whisperModel.path
+                env["STEWARD_SPEECH_LANGUAGE"] = env["STEWARD_SPEECH_LANGUAGE"] ?? "it"
+            }
             env["LLM_WIKI_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/llm-wiki.js").path
             env["MAIL_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/mail.js").path
             env["CALENDAR_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/calendar.js").path

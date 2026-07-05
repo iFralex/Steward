@@ -13,10 +13,13 @@ const contentsDir = join(appDir, "Contents");
 const macosDir = join(contentsDir, "MacOS");
 const resourcesDir = join(contentsDir, "Resources");
 const servicesDir = join(resourcesDir, "services");
+const speechDir = join(resourcesDir, "speech");
 const llmWikiBundleDir = join(resourcesDir, "llm-wiki");
 const nodeDir = join(resourcesDir, "node", "bin");
 const nodePath = join(nodeDir, "node");
 const nodeModulesDir = join(resourcesDir, "node_modules");
+const appIcon = join(repoRoot, "apps", "mac-launcher", "assets", "Steward.icns");
+const speechAssetsDir = join(repoRoot, "apps", "mac-launcher", "speech");
 const debugPackage = process.env.PACKAGE_DEBUG === "1";
 const skipLLMWikiBuild = process.env.PACKAGE_SKIP_LLM_WIKI_BUILD === "1";
 
@@ -139,6 +142,17 @@ function copyRuntimeNodeModules(): void {
   console.log(`Copied ${seen.size} runtime packages into ${nodeModulesDir}`);
 }
 
+function copySpeechAssets(): void {
+  if (!existsSync(speechAssetsDir)) {
+    console.log("Speech assets not found; skipping bundled Whisper.");
+    return;
+  }
+  cpSync(speechAssetsDir, speechDir, { recursive: true, dereference: true });
+  const bin = join(speechDir, "whisper-cli");
+  if (existsSync(bin)) chmodSync(bin, 0o755);
+  console.log(`Copied speech assets into ${speechDir}`);
+}
+
 function findLLMWikiAppBundle(): string {
   const candidates = [
     join(repoRoot, "apps", "llm-wiki", "src-tauri", "target", "release", "bundle", "macos", "LLM Wiki.app"),
@@ -158,6 +172,7 @@ mkdirSync(resourcesDir, { recursive: true });
 mkdirSync(servicesDir, { recursive: true });
 
 run("npm", ["run", "build", "-w", "@steward/web"]);
+run("npm", ["run", "icon:mac"]);
 if (skipLLMWikiBuild) {
   console.log("$ PACKAGE_SKIP_LLM_WIKI_BUILD=1: reusing existing LLM Wiki Tauri bundle");
   findLLMWikiAppBundle();
@@ -172,6 +187,8 @@ for (const [outRel, entry] of Object.entries(entries)) {
 
 writeFileSync(join(servicesDir, "package.json"), JSON.stringify({ type: "module" }, null, 2) + "\n");
 cpSync(join(repoRoot, "apps", "web", "dist"), join(resourcesDir, "web"), { recursive: true });
+cpSync(appIcon, join(resourcesDir, "Steward.icns"));
+copySpeechAssets();
 mkdirSync(llmWikiBundleDir, { recursive: true });
 cpSync(findLLMWikiAppBundle(), join(llmWikiBundleDir, "LLM Wiki.app"), { recursive: true });
 copyRuntimeNodeModules();
@@ -199,8 +216,8 @@ writeFileSync(
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>StewardLauncher</string>
+  <key>CFBundleIconFile</key><string>Steward</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
-  <key>LSUIElement</key><true/>
 </dict>
 </plist>
 `,

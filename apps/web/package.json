@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run icons && tsc -b && vite build",
+    "icons": "node scripts/make-pwa-icons.mjs",
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "preview": "vite preview"
