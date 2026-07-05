@@ -129,7 +129,9 @@ aggregating from `llm_calls` (+ `tool_calls`). Accepts `?days=7|30|all`
 - `recent` — last 100 calls: ts, service, action, model, tokens, cost,
   duration, ok
 - `byTool` / `toolTotals` — unchanged
-- `rates` — kept for the token-kind cost split card
+- `costByKind` — USD cost per token kind, computed server-side per tier
+  (each tier's tokens × that tier's rates); replaces the old flat `rates`
+  field, which cannot price the split correctly across multiple tiers
 
 ### 6. Usage page (web UI)
 
