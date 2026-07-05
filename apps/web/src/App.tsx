@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useHostSocket } from "@/lib/host-socket";
@@ -58,13 +58,6 @@ function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Stable callback ref: scrolls to the bottom only when the scroller actually
-  // (re)mounts (pane switch, split open/close). An inline ref would re-run on
-  // EVERY render — e.g. each swipe-gesture touchmove — yanking the thread down.
-  const attachChatScroller = useCallback((el: HTMLDivElement | null) => {
-    scrollRef.current = el;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, []);
   const focusComposer = () => document.getElementById("composer-input")?.focus();
   const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile, register: host.registerPath };
 
@@ -273,7 +266,7 @@ function App() {
   // or losing composer focus.
   const chatPane = (
     <>
-      <div ref={attachChatScroller} className="flex-1 overflow-y-auto p-4">
+      <div ref={(el) => { scrollRef.current = el; if (el) el.scrollTop = el.scrollHeight; }} className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto w-full max-w-[52rem] space-y-3">
           {host.historyLoading && host.messages.length === 0 && (
             <div className="flex justify-center py-10" aria-label="caricamento chat">
