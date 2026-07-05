@@ -29,8 +29,35 @@ import type { ActionCenterItem, ChannelFile } from "@steward/protocol";
 const HOST_URL = hostWsUrl();
 const HTTP_BASE = hostHttpBase();
 
-type Tab = "chat" | "actions" | "more";
+type Tab = "chat" | "actions" | "usage" | "system";
 type Pane = "chat" | "action" | "usage" | "system";
+
+function AppMark({ className }: { className?: string }) {
+  return (
+    <img
+      src="/pwa-64x64.png"
+      alt=""
+      aria-hidden="true"
+      className={cn("size-6 shrink-0 rounded-md", className)}
+    />
+  );
+}
+
+function ConnectionDot({ connected, state }: { connected: boolean; state: "idle" | "running" }) {
+  const label = connected ? (state === "running" ? "Sta pensando" : "Connesso") : "Disconnesso";
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      className={cn(
+        "inline-flex size-2.5 shrink-0 rounded-full ring-2 ring-background",
+        !connected && "bg-red-500",
+        connected && state === "running" && "animate-pulse bg-amber-400",
+        connected && state !== "running" && "bg-emerald-500",
+      )}
+    />
+  );
+}
 
 /** ?send=… deep link (iPhone Action button → Shortcut → "Apri URL"): consume
  *  the param once, stripping it from the address bar like ?token. */
@@ -56,12 +83,12 @@ function App() {
   const [tab, setTab] = useState<Tab>("chat");          // sidebar tab (desktop) / bottom-nav tab (mobile)
   const [pane, setPane] = useState<Pane>("chat");       // what the desktop content area shows
   const [mobileDrill, setMobileDrill] = useState(false); // mobile: list screen (false) vs content screen (true)
-  const [morePane, setMorePane] = useState<"usage" | "system">("usage");
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
   const [splitActionId, setSplitActionId] = useState<number | null>(null);
   const isDesktop = useIsDesktop();
   const swipePanelRef = useRef<HTMLElement | null>(null);
-  const swipeStyle = useEdgeSwipeBack(swipePanelRef, !isDesktop, () => setMobileDrill(false));
+  const canNavigateBack = !isDesktop && mobileDrill && (tab === "chat" || tab === "actions");
+  const swipeStyle = useEdgeSwipeBack(swipePanelRef, canNavigateBack, () => setMobileDrill(false));
   const splitAction = host.actionCenter?.items.find((a) => a.id === splitActionId) ?? null;
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
@@ -92,7 +119,7 @@ function App() {
     ? pane
     : tab === "chat" ? "chat"
     : tab === "actions" ? "action"
-    : morePane;
+    : tab;
 
   // flushSync commits the pane switch before .focus(): the composer may not be
   // in the DOM yet (action/usage pane, or mobile list screen), and iOS only
@@ -121,8 +148,22 @@ function App() {
     setPane("action");
     setMobileDrill(true);
   };
-  const openUsage = () => { setPane("usage"); if (!isDesktop) setTab("more"); setMorePane("usage"); setMobileDrill(true); };
-  const openSystem = () => { setPane("system"); if (!isDesktop) setTab("more"); setMorePane("system"); setMobileDrill(true); };
+  const openUsage = () => { setPane("usage"); if (!isDesktop) setTab("usage"); setMobileDrill(true); };
+  const openSystem = () => { setPane("system"); if (!isDesktop) setTab("system"); setMobileDrill(true); };
+  const openMobileTab = (nextTab: Tab) => {
+    setTab(nextTab);
+    if (nextTab === "usage") {
+      setPane("usage");
+      setMobileDrill(true);
+      return;
+    }
+    if (nextTab === "system") {
+      setPane("system");
+      setMobileDrill(true);
+      return;
+    }
+    setMobileDrill(false);
+  };
 
   const copyJson = async () => {
     const json = JSON.stringify(
@@ -256,7 +297,16 @@ function App() {
         case "c": createChat(); e.preventDefault(); break;
         case "j": stepChat(1); e.preventDefault(); break;
         case "k": stepChat(-1); e.preventDefault(); break;
-        case "u": setPane((p) => (p === "usage" ? "chat" : "usage")); e.preventDefault(); break;
+        case "u":
+          if (!isDesktop) {
+            setTab("usage");
+            setPane("usage");
+            setMobileDrill(true);
+          } else {
+            setPane((p) => (p === "usage" ? "chat" : "usage"));
+          }
+          e.preventDefault();
+          break;
         case "a": setTab((t) => (t === "actions" ? "chat" : "actions")); e.preventDefault(); break;
         case "?": setShowShortcuts((s) => !s); e.preventDefault(); break;
       }
@@ -470,7 +520,10 @@ function App() {
   return (
     <div className="bg-background text-foreground flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
-        <h1 className="text-sm font-semibold">Steward</h1>
+        <h1 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+          <AppMark />
+          <span className="truncate">Steward</span>
+        </h1>
         <div className="flex items-center gap-3">
           {host.usage && (
             <button
@@ -482,9 +535,7 @@ function App() {
               ${host.usage.costUsd.toFixed(4)}
             </button>
           )}
-          <span className="text-muted-foreground text-xs">
-            {host.connected ? (host.state === "running" ? "thinking…" : "connected") : "disconnected"}
-          </span>
+          <ConnectionDot connected={host.connected} state={host.state} />
           <Popover>
             <PopoverTrigger className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md px-2 py-1 text-sm" title="Menu">
               ⋯
@@ -513,34 +564,30 @@ function App() {
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
 
       <div className="relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[300px_minmax(0,1fr)]">
-        {/* List layer: unified sidebar (or the "Altro" list on mobile). On mobile it stays
+        {/* List layer. On mobile it stays
             mounted UNDER the drilled-in content, so the swipe-back gesture reveals it. */}
         <aside className="min-h-0 lg:border-r" aria-hidden={!isDesktop && mobileDrill}>
-          {!isDesktop && tab === "more" ? (
-            <MoreList onOpen={(p) => { setMorePane(p); setPane(p); setMobileDrill(true); }} />
-          ) : (
-            <UnifiedSidebar
-              tab={tab === "actions" ? "actions" : "chat"}
-              onTab={(t) => setTab(t)}
-              chats={host.chats}
-              activeChatId={host.activeChatId}
-              onSelectChat={selectChat}
-              onCreateChat={createChat}
-              onRenameChat={host.renameChat}
-              onDeleteChat={host.deleteChat}
-              onSaveChat={host.saveChat}
-              actions={host.actionCenter?.items ?? []}
-              diagnostics={host.actionCenter?.diagnostics}
-              selectedActionId={selectedAction?.id ?? null}
-              onSelectAction={selectAction}
-              showDone={showDone}
-              onShowDone={(v) => { setShowDone(v); host.refreshActions(v); }}
-              onRefreshActions={() => host.refreshActions(showDone)}
-              pane={pane}
-              onOpenUsage={openUsage}
-              onOpenSystem={openSystem}
-            />
-          )}
+          <UnifiedSidebar
+            tab={tab === "actions" ? "actions" : "chat"}
+            onTab={(t) => setTab(t)}
+            chats={host.chats}
+            activeChatId={host.activeChatId}
+            onSelectChat={selectChat}
+            onCreateChat={createChat}
+            onRenameChat={host.renameChat}
+            onDeleteChat={host.deleteChat}
+            onSaveChat={host.saveChat}
+            actions={host.actionCenter?.items ?? []}
+            diagnostics={host.actionCenter?.diagnostics}
+            selectedActionId={selectedAction?.id ?? null}
+            onSelectAction={selectAction}
+            showDone={showDone}
+            onShowDone={(v) => { setShowDone(v); host.refreshActions(v); }}
+            onRefreshActions={() => host.refreshActions(showDone)}
+            pane={pane}
+            onOpenUsage={openUsage}
+            onOpenSystem={openSystem}
+          />
         </aside>
 
         {/* Content layer. On mobile it overlays the list (absolute) so dragging it
@@ -554,11 +601,13 @@ function App() {
           style={isDesktop ? undefined : swipeStyle}
         >
           <div className="flex items-center gap-2 border-b px-3 py-2 lg:hidden">
-            <button type="button" aria-label="Indietro" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
+            {canNavigateBack && (
+              <button type="button" aria-label="Indietro" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
+            )}
             <span className="truncate text-sm font-medium">
               {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title ?? "Chat")
                 : tab === "actions" ? (selectedAction?.title ?? "Azioni")
-                : morePane === "usage" ? "Usage" : "System"}
+                : tab === "usage" ? "Usage" : "System"}
             </span>
           </div>
           {shown === "usage" ? (
@@ -614,14 +663,20 @@ function App() {
 
       {/* Bottom nav (mobile only) */}
       <nav className="flex border-t pb-[env(safe-area-inset-bottom)] lg:hidden">
-        {([["chat", "💬 Chat"], ["actions", "⚡ Azioni"], ["more", "⚙ Altro"]] as const).map(([t, label]) => (
+        {([
+          ["chat", "💬 Chat", "flex-[2]"],
+          ["actions", "⚡ Azioni", "flex-[2]"],
+          ["usage", "Usage", "flex-1"],
+          ["system", "System", "flex-1"],
+        ] as const).map(([t, label, widthClass]) => (
           <button
             key={t}
             type="button"
-            onClick={() => { setTab(t); setMobileDrill(false); }}
+            onClick={() => openMobileTab(t)}
             aria-current={tab === t ? "page" : undefined}
             className={cn(
-              "relative flex-1 py-4 text-center text-xs transition",
+              "relative py-4 text-center text-xs transition",
+              widthClass,
               tab === t ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
@@ -655,7 +710,10 @@ function PairingScreen({ onPaired }: { onPaired: (token: string) => void }) {
   return (
     <div className="bg-background text-foreground flex h-screen items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-3 rounded-lg border p-5">
-        <h1 className="text-sm font-semibold">Steward</h1>
+        <h1 className="flex items-center gap-2 text-sm font-semibold">
+          <AppMark />
+          <span>Steward</span>
+        </h1>
         <p className="text-muted-foreground text-sm">
           Incolla il token dal tuo Mac (pagina System).
         </p>
@@ -886,21 +944,4 @@ function EmptyChat({
 
 function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="bg-muted rounded px-1 py-0.5 font-mono text-[10px]">{children}</kbd>;
-}
-
-function MoreList({ onOpen }: { onOpen: (pane: "usage" | "system") => void }) {
-  return (
-    <div className="p-2">
-      {([["usage", "📊 Usage"], ["system", "⚙ System"]] as const).map(([p, label]) => (
-        <button
-          key={p}
-          type="button"
-          onClick={() => onOpen(p)}
-          className="hover:bg-muted block w-full rounded-lg p-3 text-left text-sm font-medium"
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
 }
