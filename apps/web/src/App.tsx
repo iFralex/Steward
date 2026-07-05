@@ -8,6 +8,11 @@ import { ApprovalCard } from "@/components/approval-card";
 import { QuestionCard } from "@/components/question-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn, safeHref } from "@/lib/utils";
 import { ToolCard } from "@/components/tool-card";
 import { CardView, type FileApi } from "@/components/cards";
@@ -15,11 +20,15 @@ import { FileChip } from "@/components/file-chip";
 import { UsagePage } from "@/components/usage-page";
 import { SystemPage } from "@/components/system-page";
 import { ActionDetail } from "@/components/action-detail";
-import { ChatSidebar, ActionCenterPanel } from "@/components/sidebar";
+import { UnifiedSidebar } from "@/components/sidebar";
+import { useIsDesktop } from "@/lib/use-is-desktop";
 import type { ActionCenterItem, ChannelFile } from "@steward/protocol";
 
 const HOST_URL = hostWsUrl();
 const HTTP_BASE = hostHttpBase();
+
+type Tab = "chat" | "actions" | "more";
+type Pane = "chat" | "action" | "usage" | "system";
 
 function App() {
   // Localhost (the Mac) auto-pairs via the host-injected global; a phone pairs
@@ -31,11 +40,12 @@ function App() {
   const host = useHostSocket(HOST_URL, authToken, onUnauthorized);
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
-  const [view, setView] = useState<"chat" | "usage" | "system">("chat");
-  // On phones the 4-column layout shows one panel at a time (bottom nav switches).
-  // Ignored at lg+ where all columns render side by side.
-  const [mobilePanel, setMobilePanel] = useState<"chats" | "chat" | "actions">("chat");
+  const [tab, setTab] = useState<Tab>("chat");          // sidebar tab (desktop) / bottom-nav tab (mobile)
+  const [pane, setPane] = useState<Pane>("chat");       // what the desktop content area shows
+  const [mobileDrill, setMobileDrill] = useState(false); // mobile: list screen (false) vs content screen (true)
+  const [morePane, setMorePane] = useState<"usage" | "system">("usage");
   const [selectedActionId, setSelectedActionId] = useState<number | null>(null);
+  const isDesktop = useIsDesktop();
   const [showDone, setShowDone] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -45,10 +55,33 @@ function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const focusComposer = () => document.getElementById("composer-input")?.focus();
   const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile, register: host.registerPath };
+
   const selectedAction =
     host.actionCenter?.items.find((a) => a.id === selectedActionId)
     ?? host.actionCenter?.items[0]
     ?? null;
+  const newActionCount = host.actionCenter?.diagnostics?.counts.new ?? 0;
+
+  // Mobile derives content from the tab stack; desktop from pane.
+  const shown: Pane = isDesktop
+    ? pane
+    : tab === "chat" ? "chat"
+    : tab === "actions" ? "action"
+    : morePane;
+
+  const selectChat = (id: string) => {
+    host.selectChat(id);
+    setPane("chat");
+    setMobileDrill(true);
+  };
+  const selectAction = (a: ActionCenterItem) => {
+    setSelectedActionId(a.id);
+    if (a.status === "new") host.markAction(a.id, "read");
+    setPane("action");
+    setMobileDrill(true);
+  };
+  const openUsage = () => { setPane("usage"); setTab("more"); setMorePane("usage"); setMobileDrill(true); };
+  const openSystem = () => { setPane("system"); setTab("more"); setMorePane("system"); setMobileDrill(true); };
 
   const copyJson = async () => {
     const json = JSON.stringify(
@@ -88,12 +121,15 @@ function App() {
       const msg = (e.data ?? {}) as { type?: string; data?: { actionId?: number; chatId?: string } };
       if (msg.type !== "notification-click") return;
       const p = msg.data ?? {};
-      setView("chat");
       if (typeof p.actionId === "number") {
-        setMobilePanel("actions");
+        setTab("actions");
         setSelectedActionId(p.actionId);
+        setPane("action");
+        setMobileDrill(true);
       } else if (typeof p.chatId === "string") {
-        setMobilePanel("chat");
+        setTab("chat");
+        setPane("chat");
+        setMobileDrill(true);
         host.selectChat(p.chatId);
       }
     };
@@ -141,7 +177,8 @@ function App() {
         case "c": host.createChat(); e.preventDefault(); break;
         case "j": stepChat(1); e.preventDefault(); break;
         case "k": stepChat(-1); e.preventDefault(); break;
-        case "u": setView((v) => (v === "usage" ? "chat" : "usage")); e.preventDefault(); break;
+        case "u": setPane((p) => (p === "usage" ? "chat" : "usage")); e.preventDefault(); break;
+        case "a": setTab((t) => (t === "actions" ? "chat" : "actions")); e.preventDefault(); break;
         case "?": setShowShortcuts((s) => !s); e.preventDefault(); break;
       }
     };
@@ -185,6 +222,9 @@ function App() {
     host.markAction(action.id, "read");
     // Runs in a temporary chat dedicated to this action (server-side).
     host.openActionChat(action.id);
+    setTab("chat");
+    setPane("chat");
+    setMobileDrill(true);
   };
 
   if (!authToken) {
@@ -198,32 +238,139 @@ function App() {
     );
   }
 
+  // Existing thread-scroller + composer JSX, held in a local variable (not a
+  // component) so it can be dropped into the content area without remounting
+  // or losing composer focus.
+  const chatPane = (
+    <>
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+        <div className="mx-auto w-full max-w-[52rem] space-y-3">
+          {host.messages.map((m, i) => {
+            const prev = host.messages[i - 1];
+            const divider = m.ts && (!prev?.ts || !sameDay(prev.ts, m.ts)) ? <DateDivider ts={m.ts} /> : null;
+            return (
+              <div key={m.id}>
+                {divider}
+                {m.role === "tool" ? (
+                  <ToolCard m={m} fileApi={fileApi} />
+                ) : (
+                  <div className={m.role === "user" ? "text-right" : "text-left"}>
+                    <div
+                      className={cn(
+                        "inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
+                        m.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground",
+                      )}
+                    >
+                      {m.role === "assistant" ? (
+                        m.text ? <MarkdownMessage text={m.text} fileApi={fileApi} /> : (m.open ? "…" : "")
+                      ) : (
+                        m.text || (m.open ? "…" : "")
+                      )}
+                    </div>
+                    {m.attachments && m.attachments.length > 0 && (
+                      <div className="mt-1.5 flex flex-col items-end gap-1.5 text-xs">
+                        {m.attachments.map((f) => (
+                          <FileChip key={f.token} file={f} onOpen={host.openFile} onReveal={host.revealFile} />
+                        ))}
+                      </div>
+                    )}
+                    {m.ts && <div className="text-muted-foreground mt-0.5 text-[10px] tabular-nums">{fmtTime(m.ts)}</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {host.approvals.map((a) => (
+            <ApprovalCard key={a.requestId} approval={a} onDecision={host.respondApproval} fileApi={fileApi} />
+          ))}
+          {host.questions.map((q) => (
+            <QuestionCard key={q.requestId} question={q} onRespond={host.respondQuestion} />
+          ))}
+          {(() => {
+            const last = host.messages[host.messages.length - 1];
+            const streaming = last?.role === "assistant" && last.open && !!last.text;
+            return host.state === "running" && !streaming ? <ThinkingIndicator /> : null;
+          })()}
+        </div>
+      </div>
+
+      <form
+        onSubmit={submit}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onComposerDrop}
+        className={cn("border-t p-3", dragOver && "bg-primary/5 ring-primary/40 ring-2 ring-inset")}
+      >
+        <div className="mx-auto w-full max-w-[52rem]">
+          {attachments.length > 0 && (
+            <div className="mb-2 flex flex-col gap-1.5">
+              {attachments.map((f) => (
+                <div key={f.token} className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <FileChip file={f} onOpen={host.openFile} onReveal={host.revealFile} />
+                  </div>
+                  <button
+                    type="button"
+                    title="Rimuovi allegato"
+                    className="text-muted-foreground hover:text-destructive shrink-0 rounded p-1"
+                    onClick={() => setAttachments((prev) => prev.filter((p) => p.token !== f.token))}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => { if (e.target.files) void uploadFiles(e.target.files); e.target.value = ""; }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title="Allega file"
+              disabled={!host.connected || uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploading ? "…" : "📎"}
+            </Button>
+            <Input
+              id="composer-input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (/ per focus, trascina file per allegarli)"}
+            />
+            {host.state === "running" ? (
+              <Button type="button" variant="destructive" onClick={host.stop} title="Stop generazione (Esc)">
+                ■ Stop
+              </Button>
+            ) : (
+              <Button type="submit" title="Invia (Invio / ⌘↵)" disabled={!host.connected || (!draft.trim() && attachments.length === 0)}>
+                Send
+              </Button>
+            )}
+          </div>
+        </div>
+      </form>
+    </>
+  );
+
   return (
     <div className="bg-background text-foreground flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-4 py-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-sm font-semibold">Steward</h1>
-          <div className="bg-muted flex rounded-md p-0.5 text-xs">
-            {(["chat", "usage", "system"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setView(v)}
-                className={cn(
-                  "rounded px-2.5 py-1 capitalize transition",
-                  view === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground",
-                )}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-        </div>
+        <h1 className="text-sm font-semibold">Steward</h1>
         <div className="flex items-center gap-3">
           {host.usage && (
             <button
               type="button"
-              onClick={() => setView("usage")}
+              onClick={openUsage}
               className="text-muted-foreground border-border hover:bg-muted rounded-md border px-2 py-0.5 text-xs tabular-nums transition"
               title={`Ultimo turno: $${host.usage.turnCostUsd.toFixed(4)} · ${host.usage.tokens.total.toLocaleString("it-IT")} token (in ${host.usage.tokens.input.toLocaleString("it-IT")} / out ${host.usage.tokens.output.toLocaleString("it-IT")} / cache ${host.usage.tokens.cacheRead.toLocaleString("it-IT")}) — apri Usage`}
             >
@@ -233,207 +380,120 @@ function App() {
           <span className="text-muted-foreground text-xs">
             {host.connected ? (host.state === "running" ? "thinking…" : "connected") : "disconnected"}
           </span>
-          <Button size="sm" variant="ghost" className="px-2" title="Scorciatoie da tastiera (?)" onClick={() => setShowShortcuts(true)}>
-            ⌨
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={copyJson}
-            disabled={host.messages.length === 0}
-          >
-            {copied ? "Copied" : "Copy JSON"}
-          </Button>
+          <Popover>
+            <PopoverTrigger className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md px-2 py-1 text-sm" title="Menu">
+              ⋯
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-48 space-y-1 p-1">
+              <button
+                type="button"
+                className="hover:bg-muted w-full rounded px-2 py-1.5 text-left text-sm disabled:opacity-50"
+                disabled={host.messages.length === 0}
+                onClick={copyJson}
+              >
+                {copied ? "Copied ✓" : "Copy JSON"}
+              </button>
+              <button
+                type="button"
+                className="hover:bg-muted w-full rounded px-2 py-1.5 text-left text-sm"
+                onClick={() => setShowShortcuts(true)}
+              >
+                Scorciatoie ⌨
+              </button>
+            </PopoverContent>
+          </Popover>
         </div>
       </header>
 
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
 
-      {view === "usage" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <UsagePage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
-        </div>
-      ) : view === "system" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <SystemPage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
-        </div>
-      ) : (
-      <>
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[210px_330px_minmax(0,1fr)_minmax(330px,0.85fr)]">
-        <aside className={cn("min-h-0 border-r lg:block", mobilePanel === "chats" ? "block" : "hidden")}>
-          <ChatSidebar
-            chats={host.chats}
-            activeChatId={host.activeChatId}
-            onSelect={(id) => { host.selectChat(id); setMobilePanel("chat"); }}
-            onCreate={host.createChat}
-            onRename={host.renameChat}
-            onDelete={host.deleteChat}
-            onSave={host.saveChat}
-          />
-        </aside>
-        <aside className={cn("min-h-0 border-r lg:block", mobilePanel === "actions" && !selectedAction ? "block" : "hidden")}>
-          <ActionCenterPanel
-            items={host.actionCenter?.items ?? []}
-            diagnostics={host.actionCenter?.diagnostics}
-            selectedId={selectedAction?.id ?? null}
-            showDone={showDone}
-            onShowDone={(v) => {
-              setShowDone(v);
-              host.refreshActions(v);
-            }}
-            onRefresh={() => host.refreshActions(showDone)}
-            onSelect={(a) => {
-              setSelectedActionId(a.id);
-              if (a.status === "new") host.markAction(a.id, "read");
-            }}
-          />
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]">
+        {/* List layer: unified sidebar (or the "Altro" list on mobile). Hidden on mobile when drilled in. */}
+        <aside className={cn("min-h-0 lg:block lg:border-r", mobileDrill ? "hidden" : "block")}>
+          {!isDesktop && tab === "more" ? (
+            <MoreList onOpen={(p) => { setMorePane(p); setPane(p); setMobileDrill(true); }} />
+          ) : (
+            <UnifiedSidebar
+              tab={tab === "actions" ? "actions" : "chat"}
+              onTab={(t) => setTab(t)}
+              chats={host.chats}
+              activeChatId={host.activeChatId}
+              onSelectChat={selectChat}
+              onCreateChat={host.createChat}
+              onRenameChat={host.renameChat}
+              onDeleteChat={host.deleteChat}
+              onSaveChat={host.saveChat}
+              actions={host.actionCenter?.items ?? []}
+              diagnostics={host.actionCenter?.diagnostics}
+              selectedActionId={selectedAction?.id ?? null}
+              onSelectAction={selectAction}
+              showDone={showDone}
+              onShowDone={(v) => { setShowDone(v); host.refreshActions(v); }}
+              onRefreshActions={() => host.refreshActions(showDone)}
+              pane={pane}
+              onOpenUsage={openUsage}
+              onOpenSystem={openSystem}
+            />
+          )}
         </aside>
 
-        <main className={cn("min-h-0 flex-col lg:flex", mobilePanel === "chat" ? "flex" : "hidden")}>
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
-            {host.messages.map((m, i) => {
-              const prev = host.messages[i - 1];
-              const divider = m.ts && (!prev?.ts || !sameDay(prev.ts, m.ts)) ? <DateDivider ts={m.ts} /> : null;
-              return (
-                <div key={m.id}>
-                  {divider}
-                  {m.role === "tool" ? (
-                    <ToolCard m={m} fileApi={fileApi} />
-                  ) : (
-                    <div className={m.role === "user" ? "text-right" : "text-left"}>
-                      <div
-                        className={cn(
-                          "inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
-                          m.role === "user"
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-foreground",
-                        )}
-                      >
-                        {m.role === "assistant" ? (
-                          m.text ? <MarkdownMessage text={m.text} fileApi={fileApi} /> : (m.open ? "…" : "")
-                        ) : (
-                          m.text || (m.open ? "…" : "")
-                        )}
-                      </div>
-                      {m.attachments && m.attachments.length > 0 && (
-                        <div className="mt-1.5 flex flex-col items-end gap-1.5 text-xs">
-                          {m.attachments.map((f) => (
-                            <FileChip key={f.token} file={f} onOpen={host.openFile} onReveal={host.revealFile} />
-                          ))}
-                        </div>
-                      )}
-                      {m.ts && <div className="text-muted-foreground mt-0.5 text-[10px] tabular-nums">{fmtTime(m.ts)}</div>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {host.approvals.map((a) => (
-              <ApprovalCard key={a.requestId} approval={a} onDecision={host.respondApproval} fileApi={fileApi} />
-            ))}
-            {host.questions.map((q) => (
-              <QuestionCard key={q.requestId} question={q} onRespond={host.respondQuestion} />
-            ))}
-            {(() => {
-              const last = host.messages[host.messages.length - 1];
-              const streaming = last?.role === "assistant" && last.open && !!last.text;
-              return host.state === "running" && !streaming ? <ThinkingIndicator /> : null;
-            })()}
+        {/* Content layer. Hidden on mobile until drilled in. */}
+        <main className={cn("min-h-0 flex-col lg:flex", mobileDrill ? "flex" : "hidden")}>
+          <div className="flex items-center gap-2 border-b px-3 py-2 lg:hidden">
+            <button type="button" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
+            <span className="truncate text-sm font-medium">
+              {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title ?? "Chat")
+                : tab === "actions" ? "Azioni"
+                : morePane === "usage" ? "Usage" : "System"}
+            </span>
           </div>
-
-          <form
-            onSubmit={submit}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onComposerDrop}
-            className={cn("border-t p-3", dragOver && "bg-primary/5 ring-primary/40 ring-2 ring-inset")}
-          >
-            {attachments.length > 0 && (
-              <div className="mb-2 flex flex-col gap-1.5">
-                {attachments.map((f) => (
-                  <div key={f.token} className="flex items-center gap-2">
-                    <div className="min-w-0 flex-1">
-                      <FileChip file={f} onOpen={host.openFile} onReveal={host.revealFile} />
-                    </div>
-                    <button
-                      type="button"
-                      title="Rimuovi allegato"
-                      className="text-muted-foreground hover:text-destructive shrink-0 rounded p-1"
-                      onClick={() => setAttachments((prev) => prev.filter((p) => p.token !== f.token))}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={(e) => { if (e.target.files) void uploadFiles(e.target.files); e.target.value = ""; }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                title="Allega file"
-                disabled={!host.connected || uploading}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                {uploading ? "…" : "📎"}
-              </Button>
-              <Input
-                id="composer-input"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={dragOver ? "Rilascia i file qui…" : "Message your agent…  (/ per focus, trascina file per allegarli)"}
-              />
-              {host.state === "running" ? (
-                <Button type="button" variant="destructive" onClick={host.stop} title="Stop generazione (Esc)">
-                  ■ Stop
-                </Button>
-              ) : (
-                <Button type="submit" title="Invia (Invio / ⌘↵)" disabled={!host.connected || (!draft.trim() && attachments.length === 0)}>
-                  Send
-                </Button>
-              )}
+          {shown === "usage" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <UsagePage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
             </div>
-          </form>
+          ) : shown === "system" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <SystemPage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
+            </div>
+          ) : shown === "action" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="mx-auto w-full max-w-3xl">
+                <ActionDetail
+                  action={selectedAction}
+                  onOpenChat={openActionInChat}
+                  onMark={(status) => selectedAction && host.markAction(selectedAction.id, status)}
+                  onExecute={(proposalId) => selectedAction && host.executeProposal(selectedAction.id, proposalId)}
+                  onRevise={(proposalId, instruction) => selectedAction && host.reviseProposal(selectedAction.id, proposalId, instruction)}
+                />
+              </div>
+            </div>
+          ) : (
+            chatPane
+          )}
         </main>
-
-        <aside className={cn("min-h-0 overflow-y-auto border-l p-4 lg:block", mobilePanel === "actions" && selectedAction ? "block" : "hidden")}>
-          <button type="button" className="text-muted-foreground mb-2 text-xs lg:hidden" onClick={() => setSelectedActionId(null)}>
-            ← Azioni
-          </button>
-          <ActionDetail
-            action={selectedAction}
-            onOpenChat={openActionInChat}
-            onMark={(status) => selectedAction && host.markAction(selectedAction.id, status)}
-            onExecute={(proposalId) => selectedAction && host.executeProposal(selectedAction.id, proposalId)}
-            onRevise={(proposalId, instruction) => selectedAction && host.reviseProposal(selectedAction.id, proposalId, instruction)}
-          />
-        </aside>
       </div>
+
+      {/* Bottom nav (mobile only) */}
       <nav className="flex border-t lg:hidden">
-        {([["chats", "💬 Chat"], ["chat", "🗨 Agente"], ["actions", "⚡ Azioni"]] as const).map(([p, label]) => (
+        {([["chat", "💬 Chat"], ["actions", "⚡ Azioni"], ["more", "⚙ Altro"]] as const).map(([t, label]) => (
           <button
-            key={p}
+            key={t}
             type="button"
-            onClick={() => setMobilePanel(p)}
+            onClick={() => { setTab(t); setMobileDrill(false); }}
             className={cn(
-              "flex-1 py-2.5 text-center text-xs transition",
-              mobilePanel === p ? "text-foreground font-medium" : "text-muted-foreground",
+              "relative flex-1 py-2.5 text-center text-xs transition",
+              tab === t ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
             {label}
+            {t === "actions" && newActionCount > 0 && (
+              <span className="bg-primary text-primary-foreground absolute -mt-1 ml-0.5 rounded-full px-1 text-[9px] font-semibold tabular-nums">
+                {newActionCount}
+              </span>
+            )}
           </button>
         ))}
       </nav>
-      </>
-      )}
     </div>
   );
 }
@@ -521,7 +581,8 @@ const SHORTCUTS: [string, string][] = [
   ["/", "Vai al campo messaggio"],
   ["c", "Nuova chat"],
   ["j / k", "Chat successiva / precedente"],
-  ["u", "Chat ⇄ Usage"],
+  ["a", "Sidebar: Chat ⇄ Azioni"],
+  ["u", "Contenuto ⇄ Usage"],
   ["?", "Mostra/nascondi questa guida"],
 ];
 
@@ -601,5 +662,22 @@ function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) 
     >
       {text}
     </ReactMarkdown>
+  );
+}
+
+function MoreList({ onOpen }: { onOpen: (pane: "usage" | "system") => void }) {
+  return (
+    <div className="p-2">
+      {([["usage", "📊 Usage"], ["system", "⚙ System"]] as const).map(([p, label]) => (
+        <button
+          key={p}
+          type="button"
+          onClick={() => onOpen(p)}
+          className="hover:bg-muted block w-full rounded-lg p-3 text-left text-sm font-medium"
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }

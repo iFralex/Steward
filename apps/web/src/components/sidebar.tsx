@@ -1,10 +1,17 @@
 /**
- * Sidebar lists: the chat list and the Action Center list. Moved verbatim
- * from App.tsx (Task 2 of the inbox-layout plan turns these into the tabs
- * of a single UnifiedSidebar).
+ * Unified sidebar: a single Chat/Azioni tab switcher over the chat list and
+ * the Action Center list, plus a footer nav to Usage/System (desktop). Task 2
+ * of the inbox-layout plan collapses the old two standalone sidebar panels
+ * (ChatSidebar, ActionCenterPanel) into this.
  */
+import { BarChart3, Filter, RefreshCw, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { formatWhen, priorityVariant } from "@/lib/format";
 import type { useHostSocket } from "@/lib/host-socket";
@@ -12,7 +19,111 @@ import type { ActionCenterItem, ChatSummary } from "@steward/protocol";
 
 export type ActionDiagnostics = NonNullable<ReturnType<typeof useHostSocket>["actionCenter"]>["diagnostics"];
 
-export function ChatSidebar({
+export type SidebarTab = "chat" | "actions";
+
+export function UnifiedSidebar({
+  tab, onTab,
+  chats, activeChatId, onSelectChat, onCreateChat, onRenameChat, onDeleteChat, onSaveChat,
+  actions, diagnostics, selectedActionId, onSelectAction, showDone, onShowDone, onRefreshActions,
+  pane, onOpenUsage, onOpenSystem,
+}: {
+  tab: SidebarTab;
+  onTab: (tab: SidebarTab) => void;
+  chats: ChatSummary[];
+  activeChatId: string | null;
+  onSelectChat: (id: string) => void;
+  onCreateChat: () => void;
+  onRenameChat: (id: string, title: string) => void;
+  onDeleteChat: (id: string) => void;
+  onSaveChat: (id: string) => void;
+  actions: ActionCenterItem[];
+  diagnostics: ActionDiagnostics | undefined;
+  selectedActionId: number | null;
+  onSelectAction: (item: ActionCenterItem) => void;
+  showDone: boolean;
+  onShowDone: (value: boolean) => void;
+  onRefreshActions: () => void;
+  pane: "chat" | "action" | "usage" | "system";
+  onOpenUsage: () => void;
+  onOpenSystem: () => void;
+}) {
+  const newCount = diagnostics?.counts.new ?? 0;
+  return (
+    <div className="flex h-full flex-col">
+      {/* Tabs: desktop only — on mobile the bottom nav selects the tab. */}
+      <div className="hidden grid-cols-2 gap-1 border-b p-2 lg:grid">
+        <TabButton active={tab === "chat"} onClick={() => onTab("chat")}>Chat</TabButton>
+        <TabButton active={tab === "actions"} onClick={() => onTab("actions")}>
+          Azioni
+          {newCount > 0 && (
+            <span className="bg-primary text-primary-foreground ml-1.5 rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums">
+              {newCount}
+            </span>
+          )}
+        </TabButton>
+      </div>
+      {tab === "chat" ? (
+        <ChatList
+          chats={chats}
+          activeChatId={activeChatId}
+          onSelect={onSelectChat}
+          onCreate={onCreateChat}
+          onRename={onRenameChat}
+          onDelete={onDeleteChat}
+          onSave={onSaveChat}
+        />
+      ) : (
+        <ActionList
+          items={actions}
+          diagnostics={diagnostics}
+          selectedId={selectedActionId}
+          showDone={showDone}
+          onShowDone={onShowDone}
+          onRefresh={onRefreshActions}
+          onSelect={onSelectAction}
+        />
+      )}
+      {/* Footer nav: desktop only — on mobile Usage/System live under the "Altro" tab. */}
+      <div className="hidden gap-1 border-t p-2 lg:flex lg:flex-col">
+        <FooterButton icon={<BarChart3 className="size-4" />} label="Usage" active={pane === "usage"} onClick={onOpenUsage} />
+        <FooterButton icon={<Settings className="size-4" />} label="System" active={pane === "system"} onClick={onOpenSystem} />
+      </div>
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center justify-center rounded-md px-2 py-1.5 text-sm transition",
+        active ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted/50",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FooterButton({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition",
+        active ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted/50",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function ChatList({
   chats,
   activeChatId,
   onSelect,
@@ -31,8 +142,7 @@ export function ChatSidebar({
 }) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b p-3">
-        <h2 className="text-sm font-semibold">Chat</h2>
+      <div className="flex items-center justify-end border-b p-2">
         <Button size="sm" onClick={onCreate} title="Nuova chat">+ Nuova</Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -98,14 +208,8 @@ export function ChatSidebar({
   );
 }
 
-export function ActionCenterPanel({
-  items,
-  diagnostics,
-  selectedId,
-  showDone,
-  onShowDone,
-  onRefresh,
-  onSelect,
+function ActionList({
+  items, diagnostics, selectedId, showDone, onShowDone, onRefresh, onSelect,
 }: {
   items: ActionCenterItem[];
   diagnostics: ActionDiagnostics | undefined;
@@ -116,36 +220,41 @@ export function ActionCenterPanel({
   onSelect: (item: ActionCenterItem) => void;
 }) {
   return (
-    <div className="flex h-full flex-col">
-      <div className="space-y-3 border-b p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold">Action Center</h2>
-            <p className="text-muted-foreground text-xs">Mail, scadenze e promemoria actionable.</p>
-          </div>
-          <Button size="sm" variant="outline" onClick={onRefresh}>Refresh</Button>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="text-muted-foreground flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
+        <span className="truncate tabular-nums">
+          {diagnostics?.counts.new ?? 0} new · {diagnostics?.staleNew ?? 0} stale · next{" "}
+          {diagnostics?.nextDueAt ? formatWhen(diagnostics.nextDueAt) : "—"}
+        </span>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button type="button" title="Refresh" className="hover:bg-muted hover:text-foreground rounded p-1" onClick={onRefresh}>
+            <RefreshCw className="size-3.5" />
+          </button>
+          <Popover>
+            <PopoverTrigger className="hover:bg-muted hover:text-foreground rounded p-1" title="Filtri e diagnostica">
+              <Filter className="size-3.5" />
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 space-y-3">
+              <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                {(["new", "read", "done", "dismissed"] as const).map((key) => (
+                  <div key={key} className="bg-muted rounded-md p-2">
+                    <div className="font-semibold">{diagnostics?.counts[key] ?? 0}</div>
+                    <div className="text-muted-foreground">{key}</div>
+                  </div>
+                ))}
+              </div>
+              {diagnostics?.deferredReasons && Object.keys(diagnostics.deferredReasons).length > 0 && (
+                <div className="text-muted-foreground rounded-md border p-2 text-xs">
+                  Deferred: {Object.entries(diagnostics.deferredReasons).map(([k, v]) => `${v}× ${k}`).join(", ")}
+                </div>
+              )}
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={showDone} onChange={(e) => onShowDone(e.currentTarget.checked)} />
+                Show done/dismissed
+              </label>
+            </PopoverContent>
+          </Popover>
         </div>
-        <div className="grid grid-cols-4 gap-2 text-center text-xs">
-          {(["new", "read", "done", "dismissed"] as const).map((key) => (
-            <div key={key} className="bg-muted rounded-md p-2">
-              <div className="font-semibold">{diagnostics?.counts[key] ?? 0}</div>
-              <div className="text-muted-foreground">{key}</div>
-            </div>
-          ))}
-        </div>
-        <div className="text-muted-foreground flex items-center justify-between text-xs">
-          <span>Stale: {diagnostics?.staleNew ?? 0}</span>
-          <span>Next due: {diagnostics?.nextDueAt ? formatWhen(diagnostics.nextDueAt) : "—"}</span>
-        </div>
-        {diagnostics?.deferredReasons && Object.keys(diagnostics.deferredReasons).length > 0 && (
-          <div className="text-muted-foreground rounded-md border p-2 text-xs">
-            Deferred: {Object.entries(diagnostics.deferredReasons).map(([k, v]) => `${v}× ${k}`).join(", ")}
-          </div>
-        )}
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={showDone} onChange={(e) => onShowDone(e.currentTarget.checked)} />
-          Show done/dismissed
-        </label>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {items.length === 0 ? (
