@@ -118,6 +118,19 @@ export function localLlmOriginHeader(): Record<string, string> {
   return { Origin: "http://localhost" }
 }
 
+// The steward gateway (apps/llm-gateway) meters LLM calls via attribution
+// headers. Send them ONLY to the local gateway — never to third-party APIs.
+const STEWARD_GATEWAY_ORIGINS = new Set(["http://127.0.0.1:4000", "http://localhost:4000"])
+
+export function stewardGatewayUsageHeaders(url: string): Record<string, string> {
+  try {
+    if (!STEWARD_GATEWAY_ORIGINS.has(new URL(url).origin)) return {}
+  } catch {
+    return {}
+  }
+  return { "x-usage-service": "llm-wiki", "x-usage-action": "chat" }
+}
+
 export function isLocalOrPrivateHttpEndpoint(endpoint: string): boolean {
   try {
     const url = new URL(endpoint)
@@ -975,6 +988,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           // workaround. Public custom gateways may reject unexpected
           // browser Origin headers, so leave them untouched.
           ...(!azure && isLocalOrPrivateHttpEndpoint(url) ? localLlmOriginHeader() : {}),
+          ...stewardGatewayUsageHeaders(url),
         },
         buildBody: (messages, overrides) => {
           const body = buildOpenAiCompatibleBody(config, messages, overrides)
