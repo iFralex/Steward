@@ -167,37 +167,41 @@ function ChatList({
                   {c.messageCount} {c.messageCount === 1 ? "messaggio" : "messaggi"} · {formatWhen(Math.floor(c.updatedAt / 1000))}
                 </div>
               </button>
-              <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
+              {/* Always visible on touch screens (no hover there); desktop keeps the hover reveal. */}
+              <div className="absolute right-1.5 top-1.5 flex gap-0.5 transition lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
                 {c.temporary && (
                   <button
                     type="button"
                     title="Salva questa chat (rendila permanente)"
-                    className="hover:bg-background text-muted-foreground hover:text-primary rounded p-1 text-xs"
+                    aria-label={`Salva la chat ${c.title}`}
+                    className="hover:bg-background text-muted-foreground hover:text-primary rounded p-1.5 text-xs"
                     onClick={() => onSave(c.id)}
                   >
-                    💾
+                    <span aria-hidden>💾</span>
                   </button>
                 )}
                 <button
                   type="button"
                   title="Rinomina"
-                  className="hover:bg-background text-muted-foreground rounded p-1 text-xs"
+                  aria-label={`Rinomina la chat ${c.title}`}
+                  className="hover:bg-background text-muted-foreground rounded p-1.5 text-xs"
                   onClick={() => {
                     const title = window.prompt("Rinomina chat", c.title);
                     if (title != null) onRename(c.id, title);
                   }}
                 >
-                  ✎
+                  <span aria-hidden>✎</span>
                 </button>
                 <button
                   type="button"
                   title="Elimina"
-                  className="hover:bg-background text-muted-foreground hover:text-destructive rounded p-1 text-xs"
+                  aria-label={`Elimina la chat ${c.title}`}
+                  className="hover:bg-background text-muted-foreground hover:text-destructive rounded p-1.5 text-xs"
                   onClick={() => {
                     if (window.confirm(`Eliminare la chat "${c.title}"? L'azione è irreversibile.`)) onDelete(c.id);
                   }}
                 >
-                  🗑
+                  <span aria-hidden>🗑</span>
                 </button>
               </div>
             </div>
