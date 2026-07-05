@@ -53,8 +53,10 @@ test("summary(days) filters by period; byDay splits by service", () => {
   const week = ledger.summary(7);
   assert.equal(week.totals.calls, 2);
   assert.ok(Math.abs(week.totals.cost - 0.75) < 1e-9);
-  // today has two rows, one per service
-  const today = week.byDay.filter((d) => d.day === new Date().toISOString().slice(0, 10));
+  // today has two rows, one per service (byDay buckets by local time, so compare in local time)
+  const d = new Date();
+  const todayLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = week.byDay.filter((r) => r.day === todayLocal);
   assert.equal(today.length, 2);
 
   const all = ledger.summary();
