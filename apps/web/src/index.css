@@ -128,14 +128,10 @@
     @apply font-sans;
     }
 }
-/* The app is a fixed full-viewport shell: every scrollable area lives inside
-   it, so the document itself must never pan or rubber-band — horizontally
-   (swipe-back translates the content panel) or vertically (iOS bounce drags
-   header and bottom nav around). */
+/* The swipe-back gesture translates the content panel; never let that (or any
+   transient overflow) leave the page horizontally pannable on iOS. */
 html,
-body,
-#root {
-  overscroll-behavior: none;
-  overflow: hidden;
-  height: 100%;
+body {
+  overscroll-behavior-x: none;
+  overflow-x: hidden;
 }
