@@ -6,7 +6,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { FileChip } from "@/components/file-chip";
 import { safeHref } from "@/lib/utils";
-import type { ChannelFile } from "@llm-wiki/protocol";
+import type { ChannelFile } from "@steward/protocol";
 
 export interface FileApi {
   open: (token: string) => void;

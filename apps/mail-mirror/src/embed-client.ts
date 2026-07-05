@@ -1,1 +1,1 @@
-export { embedText, embedTexts } from "@llm-wiki/search";
+export { embedText, embedTexts } from "@steward/search";

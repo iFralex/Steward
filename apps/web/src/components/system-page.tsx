@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Power, RefreshCw, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
+import QRCode from "qrcode";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { authFetch } from "@/lib/auth";
+import { enablePush, pushSubscribed, type EnablePushResult } from "@/lib/push";
 import { cn } from "@/lib/utils";
 
 type ServiceState = "ok" | "warning" | "error" | "unknown";
@@ -39,17 +42,22 @@ interface SystemStatus {
   services: SystemServiceStatus[];
 }
 
-export function SystemPage({ httpBase }: { httpBase: string }) {
+export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingAutostart, setSavingAutostart] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pairToken, setPairToken] = useState<string | null>(null);
+  const [pushOn, setPushOn] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState<EnablePushResult | null>(null);
+  const [pushTest, setPushTest] = useState<"idle" | "scheduled" | "error">("idle");
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${httpBase}/system/status`);
+      const res = await authFetch(`${httpBase}/system/status`, token, onUnauthorized);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setStatus(await res.json() as SystemStatus);
     } catch (err) {
@@ -57,7 +65,7 @@ export function SystemPage({ httpBase }: { httpBase: string }) {
     } finally {
       setLoading(false);
     }
-  }, [httpBase]);
+  }, [httpBase, token, onUnauthorized]);
 
   useEffect(() => {
     void refresh();
@@ -65,11 +73,51 @@ export function SystemPage({ httpBase }: { httpBase: string }) {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
+  // /pair is localhost-only (403 from a phone/Tailscale caller) — that's expected,
+  // it just means the "Connetti il telefono" section stays hidden there.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(`${httpBase}/pair`);
+        if (res.ok && alive) {
+          const body = (await res.json()) as { token: string };
+          setPairToken(body.token);
+        }
+      } catch {
+        /* host unreachable — leave the pairing section hidden */
+      }
+    })();
+    return () => { alive = false; };
+  }, [httpBase]);
+
+  useEffect(() => { void pushSubscribed().then(setPushOn); }, []);
+
+  const turnOnNotifications = async () => {
+    setPushBusy(true);
+    setPushMsg(null);
+    const r = await enablePush(httpBase, token, onUnauthorized);
+    setPushMsg(r);
+    if (r === "ok") setPushOn(true);
+    setPushBusy(false);
+  };
+
+  const sendTestPush = async () => {
+    try {
+      const res = await authFetch(`${httpBase}/push/test`, token, onUnauthorized, { method: "POST" });
+      setPushTest(res.ok ? "scheduled" : "error");
+    } catch {
+      setPushTest("error");
+    }
+    // Let the state be re-triggered after the notification should have landed.
+    window.setTimeout(() => setPushTest("idle"), 20_000);
+  };
+
   const setAutostart = async (enabled: boolean) => {
     setSavingAutostart(true);
     setError(null);
     try {
-      const res = await fetch(`${httpBase}/system/autostart`, {
+      const res = await authFetch(`${httpBase}/system/autostart`, token, onUnauthorized, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -118,6 +166,48 @@ export function SystemPage({ httpBase }: { httpBase: string }) {
         />
       </div>
 
+      {pairToken && <PairingPanel token={pairToken} />}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Smartphone className="size-4" /> Notifiche push
+          </CardTitle>
+          <CardDescription>
+            Ricevi una notifica quando c'è una proposta da approvare, anche ad app chiusa. Su iPhone: aggiungi prima Steward alla schermata Home.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <Button onClick={() => void turnOnNotifications()} disabled={pushBusy || pushOn}>
+            {pushOn ? "Notifiche attive ✓" : pushBusy ? "Attivazione…" : "Attiva notifiche"}
+          </Button>
+          {pushOn && (
+            <Button variant="outline" onClick={() => void sendTestPush()} disabled={pushTest === "scheduled"}>
+              {pushTest === "scheduled" ? "In arrivo tra ~15s…" : "Invia notifica di test"}
+            </Button>
+          )}
+          {pushTest === "scheduled" && (
+            <span className="text-muted-foreground text-sm">Puoi anche chiudere l'app: la notifica arriva comunque.</span>
+          )}
+          {pushTest === "error" && (
+            <span className="text-destructive text-sm">Invio non riuscito — riprova.</span>
+          )}
+          {pushMsg && pushMsg !== "ok" && (
+            <span className="text-muted-foreground text-sm">
+              {pushMsg === "denied"
+                ? "Permesso negato — abilitalo nelle impostazioni del browser."
+                : pushMsg === "insecure-context"
+                  ? "Le notifiche richiedono una connessione sicura (HTTPS). Sul telefono via http non sono disponibili: serve abilitare HTTPS su Tailscale e aprire l'app via https://…"
+                  : pushMsg === "needs-home-screen"
+                    ? "Su iPhone: prima aggiungi Steward alla schermata Home (Condividi → Aggiungi a Home), poi apri l'app dall'icona e riprova."
+                    : pushMsg === "unsupported"
+                      ? "Questo browser non supporta le notifiche push (funzionano dall'app in Home sul telefono, non dalla finestra sul Mac)."
+                      : "Attivazione non riuscita — riprova."}
+            </span>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {(status?.services ?? []).map((service) => (
           <ServiceRow key={service.id} service={service} />
@@ -149,6 +239,39 @@ function SummaryTile({ label, value, state }: { label: string; value: number; st
           <div className="text-2xl font-semibold tabular-nums">{value}</div>
         </div>
         <StateIcon state={state} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Pairing QR for a phone: /pair (localhost-only) hands us the token; the QR
+ *  encodes this page's own origin (works over Tailscale too — it's whatever
+ *  origin served this page) with ?token= so the phone auto-pairs on scan. */
+function PairingPanel({ token }: { token: string }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const pairUrl = `${window.location.origin}/?token=${encodeURIComponent(token)}`;
+  const canceledRef = useRef(false);
+
+  useEffect(() => {
+    canceledRef.current = false;
+    void QRCode.toDataURL(pairUrl, { margin: 1, width: 220 }).then((dataUrl) => {
+      if (!canceledRef.current) setQr(dataUrl);
+    }).catch(() => setQr(null));
+    return () => { canceledRef.current = true; };
+  }, [pairUrl]);
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Smartphone className="size-4" />
+          Connetti il telefono
+        </CardTitle>
+        <CardDescription>Scansiona dal telefono (stessa rete Tailscale) per collegarlo.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-center gap-4">
+        {qr && <img src={qr} alt="QR di pairing" className="size-[110px] rounded-md border bg-white p-1" />}
+        <p className="text-muted-foreground min-w-0 flex-1 break-all font-mono text-xs">{pairUrl}</p>
       </CardContent>
     </Card>
   );

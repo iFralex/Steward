@@ -128,3 +128,28 @@
     @apply font-sans;
     }
 }
+/* Lock the document itself: no horizontal panning (the swipe-back gesture
+   translates the content panel) and no user-driven vertical panning/bounce of
+   the layout (header + bottom nav must stay pinned). touch-action on the root
+   only affects gestures whose scroller IS the document — inner scrollers
+   (chat thread, lists, pages) resolve the gesture themselves and still pan
+   vertically. No overflow-y/height rules here on purpose: on-device the
+   layout viewport is reported shorter than the real screen, so clipping to it
+   hides the bottom nav. */
+html,
+body {
+  overscroll-behavior: none;
+  overflow-x: hidden;
+  touch-action: pan-x;
+}
+
+/* Empty-chat aurora: the agent's "presence" breathing behind the greeting,
+   and the staggered rise-in of the greeting/suggestions. */
+@keyframes steward-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.18; }
+  50% { transform: scale(1.18); opacity: 0.32; }
+}
+@keyframes steward-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}

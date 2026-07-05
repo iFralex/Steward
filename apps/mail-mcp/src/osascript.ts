@@ -1,4 +1,4 @@
-import { runOsa as sharedRunOsa, type OsaExec, type OsaOptions } from "@llm-wiki/applescript";
+import { runOsa as sharedRunOsa, type OsaExec, type OsaOptions } from "@steward/applescript";
 
 export type { OsaExec };
 

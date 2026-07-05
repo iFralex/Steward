@@ -1,4 +1,4 @@
-import { esc } from "@llm-wiki/applescript";
+import { esc } from "@steward/applescript";
 import type { MessageRef, SearchArgs, SendArgs, ReplyArgs } from "./types.ts";
 import { resolveMessageRef } from "./validate.ts";
 

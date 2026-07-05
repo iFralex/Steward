@@ -1,7 +1,7 @@
 import { Store } from "../../mail-mirror/src/store.ts";
 import { dbPath as mailDbPath } from "../../mail-mirror/src/paths.ts";
 import { fileURLToPath } from "node:url";
-import { buildMcpBridge, type McpBridge, type McpServerSpec } from "@llm-wiki/mcp-bridge";
+import { buildMcpBridge, type McpBridge, type McpServerSpec } from "@steward/mcp-bridge";
 import { actionDbPath } from "./paths.ts";
 import { ActionStore } from "./store.ts";
 import { gatewayChat } from "./llm.ts";

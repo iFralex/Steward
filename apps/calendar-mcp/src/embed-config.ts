@@ -1,4 +1,4 @@
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import type { EmbeddingConfig } from "@steward/embedding";
 
 export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig | null {
   const endpoint = env.MAIL_EMBED_ENDPOINT ?? "http://127.0.0.1:4000/v1/embeddings";

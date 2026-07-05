@@ -31,7 +31,7 @@ wiki-add --root <dir> <file> ...  add files mirrored relative to <dir>
 ## Finder Quick Actions
 
 ```
-npm run install-quick-actions -w @llm-wiki/wiki-add
+npm run install-quick-actions -w @steward/wiki-add
 ```
 
 Installs two macOS Services into `~/Library/Services`:

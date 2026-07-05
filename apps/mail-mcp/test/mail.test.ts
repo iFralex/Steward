@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type MessageRow } from "../../mail-mirror/src/store.ts";
 import { Mail } from "../src/mail.ts";
-import { WriteOpsStore } from "@llm-wiki/write-ops";
+import { WriteOpsStore } from "@steward/write-ops";
 import { assertSafeDestPath } from "../src/validate.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";

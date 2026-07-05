@@ -3,7 +3,7 @@
 import { AddressBookStore } from "./src/addressbook-store.ts";
 import { sourceDbPaths } from "./src/paths.ts";
 import { createContact } from "./src/applescript.ts";
-import { runOsa, esc } from "@llm-wiki/applescript";
+import { runOsa, esc } from "@steward/applescript";
 
 const store = AddressBookStore.load(sourceDbPaths());
 console.log("contacts:", store.listContacts().length);

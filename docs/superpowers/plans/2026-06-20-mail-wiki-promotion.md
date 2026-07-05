@@ -69,7 +69,7 @@ Expected: FAIL (module not found). (If the new workspace's deps aren't linked, r
 
 ```json
 {
-  "name": "@llm-wiki/mail-promoter",
+  "name": "@steward/mail-promoter",
   "version": "0.0.0",
   "private": true,
   "type": "module",

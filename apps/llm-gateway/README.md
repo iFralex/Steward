@@ -23,7 +23,7 @@ retry after tokens have begun.
 
 1. Ollama running locally with the models pulled (`ollama pull bge-m3`, `ollama pull llama3.2:1b`).
 2. Copy `.env.example` to `.env`, set `DEEPSEEK_API_KEY` (tiers 2–6).
-3. Start the gateway: `npm run dev -w @llm-wiki/llm-gateway`
+3. Start the gateway: `npm run dev -w @steward/llm-gateway`
 
 Gateway base URL: `http://127.0.0.1:4000` (`/v1/chat/completions`, `/v1/embeddings`).
 Optional env: `GATEWAY_PORT`, `GATEWAY_REQUEST_TIMEOUT_MS`, `DEEPSEEK_BASE_URL`.

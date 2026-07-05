@@ -1,9 +1,11 @@
 /**
- * React hook for the host WebSocket: speaks the shared `@llm-wiki/protocol`
+ * React hook for the host WebSocket: speaks the shared `@steward/protocol`
  * event contract. Accumulates the chat transcript, tracks pending tool
  * approvals, and exposes `sendMessage` / `respondApproval`.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { authFetch } from "@/lib/auth";
+import { uid } from "@/lib/utils";
 import type {
   ActionCenterState,
   ActionStatus,
@@ -14,7 +16,7 @@ import type {
   PersistedMessage,
   ServerEvent,
   SessionState,
-} from "@llm-wiki/protocol";
+} from "@steward/protocol";
 
 export interface ChatMessage {
   id: string;
@@ -78,6 +80,8 @@ export interface HostSocket {
   actionCenter: ActionCenterState | null;
   chats: ChatSummary[];
   activeChatId: string | null;
+  /** True while waiting for the server's chat_history after a chat switch. */
+  historyLoading: boolean;
   createChat: () => void;
   selectChat: (chatId: string) => void;
   renameChat: (chatId: string, title: string) => void;
@@ -104,7 +108,7 @@ export interface HostSocket {
   ) => void;
 }
 
-export function useHostSocket(url: string): HostSocket {
+export function useHostSocket(url: string, token: string | null, onUnauthorized: () => void): HostSocket {
   const httpBase = url.replace(/^ws/, "http"); // host's HTTP origin (upload/resolve/file)
   const wsRef = useRef<WebSocket | null>(null);
   const sessionRef = useRef<string>("");
@@ -121,6 +125,7 @@ export function useHostSocket(url: string): HostSocket {
   /** Per-chat transcript, keyed by chatId; `messages` mirrors the active chat's list. */
   const messagesByChat = useRef<Map<string, ChatMessage[]>>(new Map());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const activeChatRef = useRef<string | null>(null);
   useEffect(() => {
     activeChatRef.current = activeChatId;
@@ -150,7 +155,8 @@ export function useHostSocket(url: string): HostSocket {
 
     const connect = () => {
       if (disposed) return;
-      const ws = new WebSocket(url);
+      const wsUrl = token ? `${url}/?token=${encodeURIComponent(token)}` : url;
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.onopen = () => {
         retryMs = 500;
@@ -168,8 +174,11 @@ export function useHostSocket(url: string): HostSocket {
         if (activeChatRef.current) setMessages(messagesByChat.current.get(activeChatRef.current) ?? []);
       };
       ws.onclose = () => {
+        // Ignore a close from a socket that's been disposed or already replaced
+        // by a newer one — otherwise a stale close can flip `connected` back to
+        // false right after a reconnect opened (Send button stuck "disabled").
+        if (disposed || wsRef.current !== ws) return;
         setConnected(false);
-        if (disposed) return;
         timer = setTimeout(connect, retryMs);
         retryMs = Math.min(retryMs * 2, 5000); // 0.5s → 5s cap
       };
@@ -203,7 +212,7 @@ export function useHostSocket(url: string): HostSocket {
           case "tool_call":
             updateChat(msg.chatId ?? null, (prev) => [
               ...prev,
-              { id: crypto.randomUUID(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
+              { id: uid(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
             ]);
             break;
           case "tool_result":
@@ -253,6 +262,7 @@ export function useHostSocket(url: string): HostSocket {
             const merged = liveTail.length ? [...persisted, ...liveTail] : persisted;
             messagesByChat.current.set(msg.chatId, merged);
             setMessages(merged);
+            setHistoryLoading(false);
             break; // approvals/questions are NOT cleared — they're per-chat and filtered on read
           }
           case "action_center_state":
@@ -261,7 +271,7 @@ export function useHostSocket(url: string): HostSocket {
           case "error":
             updateChat(msg.chatId ?? null, (prev) => [
               ...prev,
-              { id: crypto.randomUUID(), role: "assistant", text: `⚠️ ${msg.message}` },
+              { id: uid(), role: "assistant", text: `⚠️ ${msg.message}` },
             ]);
             break;
         }
@@ -274,7 +284,7 @@ export function useHostSocket(url: string): HostSocket {
       if (timer) clearTimeout(timer);
       wsRef.current?.close();
     };
-  }, [url]);
+  }, [url, token]);
 
   const send = useCallback((event: ClientEvent) => {
     const ws = wsRef.current;
@@ -287,7 +297,7 @@ export function useHostSocket(url: string): HostSocket {
       if (!trimmed) return;
       updateChat(activeChatId, (prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: "user", text: trimmed, ts: Date.now(), ...(attachments?.length ? { attachments } : {}) },
+        { id: uid(), role: "user", text: trimmed, ts: Date.now(), ...(attachments?.length ? { attachments } : {}) },
       ]);
       send({ type: "user_message", sessionId: sessionRef.current, text: trimmed, chatId: activeChatId ?? undefined, attachments });
     },
@@ -297,17 +307,26 @@ export function useHostSocket(url: string): HostSocket {
   const stop = useCallback(() => send({ type: "stop", chatId: activeChatId ?? undefined }), [send, activeChatId]);
 
   const uploadFile = useCallback(async (file: File): Promise<ChannelFile> => {
-    const res = await fetch(`${httpBase}/upload?name=${encodeURIComponent(file.name)}`, {
+    const res = await authFetch(`${httpBase}/upload?name=${encodeURIComponent(file.name)}`, token, onUnauthorized, {
       method: "POST",
       headers: { "Content-Type": file.type || "application/octet-stream" },
       body: file,
     });
     if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`);
     return (await res.json()) as ChannelFile;
-  }, [httpBase]);
+  }, [httpBase, token, onUnauthorized]);
 
   const createChat = useCallback(() => send({ type: "chat_create" }), [send]);
-  const selectChat = useCallback((chatId: string) => send({ type: "chat_select", chatId }), [send]);
+  const selectChat = useCallback((chatId: string) => {
+    // Optimistic switch: show the cached transcript instantly (the server's
+    // chat_history reconciles it when it arrives). Without this the OLD
+    // chat stays on screen until the round-trip completes.
+    activeChatRef.current = chatId;
+    setActiveChatId(chatId);
+    setMessages(messagesByChat.current.get(chatId) ?? []);
+    setHistoryLoading(true);
+    send({ type: "chat_select", chatId });
+  }, [send]);
   const renameChat = useCallback((chatId: string, title: string) => {
     const trimmed = title.trim();
     if (trimmed) send({ type: "chat_rename", chatId, title: trimmed });
@@ -376,7 +395,7 @@ export function useHostSocket(url: string): HostSocket {
     const cached = filesRef.current.get(key);
     if (cached) return cached;
     try {
-      const res = await fetch(`${httpBase}/resolve?path=${encodeURIComponent(key)}`);
+      const res = await authFetch(`${httpBase}/resolve?path=${encodeURIComponent(key)}`, token, onUnauthorized);
       if (!res.ok) return undefined;
       const file = (await res.json()) as ChannelFile;
       if (file.path) filesRef.current.set(file.path, file);
@@ -385,15 +404,23 @@ export function useHostSocket(url: string): HostSocket {
     } catch {
       return undefined;
     }
-  }, [httpBase]);
+  }, [httpBase, token, onUnauthorized]);
 
   // Approvals/questions are per-chat (chatId is optional for back-compat): a
   // card with no chatId is treated as belonging to whatever chat is active so
   // it isn't silently dropped, and it stays visible across chat switches.
-  const visibleApprovals = approvals.filter((a) => !a.chatId || a.chatId === activeChatId);
-  const visibleQuestions = questions.filter((q) => !q.chatId || q.chatId === activeChatId);
+  // Memoized: fresh .filter() arrays every render would retrigger any consumer
+  // effect that depends on them (e.g. the chat auto-scroll) on EVERY render.
+  const visibleApprovals = useMemo(
+    () => approvals.filter((a) => !a.chatId || a.chatId === activeChatId),
+    [approvals, activeChatId],
+  );
+  const visibleQuestions = useMemo(
+    () => questions.filter((q) => !q.chatId || q.chatId === activeChatId),
+    [questions, activeChatId],
+  );
 
-  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, historyLoading, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
 
 /** Map a persisted transcript message back into a renderable chat message. */
@@ -406,7 +433,7 @@ function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {
   if (last && last.role === "assistant" && last.open) {
     return [...prev.slice(0, -1), { ...last, text: last.text + text }];
   }
-  return [...prev, { id: crypto.randomUUID(), role: "assistant", text, ts: Date.now(), open: true }];
+  return [...prev, { id: uid(), role: "assistant", text, ts: Date.now(), open: true }];
 }
 
 function closeAssistant(prev: ChatMessage[]): ChatMessage[] {

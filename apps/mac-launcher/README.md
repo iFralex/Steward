@@ -35,14 +35,14 @@ ollama pull bge-m3
 For a host-served production-like UI, build the web UI first:
 
 ```sh
-npm run build -w @llm-wiki/web
+npm run build -w @steward/web
 npm run launcher:mac
 ```
 
 To point it at a different UI URL:
 
 ```sh
-LLM_WIKI_LAUNCHER_URL=http://127.0.0.1:5173 swift run --package-path apps/mac-launcher LLMWikiLauncher
+LLM_WIKI_LAUNCHER_URL=http://127.0.0.1:5173 swift run --package-path apps/mac-launcher StewardLauncher
 ```
 
 To disable service startup and only open the configured URL:
@@ -57,7 +57,7 @@ Build a local production app bundle:
 
 ```sh
 npm run package:mac
-open "dist/mac/LLM Wiki.app"
+open "dist/mac/Steward.app"
 ```
 
 The bundle contains the launcher, the built web UI, compiled service entrypoints,
@@ -73,11 +73,11 @@ bundle.
 Put secrets and local overrides in:
 
 ```text
-~/Library/Application Support/LLM Wiki/config.env
+~/Library/Application Support/Steward/config.env
 ```
 
 Logs are written to:
 
 ```text
-~/Library/Logs/LLM Wiki/
+~/Library/Logs/Steward/
 ```

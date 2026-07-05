@@ -5,20 +5,23 @@
  */
 import { WebSocketServer } from "ws";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream, statSync, type Stats } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
+import { createReadStream, readFileSync, statSync, type Stats } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
 import { extname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ClientEvent } from "@llm-wiki/protocol";
+import type { ClientEvent } from "@steward/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
-import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal } from "./core/action-center-service.ts";
-import type { ActionCenterItem } from "@llm-wiki/protocol";
+import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setPushRegistry } from "./core/action-center-service.ts";
+import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageStore } from "./core/usage-store.ts";
 import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
-import type { HostConfig } from "./config.ts";
+import { PushRegistry, type PushSubscriptionJSON } from "./core/push.ts";
+import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -37,6 +40,23 @@ export function isAllowedOrigin(origin: string | undefined, port: number): boole
   return allowed.has(origin);
 }
 
+/**
+ * True when the browser's Origin matches the Host it connected to (a same-origin
+ * request — the served page calling back to itself). This is what makes the phone
+ * work over Tailscale without listing its address: the page loads from
+ * `http://<mac-tailnet>:4317` and its WS/fetch Origin equals that Host. A
+ * cross-site attacker's Origin differs from Host, so it stays rejected — and the
+ * data channels also require the auth token regardless.
+ */
+export function originMatchesHost(origin: string | undefined, hostHeader: string | undefined): boolean {
+  if (!origin || !hostHeader) return false;
+  try {
+    return new URL(origin).host === hostHeader;
+  } catch {
+    return false;
+  }
+}
+
 function corsHeaders(origin: string | undefined, port: number): Record<string, string> {
   if (origin === undefined || !isAllowedOrigin(origin, port)) return {};
   return {
@@ -46,6 +66,44 @@ function corsHeaders(origin: string | undefined, port: number): Record<string, s
     Vary: "Origin",
   };
 }
+/** Constant-time compare; `timingSafeEqual` throws on a length mismatch, so guard that case first. */
+function tokensEqual(candidate: string, token: string): boolean {
+  const a = Buffer.from(candidate, "utf8");
+  const b = Buffer.from(token, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Auth check for the WS + HTTP data routes: the token may arrive as `?token=`
+ * (WS URL, `<img src>`/`<a href>` for `/file/<t>`) or an `Authorization:
+ * Bearer <token>` header (fetches). Either is accepted; missing/invalid → false.
+ */
+export function tokenOk(url: string | undefined, header: string | undefined, token: string): boolean {
+  let fromQuery: string | null = null;
+  try {
+    fromQuery = new URL(url ?? "/", "http://x").searchParams.get("token");
+  } catch {
+    fromQuery = null;
+  }
+  const fromHeader = header?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null;
+  const candidate = fromQuery ?? fromHeader;
+  if (!candidate) return false;
+  return tokensEqual(candidate, token);
+}
+
+const LOCALHOST_ADDRS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+/** Only the Mac's own browser (the packaged app, or dev on :5173) counts as localhost — a phone over Tailscale never matches. */
+function isLocalhostRequest(req: IncomingMessage): boolean {
+  return LOCALHOST_ADDRS.has(req.socket.remoteAddress ?? "");
+}
+
+/** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
+const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/push/", "/quick-send"];
+function isDataRoute(url: string): boolean {
+  return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
+}
+
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const WEB_DIST_DIR = process.env.HOST_STATIC_DIR ?? fileURLToPath(new URL("../../web/dist", import.meta.url));
 const CONTENT_TYPES: Record<string, string> = {
@@ -60,6 +118,21 @@ const CONTENT_TYPES: Record<string, string> = {
   ".wasm": "application/wasm",
 };
 
+/**
+ * Headless chat runner for /quick-send (iPhone Action button → Shortcut → POST):
+ * no WebSocket client is attached, so events go nowhere and a gated write that
+ * asks for approval simply times out (denied). One shared instance — turns are
+ * serialized per chat by ChatManager's own queue.
+ */
+let quickRunner: ChatManager | null = null;
+function getQuickRunner(config: HostConfig): ChatManager {
+  if (!quickRunner) {
+    const noop: Emit = () => {};
+    quickRunner = new ChatManager(config, new Session(noop, config.approvalTimeoutMs), noop);
+  }
+  return quickRunner;
+}
+
 function readRequestBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -71,7 +144,24 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): boolean {
+/**
+ * Serve index.html. On localhost only, inject `window.__STEWARD_TOKEN__` so
+ * the Mac's own browser auto-pairs (no manual pairing screen); a phone
+ * (non-localhost) gets the plain page and pairs via the `/pair` QR.
+ */
+function serveIndexHtml(config: HostConfig, req: IncomingMessage, res: ServerResponse, cors: Record<string, string>, filePath: string): void {
+  let html = readFileSync(filePath, "utf8");
+  if (isLocalhostRequest(req)) {
+    const inject = `<script>window.__STEWARD_TOKEN__=${JSON.stringify(config.authToken)}</script>`;
+    html = html.includes("</head>") ? html.replace("</head>", `${inject}</head>`) : html;
+  }
+  const body = Buffer.from(html, "utf8");
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": body.length, ...cors });
+  if (req.method === "HEAD") res.end();
+  else res.end(body);
+}
+
+function tryServeWebAsset(config: HostConfig, req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): boolean {
   if (req.method !== "GET" && req.method !== "HEAD") return false;
 
   let pathname = "/";
@@ -93,6 +183,10 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Recor
   try {
     const stat = statSync(file);
     if (!stat.isFile()) throw new Error("not a file");
+    if (extname(file) === ".html") {
+      serveIndexHtml(config, req, res, cors, file);
+      return true;
+    }
     res.writeHead(200, {
       "Content-Type": CONTENT_TYPES[extname(file)] ?? "application/octet-stream",
       "Content-Length": stat.size,
@@ -107,17 +201,8 @@ function tryServeWebAsset(req: IncomingMessage, res: ServerResponse, cors: Recor
   } catch {
     if (file !== fallback) {
       try {
-        const stat = statSync(fallback);
-        res.writeHead(200, {
-          "Content-Type": "text/html; charset=utf-8",
-          "Content-Length": stat.size,
-          ...cors,
-        });
-        if (req.method === "HEAD") {
-          res.end();
-        } else {
-          createReadStream(fallback).on("error", () => res.destroy()).pipe(res);
-        }
+        statSync(fallback);
+        serveIndexHtml(config, req, res, cors, fallback);
         return true;
       } catch {
         return false;
@@ -161,9 +246,13 @@ async function gatewayRates(baseUrl: string, tier: string, fallback: unknown): P
 }
 
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
-function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerResponse): void {
+function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
-  if (req.headers.origin !== undefined && !isAllowedOrigin(req.headers.origin, config.port)) {
+  if (
+    req.headers.origin !== undefined &&
+    !isAllowedOrigin(req.headers.origin, config.port) &&
+    !originMatchesHost(req.headers.origin, req.headers.host)
+  ) {
     res.writeHead(403); res.end("forbidden origin"); return;
   }
   const CORS = corsHeaders(req.headers.origin, config.port);
@@ -171,6 +260,108 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
   if (req.method === "GET" && url.startsWith("/health")) {
     res.writeHead(200, { "Content-Type": "application/json", ...CORS });
     res.end(JSON.stringify({ ok: true, port: config.port }));
+    return;
+  }
+  // Localhost-only: lets the System page fetch the token to render the pairing QR.
+  // Never answered for a non-localhost (phone/Tailscale) caller.
+  if (req.method === "GET" && url.startsWith("/pair")) {
+    if (!isLocalhostRequest(req)) { res.writeHead(403, CORS); res.end("forbidden"); return; }
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify({ token: config.authToken }));
+    return;
+  }
+  if (isDataRoute(url) && !tokenOk(url, req.headers.authorization, config.authToken)) {
+    res.writeHead(401, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify({ error: "unauthorized" }));
+    return;
+  }
+  if (req.method === "GET" && url.startsWith("/push/vapid")) {
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify({ publicKey: config.vapid.publicKey }));
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/push/subscribe")) {
+    void readRequestBody(req).then((raw) => {
+      const sub = raw ? (JSON.parse(raw) as PushSubscriptionJSON) : null;
+      if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "invalid subscription" }));
+        return;
+      }
+      pushRegistry.subscribe(sub);
+      res.writeHead(204, CORS);
+      res.end();
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  // Delayed test push: fire-and-forget so the user can background/close the
+  // app and verify real delivery (not just the in-page permission state).
+  if (req.method === "POST" && url.startsWith("/push/test")) {
+    res.writeHead(202, CORS);
+    res.end();
+    setTimeout(() => {
+      void pushRegistry.sendAll({
+        title: "Steward",
+        body: "Notifica di test — le push funzionano ✅",
+        tag: "push-test",
+      }).catch(() => { /* best-effort */ });
+    }, 15_000);
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/push/unsubscribe")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? (JSON.parse(raw) as { endpoint?: string }) : {};
+      if (body.endpoint) pushRegistry.unsubscribe(body.endpoint);
+      res.writeHead(204, CORS);
+      res.end();
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  // Quick message from outside the app (iPhone Action button via Shortcuts):
+  // creates a fresh chat, runs the turn headless, then pushes the reply with
+  // the chatId so tapping the notification lands on that chat.
+  if (req.method === "POST" && url.startsWith("/quick-send")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? (JSON.parse(raw) as { text?: unknown }) : {};
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      const chat = chatStore().createChat();
+      res.writeHead(202, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ chatId: chat.id }));
+      // No text (e.g. the Shortcut prompt was left empty): just hand back a
+      // fresh chat — the push tap opens the app right on it, ready to type.
+      if (!text) {
+        void pushRegistry.sendAll({
+          title: "Steward",
+          body: "Nuova chat pronta — tocca per scrivere ✍️",
+          tag: `chat-${chat.id}`,
+          chatId: chat.id,
+          type: "chat-open",
+        }).catch(() => { /* best-effort */ });
+        return;
+      }
+      void getQuickRunner(config)
+        .runTurn(chat.id, text)
+        .then(() => {
+          const reply = [...chatStore().getMessages(chat.id)].reverse().find((m) => m.role === "assistant")?.text ?? "";
+          return pushRegistry.sendAll({
+            title: "Steward",
+            body: reply ? reply.slice(0, 140) : "Risposta pronta",
+            tag: `chat-${chat.id}`,
+            chatId: chat.id,
+            type: "chat-reply",
+          });
+        })
+        .catch(() => { /* best-effort: the chat + transcript persist regardless */ });
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
     return;
   }
   if (req.method === "GET" && url.startsWith("/system/status")) {
@@ -242,18 +433,30 @@ function handleHttp(config: HostConfig, req: IncomingMessage, res: ServerRespons
     createReadStream(entry.path).on("error", () => res.destroy()).pipe(res);
     return;
   }
-  if (tryServeWebAsset(req, res, CORS)) return;
+  if (tryServeWebAsset(config, req, res, CORS)) return;
   res.writeHead(404, CORS);
   res.end("not found");
 }
 
 export function startServer(config: HostConfig): WebSocketServer {
-  const httpServer = createServer((req, res) => handleHttp(config, req, res));
-  const wss = new WebSocketServer({
-    server: httpServer,
-    verifyClient: ({ req }: { req: IncomingMessage }) =>
-      isAllowedOrigin(req.headers.origin, config.port),
-  });
+  const pushRegistry = new PushRegistry(pushSubscriptionsPath());
+  setPushRegistry(pushRegistry);
+  // Two listeners: plain HTTP on localhost (the Mac's own WebView — a secure
+  // context anyway, auto-pairs, keeps native "open/reveal" actions), and — when a
+  // TLS cert+key are provided (e.g. `tailscale cert`) — HTTPS on all interfaces
+  // for the phone over Tailscale. A secure context (https) is what unlocks service
+  // workers + Web Push there; plain http stays localhost-only, never on the tailnet.
+  const tlsCert = process.env.STEWARD_TLS_CERT;
+  const tlsKey = process.env.STEWARD_TLS_KEY;
+  const useTls = !!(tlsCert && tlsKey);
+  const wss = new WebSocketServer({ noServer: true });
+  const acceptUpgrade = (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
+    const ok =
+      (isAllowedOrigin(req.headers.origin, config.port) || originMatchesHost(req.headers.origin, req.headers.host)) &&
+      tokenOk(req.url, req.headers.authorization, config.authToken);
+    if (!ok) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+  };
 
   // Startup housekeeping: drop unsaved temporary chats from previous runs.
   // Done once per process — NOT per connection (a second tab must not delete
@@ -447,8 +650,24 @@ export function startServer(config: HostConfig): WebSocketServer {
     });
   });
 
+  // HTTP for the Mac's own WebView — localhost only, never exposed on the tailnet.
+  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, req, res));
+  httpServer.on("upgrade", acceptUpgrade);
   httpServer.listen(config.port, "127.0.0.1", () => {
-    console.log(`[host] WebSocket listening on ws://127.0.0.1:${config.port} (files at http://127.0.0.1:${config.port}/file/<token>)`);
+    console.log(`[host] http://127.0.0.1:${config.port} (localhost)`);
   });
+
+  // HTTPS on all interfaces for the phone over Tailscale (secure context → push).
+  if (useTls) {
+    const tlsPort = Number(process.env.STEWARD_TLS_PORT ?? config.port + 1);
+    const httpsServer = createHttpsServer(
+      { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) },
+      (req, res) => handleHttp(config, pushRegistry, req, res),
+    );
+    httpsServer.on("upgrade", acceptUpgrade);
+    httpsServer.listen(tlsPort, "0.0.0.0", () => {
+      console.log(`[host] https://0.0.0.0:${tlsPort} (Tailscale/phone)`);
+    });
+  }
   return wss;
 }

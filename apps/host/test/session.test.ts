@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Session } from "../src/core/session.ts";
-import type { ServerEvent } from "@llm-wiki/protocol";
+import type { ServerEvent } from "@steward/protocol";
 
 type QReq = Extract<ServerEvent, { type: "question_request" }>;
 const firstQuestion = (events: ServerEvent[]) => events.find((e) => e.type === "question_request") as QReq | undefined;

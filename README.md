@@ -1,4 +1,4 @@
-# LLM Wiki — personal agent monorepo
+# Steward — personal agent monorepo
 
 A **local-first personal agent for macOS**. It reads and acts on your real data — Apple Mail, Calendar, Contacts, files on disk — through a gated tool system, uses a personal wiki as long-term memory, and routes every LLM call through a self-hosted gateway so models are swappable and costs are visible. Everything runs on your machine; the only network egress is the LLM provider behind the gateway.
 
@@ -113,11 +113,11 @@ Three planes:
 | `mail-mirror/mail.db` + `blobs/` | Mail mirror (messages, threads, trigram+vector indexes, attachment blobs) |
 | `mail-promoter/` | Promotion state (which threads were distilled, note filenames) |
 | `action-center/actions.db` | Action items, seen-ledger, scan metadata |
-| `llm-wiki/calendar-index.sqlitedb`, `llm-wiki/contacts-index.sqlitedb` | Hybrid-search indexes for calendar/contacts |
+| `steward/calendar-index.sqlitedb`, `steward/contacts-index.sqlitedb` | Hybrid-search indexes for calendar/contacts |
 | `write-ops/ops.db` | AppleScript write journal (statuses: started → script_returned → confirmed / retrying …) |
-| `llmwiki-chats/` | Chat transcripts (`chats.db`) + Pi session files (agent memory per chat) |
-| `llmwiki-usage/usage.db` | Per-turn token/cost ledger + per-tool call stats |
-| `llmwiki-uploads/` | Files you attach in the UI |
+| `steward-chats/` | Chat transcripts (`chats.db`) + Pi session files (agent memory per chat) |
+| `steward-usage/usage.db` | Per-turn token/cost ledger + per-tool call stats |
+| `steward-uploads/` | Files you attach in the UI |
 
 Read sources: Apple Mail `~/Library/Mail` (.emlx), `~/Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb`, `~/Library/Application Support/AddressBook`. These require **Full Disk Access**; AppleScript writes require **Automation** permission for Mail/Calendar/Contacts.
 
@@ -129,24 +129,24 @@ Prerequisites: Node ≥ 20, npm, Xcode CLT (launcher), [Ollama](https://ollama.c
 npm install
 
 # 1. Gateway (put DEEPSEEK_API_KEY in apps/llm-gateway/.env — see .env.example)
-npm run dev -w @llm-wiki/llm-gateway
+npm run dev -w @steward/llm-gateway
 
 # 2. The LLM Wiki desktop app must be running (its MCP server talks to the local API)
 
 # 3. Host + web UI (dev)
-npm run dev -w @llm-wiki/host
-npm run dev -w @llm-wiki/web        # → http://localhost:5173
+npm run dev -w @steward/host
+npm run dev -w @steward/web        # → http://localhost:5173
 
 # One-time data bootstrap
 node --import tsx apps/mail-mirror/src/cli.ts backfill   # mirror your mailboxes
 node --import tsx apps/mail-mirror/src/cli.ts migrate    # enrich (advanced search)
 
 # Background daemon (or let the packaged app / launchd manage it)
-npm run start -w @llm-wiki/scheduler
+npm run start -w @steward/scheduler
 ```
 
-macOS launcher (menu-bar app with health checks): `npm run build -w @llm-wiki/web && npm run launcher:mac`.
-Self-contained production bundle: `npm run package:mac` → `dist/mac/LLM Wiki.app` (bundles node, esbuilt entrypoints for every service, the wiki app, and native modules).
+macOS launcher (menu-bar app with health checks): `npm run build -w @steward/web && npm run launcher:mac`.
+Self-contained production bundle: `npm run package:mac` → `dist/mac/Steward.app` (bundles node, esbuilt entrypoints for every service, the wiki app, and native modules).
 
 ## Background jobs (scheduler)
 
@@ -173,7 +173,7 @@ Intervals are overridable via `SCHED_*_MIN` env vars; logs at `/tmp/llmwiki-sche
 
 ## Development
 
-- Per-workspace: `npm run typecheck -w @llm-wiki/<app>` and `npm test -w @llm-wiki/<app>` (Node's built-in test runner via tsx; no build step).
+- Per-workspace: `npm run typecheck -w @steward/<app>` and `npm test -w @steward/<app>` (Node's built-in test runner via tsx; no build step).
 - Web UI: `npm run build:web-host` builds web and typechecks the host together.
 - The wiki fork has its own toolchain (`vitest`, `vite`, Tauri) — see [apps/llm-wiki](apps/llm-wiki/).
 - Conventions: TypeScript ESM everywhere, `type: module`, tsx for execution, better-sqlite3 + sqlite-vec for storage/search, reuse over reimplement (shared code goes in `packages/`).

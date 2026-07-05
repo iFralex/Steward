@@ -5,7 +5,7 @@ import type {
   ActionStatus,
   PersistedMessage,
   ServerEvent,
-} from "@llm-wiki/protocol";
+} from "@steward/protocol";
 import { chatStore, toolMessage } from "./chat-store.ts";
 import { randomUUID } from "node:crypto";
 import { ActionStore } from "../../../action-center/src/store.ts";
@@ -16,6 +16,60 @@ import type { Emit, Session } from "./session.ts";
 import { decideTool } from "./tool-policy.ts";
 import { extractToolOutput, sharedMcpBridge } from "./agent-runner.ts";
 import { filesFromOutput } from "./file-registry.ts";
+import type { PushRegistry } from "./push.ts";
+
+/**
+ * Push registry for the action-center → phone hook (mobile-access M2/M3), set
+ * once at server startup. Kept as an injectable module-level singleton rather
+ * than threaded through every `loadActionCenterState()` call site (there are
+ * several, none of which otherwise need host config); `null` in tests/CLI
+ * contexts where it's never set, in which case the hook is a no-op.
+ */
+let pushRegistry: PushRegistry | null = null;
+export function setPushRegistry(registry: PushRegistry | null): void {
+  pushRegistry = registry;
+}
+
+/** Meta key: ids of "new" action-center items we've already pushed a notification for. */
+const PUSH_NOTIFIED_META_KEY = "pushNotifiedIds";
+
+/**
+ * Best-effort: push a notification for every item that just became visible
+ * with status "new" and at least one proposed action, and that we haven't
+ * already notified for. Never throws — a push failure must never break the
+ * action-center read/refresh/mark/execute flow that calls this.
+ */
+function notifyNewProposals(store: ActionStore, items: ActionCenterItem[]): void {
+  if (!pushRegistry) return;
+  try {
+    const notified = new Set(store.getMeta<number[]>(PUSH_NOTIFIED_META_KEY) ?? []);
+    const stillNew = new Set(items.filter((i) => i.status === "new").map((i) => i.id));
+    let changed = false;
+    for (const id of notified) {
+      if (!stillNew.has(id)) {
+        notified.delete(id); // left "new" (read/done/dismissed) — allow re-notifying if it ever reopens
+        changed = true;
+      }
+    }
+    for (const item of items) {
+      if (item.status !== "new" || notified.has(item.id)) continue;
+      const proposals = item.payload.proposedActions;
+      if (!Array.isArray(proposals) || proposals.length === 0) continue;
+      notified.add(item.id);
+      changed = true;
+      void pushRegistry.sendAll({
+        title: "Steward",
+        body: item.title || item.summary || "Nuova proposta da approvare",
+        tag: `action-${item.id}`,
+        actionId: item.id,
+        type: "approval",
+      }).catch(() => { /* best-effort — never break the caller */ });
+    }
+    if (changed) store.setMeta(PUSH_NOTIFIED_META_KEY, [...notified]);
+  } catch {
+    /* best-effort — never break the caller */
+  }
+}
 
 interface ProposedStep {
   id: string;

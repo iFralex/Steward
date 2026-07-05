@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/mail-mirror",
+  "name": "@steward/mail-mirror",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/embedding": "*",
-    "@llm-wiki/search": "*",
+    "@steward/embedding": "*",
+    "@steward/search": "*",
     "better-sqlite3": "^11.0.0",
     "chokidar": "^4.0.0",
     "mailparser": "^3.7.0",

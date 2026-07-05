@@ -7,8 +7,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
-import type { ChannelFile } from "@llm-wiki/protocol";
-import { isServableSecret } from "@llm-wiki/sensitive-path";
+import type { ChannelFile } from "@steward/protocol";
+import { isServableSecret } from "@steward/sensitive-path";
+import { migrateLegacyPath } from "./migrate.ts";
 
 const MIME: Record<string, string> = {
   ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -74,7 +75,10 @@ export function registerUserPath(path: string): ChannelFile | null {
  */
 export function saveUpload(name: string, bytes: Buffer): ChannelFile | null {
   try {
-    const uploadRoot = process.env.UPLOAD_DIR ?? join(homedir(), "Library", "Application Support", "llmwiki-uploads");
+    const uploadRoot = process.env.UPLOAD_DIR ?? join(homedir(), "Library", "Application Support", "steward-uploads");
+    if (!process.env.UPLOAD_DIR) {
+      migrateLegacyPath(join(homedir(), "Library", "Application Support", "llmwiki-uploads"), uploadRoot);
+    }
     const safe = basename(name || "file").replace(/[/\\]/g, "_").trim() || "file";
     const dir = join(uploadRoot, randomUUID());
     mkdirSync(dir, { recursive: true, mode: 0o700 });

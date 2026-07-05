@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { migrateLegacyPath } from "./migrate.ts";
 
 export interface TurnUsage {
   ts: number;
@@ -60,7 +61,10 @@ export class UsageStore {
   }
 
   static open(): UsageStore {
-    const dir = process.env.USAGE_DIR ?? join(homedir(), "Library", "Application Support", "llmwiki-usage");
+    const dir = process.env.USAGE_DIR ?? join(homedir(), "Library", "Application Support", "steward-usage");
+    if (!process.env.USAGE_DIR) {
+      migrateLegacyPath(join(homedir(), "Library", "Application Support", "llmwiki-usage"), dir);
+    }
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     return new UsageStore(new Database(join(dir, "usage.db")));
   }

@@ -18,7 +18,7 @@
 
 ## File Structure
 
-- `packages/embedding/package.json` — pure package manifest (`@llm-wiki/embedding`).
+- `packages/embedding/package.json` — pure package manifest (`@steward/embedding`).
 - `packages/embedding/tsconfig.json`
 - `packages/embedding/src/types.ts` — `EmbeddingConfig`, `EmbeddingDeps`, `EmbeddingResult`.
 - `packages/embedding/src/providers.ts` — provider detection + endpoint/body builders + classifiers (moved verbatim from the wiki).
@@ -44,7 +44,7 @@
 `packages/embedding/package.json`:
 ```json
 {
-  "name": "@llm-wiki/embedding",
+  "name": "@steward/embedding",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -320,11 +320,11 @@ git commit -m "feat(embedding): fetchEmbedding with injected fetch/origin/networ
 
 **Files:**
 - Modify: `apps/llm-wiki/src/lib/embedding.ts`
-- Possibly modify: `apps/llm-wiki/package.json` (add `@llm-wiki/embedding` workspace dep if the build needs it explicitly).
+- Possibly modify: `apps/llm-wiki/package.json` (add `@steward/embedding` workspace dep if the build needs it explicitly).
 - Gate: `apps/llm-wiki/src/lib/embedding.test.ts` (+ the rest of the wiki suite) must pass UNMODIFIED.
 
 **Interfaces:**
-- Consumes: `@llm-wiki/embedding` (`fetchEmbedding`, the provider helpers, types).
+- Consumes: `@steward/embedding` (`fetchEmbedding`, the provider helpers, types).
 - Produces: an `embedding.ts` whose PUBLIC exports are unchanged (same names/signatures the wiki app and its tests import).
 
 - [ ] **Step 1: Establish the parity baseline**
@@ -336,7 +336,7 @@ Expected: all pass (record the count). If it does not run/pass on a clean checko
 - [ ] **Step 2: Rewrite `embedding.ts` to delegate the HTTP core**
 
 In `apps/llm-wiki/src/lib/embedding.ts`:
-1. Add `import { fetchEmbedding as coreFetchEmbedding, isLocalOrPrivateHttpEndpoint, looksLikeOversizeError, isNonEmptyNumberArray, isSafeExtraHeader, googleEmbeddingEndpoint, googleEmbeddingBody, volcengineEmbeddingEndpoint, isGoogleEmbeddingConfig, isDoubaoMultimodalEmbeddingConfig, doubaoMultimodalEmbeddingBody } from "@llm-wiki/embedding"` (import whatever names the file's own code AND its tests reference).
+1. Add `import { fetchEmbedding as coreFetchEmbedding, isLocalOrPrivateHttpEndpoint, looksLikeOversizeError, isNonEmptyNumberArray, isSafeExtraHeader, googleEmbeddingEndpoint, googleEmbeddingBody, volcengineEmbeddingEndpoint, isGoogleEmbeddingConfig, isDoubaoMultimodalEmbeddingConfig, doubaoMultimodalEmbeddingBody } from "@steward/embedding"` (import whatever names the file's own code AND its tests reference).
 2. Delete the now-moved local definitions of those helpers from this file.
 3. Re-export the helpers the tests import, so existing imports keep resolving: `export { looksLikeOversizeError, isNonEmptyNumberArray, isSafeExtraHeader, isLocalOrPrivateHttpEndpoint, isGoogleEmbeddingConfig, ... } ` — match EXACTLY the set that `embedding.test.ts` imports from this module (read the test's import list first).
 4. Replace the local `fetchEmbedding(text, cfg, maxRetries = 3)` with a wrapper that KEEPS the same signature and behaviour:

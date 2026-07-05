@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { VectorStore } from "@llm-wiki/search";
+import { VectorStore } from "@steward/search";
 import type { Contact } from "./types.ts";
 
 export function displayNameOf(c: Contact): string {

@@ -1,5 +1,5 @@
 {
-  "name": "@llm-wiki/action-center",
+  "name": "@steward/action-center",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/mcp-bridge": "*",
+    "@steward/mcp-bridge": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0"
   },

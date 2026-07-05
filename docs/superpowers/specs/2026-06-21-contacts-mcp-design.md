@@ -10,7 +10,7 @@ An MCP server (`apps/contacts-mcp`) that lets the agent search, read, resolve, a
 write the user's macOS Contacts. Reads come from Apple's local AddressBook stores
 (read-only, Full Disk Access); writes go through AppleScript. Search is hybrid
 keyword + semantic over a connector-owned sidecar index, reusing the shared
-`@llm-wiki/search` and `@llm-wiki/applescript` packages. A `resolve_recipient`
+`@steward/search` and `@steward/applescript` packages. A `resolve_recipient`
 tool turns a free-text descriptor ("the accountant", "Cristian from work") into
 ranked candidate contacts with email — the roadmap's near-essential recipient
 resolution primitive.
@@ -141,7 +141,7 @@ orchestrator concern, not a per-connector feature).
 - `sync.ts` — incremental index + embedding; `sourceHash`, `loadEmbedConfig`.
 - `search.ts` — hybrid FTS+vector+RRF (filters pre-limit).
 - `resolve.ts` — `resolveRecipient` over hybridSearch (email-bearing, ranked).
-- `applescript.ts` — pure create/update builders + `mapContactsError`; runners via `@llm-wiki/applescript`.
+- `applescript.ts` — pure create/update builders + `mapContactsError`; runners via `@steward/applescript`.
 - `args.ts` — argument validation.
 - `cli.ts` — `index` / `sync` / `status`.
 - `index.ts` — MCP server + tool registration.
@@ -149,9 +149,9 @@ orchestrator concern, not a per-connector feature).
 
 ## Reuse (no duplication)
 
-- `@llm-wiki/applescript` — `esc`, `runOsa` (with injected `mapContactsError`).
-- `@llm-wiki/search` — `rrf`, `embedText`/`embedTexts`, `VectorStore`.
-- `@llm-wiki/embedding` — stays pure (no sqlite there).
+- `@steward/applescript` — `esc`, `runOsa` (with injected `mapContactsError`).
+- `@steward/search` — `rrf`, `embedText`/`embedTexts`, `VectorStore`.
+- `@steward/embedding` — stays pure (no sqlite there).
 - Mirror calendar-mcp's `index-db`/`sync`/`search` structure (same patterns); do
   not import calendar-mcp internals — contacts shapes differ, but the design is
   parallel so a reader who knows calendar-mcp understands this immediately.

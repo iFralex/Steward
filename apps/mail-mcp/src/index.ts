@@ -16,7 +16,7 @@ import { Mail } from "./mail.ts";
 import type { ReadArgs, ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } from "./types.ts";
 import { enrichmentReady } from "./capabilities.ts";
 import { usesAdvancedFilters } from "./advanced-args.ts";
-import { WriteOpsStore } from "@llm-wiki/write-ops";
+import { WriteOpsStore } from "@steward/write-ops";
 
 // Open the read-only Store once at startup if the DB exists.
 // send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.

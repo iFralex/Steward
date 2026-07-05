@@ -1,15 +1,23 @@
 /**
  * A file a tool produced (e.g. a saved attachment), served by the host at
- * /file/<token>. Click the name to preview in a tab; "Apri" opens it in the
- * macOS default app; "Finder" reveals it; and the chip is draggable so dropping
- * it on Finder copies the file out (Chrome/Edge via DownloadURL; Safari ignores
- * that, but open/preview/reveal still work).
+ * /file/<token>. Click the name to open/preview it; on the Mac "Apri" opens it in
+ * the native app and "Finder" reveals it; on the phone those Mac-only actions are
+ * hidden and a download icon takes their place. The chip is draggable so dropping
+ * it on Finder copies the file out.
  */
+import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { ChannelFile } from "@llm-wiki/protocol";
+import { authTokenKey, isLocalClient } from "@/lib/auth";
+import { hostHttpBase } from "@/lib/host-url";
+import type { ChannelFile } from "@steward/protocol";
 
-const HTTP_BASE = (import.meta.env.VITE_HOST_URL ?? "ws://127.0.0.1:4317").replace(/^ws/, "http");
-const fileUrl = (token: string) => `${HTTP_BASE}/file/${token}`;
+// /file/<fileToken> is a gated data route; an <img>/<a> can't set an Authorization
+// header, so the host's auth token rides along as a query param instead. The base
+// is origin-aware so the URL resolves to the Mac's address from the phone too.
+const fileUrl = (fileToken: string) => {
+  const auth = localStorage.getItem(authTokenKey);
+  return `${hostHttpBase()}/file/${fileToken}${auth ? `?token=${encodeURIComponent(auth)}` : ""}`;
+};
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -37,6 +45,7 @@ export function FileChip({
   onReveal: (token: string) => void;
 }) {
   const url = fileUrl(file.token);
+  const local = isLocalClient(); // Mac-only actions (native open / Finder) hidden on the phone
   return (
     <div
       draggable
@@ -58,13 +67,28 @@ export function FileChip({
         type="button"
         onClick={() => window.open(url, "_blank")}
         className="min-w-0 flex-1 truncate text-left font-medium hover:underline"
-        title="Anteprima nel browser"
+        title="Apri il file"
       >
         {file.name}
       </button>
       <span className="text-muted-foreground tabular-nums">{fmtSize(file.size)}</span>
-      <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onOpen(file.token)} title="Apri nell'app di sistema">Apri</Button>
-      <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title="Mostra nel Finder">Finder</Button>
+      {local ? (
+        <>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onOpen(file.token)} title="Apri nell'app di sistema">Apri</Button>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title="Mostra nel Finder">Finder</Button>
+        </>
+      ) : (
+        <a
+          href={url}
+          download={file.name}
+          onClick={(e) => e.stopPropagation()}
+          className="text-muted-foreground hover:text-foreground rounded p-1"
+          title="Scarica il file"
+          aria-label="Scarica il file"
+        >
+          <Download className="size-4" />
+        </a>
+      )}
     </div>
   );
 }

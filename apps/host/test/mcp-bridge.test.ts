@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { buildMcpBridge } from "@llm-wiki/mcp-bridge";
+import { buildMcpBridge } from "@steward/mcp-bridge";
 
 const echo = fileURLToPath(new URL("./fixtures/echo-mcp-server.mts", import.meta.url));
 

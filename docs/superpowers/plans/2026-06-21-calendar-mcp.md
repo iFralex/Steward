@@ -6,7 +6,7 @@
 
 **Architecture:** Reads come from Apple's `Calendar.sqlitedb` (read-only, Full Disk Access); writes go through AppleScript (`osascript`, Automation permission); hybrid keyword+semantic search runs over a connector-owned sidecar index DB (FTS5 + sqlite-vec) populated by a sync step that embeds via the LLM gateway. Genuinely-shared pieces (AppleScript runner/escaper, RRF, sqlite-vec vector store, embed wrappers) are first extracted into `packages/applescript` and `packages/search` so the mail apps and calendar-mcp share them instead of duplicating.
 
-**Tech Stack:** TypeScript (ESM, `tsx`), `@modelcontextprotocol/sdk`, `better-sqlite3`, `sqlite-vec`, `@llm-wiki/embedding`, `node:test`, macOS `osascript`.
+**Tech Stack:** TypeScript (ESM, `tsx`), `@modelcontextprotocol/sdk`, `better-sqlite3`, `sqlite-vec`, `@steward/embedding`, `node:test`, macOS `osascript`.
 
 ## Global Constraints
 
@@ -67,7 +67,7 @@
 `packages/applescript/package.json`:
 ```json
 {
-  "name": "@llm-wiki/applescript",
+  "name": "@steward/applescript",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -237,7 +237,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Refactor mail-mcp onto `@llm-wiki/applescript`
+### Task 2: Refactor mail-mcp onto `@steward/applescript`
 
 **Files:**
 - Modify: `apps/mail-mcp/src/osascript.ts`
@@ -245,18 +245,18 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Modify: `apps/mail-mcp/package.json` (add dependency)
 
 **Interfaces:**
-- Consumes: `esc`, `runOsa`, `OsaExec` from `@llm-wiki/applescript`.
+- Consumes: `esc`, `runOsa`, `OsaExec` from `@steward/applescript`.
 - Produces: unchanged public surface of `osascript.ts` (`runOsa`, `mapOsaError`, `OsaExec`) and `applescript.ts` (`esc`).
 
 - [ ] **Step 1: Add the dependency**
 
-In `apps/mail-mcp/package.json` `dependencies`, add: `"@llm-wiki/applescript": "*"`. Run `npm install`.
+In `apps/mail-mcp/package.json` `dependencies`, add: `"@steward/applescript": "*"`. Run `npm install`.
 
 - [ ] **Step 2: Rewrite `osascript.ts` to delegate, keeping Mail mapping**
 
 Replace the whole `apps/mail-mcp/src/osascript.ts` with:
 ```ts
-import { runOsa as sharedRunOsa, type OsaExec, type OsaOptions } from "@llm-wiki/applescript";
+import { runOsa as sharedRunOsa, type OsaExec, type OsaOptions } from "@steward/applescript";
 
 export type { OsaExec };
 
@@ -289,7 +289,7 @@ export async function runOsa(
 
 In `apps/mail-mcp/src/applescript.ts`, delete the local `export function esc(...)` block (around line 13) and add to the top imports:
 ```ts
-import { esc } from "@llm-wiki/applescript";
+import { esc } from "@steward/applescript";
 ```
 Keep `export { esc };` at the end of the file if other modules import `esc` from `./applescript.ts` — verify with `grep -rn "esc" apps/mail-mcp/src` and preserve the existing import surface by re-exporting.
 
@@ -302,7 +302,7 @@ Expected: all existing tests pass; tsc clean. The retry-message wording for time
 
 ```bash
 git add apps/mail-mcp package.json package-lock.json
-git commit -m "refactor(mail-mcp): consume shared @llm-wiki/applescript (esc, runOsa)
+git commit -m "refactor(mail-mcp): consume shared @steward/applescript (esc, runOsa)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -327,7 +327,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 `packages/search/package.json`:
 ```json
 {
-  "name": "@llm-wiki/search",
+  "name": "@steward/search",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -337,7 +337,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/embedding": "*",
+    "@steward/embedding": "*",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.7-alpha.2"
   },
@@ -449,7 +449,7 @@ export function rrf(rankings: string[][], k = 60): { id: string; score: number }
 
 `packages/search/src/embed-client.ts`:
 ```ts
-import { fetchEmbedding, fetchEmbeddingBatch, type EmbeddingConfig } from "@llm-wiki/embedding";
+import { fetchEmbedding, fetchEmbeddingBatch, type EmbeddingConfig } from "@steward/embedding";
 
 export async function embedText(
   text: string,
@@ -553,7 +553,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Refactor mail-mcp + mail-mirror onto `@llm-wiki/search`
+### Task 4: Refactor mail-mcp + mail-mirror onto `@steward/search`
 
 **Files:**
 - Modify: `apps/mail-mcp/src/rrf.ts` (re-export)
@@ -562,29 +562,29 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Modify: `apps/mail-mirror/src/store.ts` (use `VectorStore`)
 
 **Interfaces:**
-- Consumes: `rrf`, `embedText`, `embedTexts`, `VectorStore` from `@llm-wiki/search`.
+- Consumes: `rrf`, `embedText`, `embedTexts`, `VectorStore` from `@steward/search`.
 - Produces: unchanged public surface of `mail-mcp/src/rrf.ts`, `mail-mirror/src/embed-client.ts`, and `Store` (`upsertEmbedding`, `knn`, `enableVectors`, `ensureVecTable`).
 
 - [ ] **Step 1: Add dependency to both apps**
 
-Add `"@llm-wiki/search": "*"` to `dependencies` in both `apps/mail-mcp/package.json` and `apps/mail-mirror/package.json`. Run `npm install`.
+Add `"@steward/search": "*"` to `dependencies` in both `apps/mail-mcp/package.json` and `apps/mail-mirror/package.json`. Run `npm install`.
 
 - [ ] **Step 2: Re-export rrf and embed-client**
 
 Replace `apps/mail-mcp/src/rrf.ts` contents with:
 ```ts
-export { rrf } from "@llm-wiki/search";
+export { rrf } from "@steward/search";
 ```
 Replace `apps/mail-mirror/src/embed-client.ts` contents with:
 ```ts
-export { embedText, embedTexts } from "@llm-wiki/search";
+export { embedText, embedTexts } from "@steward/search";
 ```
 
 - [ ] **Step 3: Use VectorStore inside mail-mirror Store**
 
 In `apps/mail-mirror/src/store.ts`:
 - Remove `import * as sqliteVec from "sqlite-vec";` and the `private vecLoaded = false;` field.
-- Add `import { VectorStore } from "@llm-wiki/search";` and a field `private vec: VectorStore;`.
+- Add `import { VectorStore } from "@steward/search";` and a field `private vec: VectorStore;`.
 - In the constructor (after `this.raw` is created), add:
 ```ts
 this.vec = new VectorStore(this.raw, {
@@ -617,7 +617,7 @@ Expected: both green; tsc clean. (mail-mirror has 70 tests after the gateway-wir
 
 ```bash
 git add apps/mail-mcp apps/mail-mirror package.json package-lock.json
-git commit -m "refactor(mail): consume shared @llm-wiki/search (rrf, embed, VectorStore)
+git commit -m "refactor(mail): consume shared @steward/search (rrf, embed, VectorStore)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -640,7 +640,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 `apps/calendar-mcp/package.json`:
 ```json
 {
-  "name": "@llm-wiki/calendar-mcp",
+  "name": "@steward/calendar-mcp",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -650,9 +650,9 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@llm-wiki/applescript": "*",
-    "@llm-wiki/embedding": "*",
-    "@llm-wiki/search": "*",
+    "@steward/applescript": "*",
+    "@steward/embedding": "*",
+    "@steward/search": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.7-alpha.2"
@@ -933,7 +933,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/calendar-mcp/test/index-db.test.ts`
 
 **Interfaces:**
-- Consumes: `VectorStore` from `@llm-wiki/search`; `CalEvent` from `./types.ts`.
+- Consumes: `VectorStore` from `@steward/search`; `CalEvent` from `./types.ts`.
 - Produces: `class IndexDb` with `static open(path: string): IndexDb`, `getState/setState`, `upsertEvent(e: CalEvent, sourceHash: string): number` (returns rowid), `deleteMissing(keepUids: string[]): number`, `allUids(): string[]`, `embedStateFor(uid): { sourceHash: string } | undefined`, `recordEmbed(uid, sourceHash, dim, model)`, `vectors: VectorStore`, `ftsSearch(query: string, limit: number): string[]` (uids best-first), `rowidToUid(rowid): string | undefined`, `uidToRowid(uid): number | undefined`, `close()`.
 
 - [ ] **Step 1: Write the failing test**
@@ -987,7 +987,7 @@ Expected: FAIL — module not found.
 `apps/calendar-mcp/src/index-db.ts`:
 ```ts
 import Database from "better-sqlite3";
-import { VectorStore } from "@llm-wiki/search";
+import { VectorStore } from "@steward/search";
 import type { CalEvent } from "./types.ts";
 
 export class IndexDb {
@@ -1113,7 +1113,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/calendar-mcp/test/sync.test.ts`
 
 **Interfaces:**
-- Consumes: `AppleStore`, `IndexDb`, `CalEvent`; `embedTexts` from `@llm-wiki/search`; `EmbeddingConfig` from `@llm-wiki/embedding`.
+- Consumes: `AppleStore`, `IndexDb`, `CalEvent`; `embedTexts` from `@steward/search`; `EmbeddingConfig` from `@steward/embedding`.
 - Produces: `sourceHash(e: CalEvent): string`; `loadEmbedConfig(env?): EmbeddingConfig | null`; `syncIndex(deps: { store: { allForIndex(): CalEvent[] }; index: IndexDb; embedConfig: EmbeddingConfig | null; embedBatch?: (texts: string[], cfg: EmbeddingConfig) => Promise<(number[] | null)[]> }): Promise<{ upserted: number; embedded: number; deleted: number }>`.
 
 - [ ] **Step 1: Write the failing test (injected embedder, no network)**
@@ -1164,7 +1164,7 @@ Expected: FAIL — module not found.
 
 `apps/calendar-mcp/src/embed-config.ts` (mirror mail-mirror's default-gateway behaviour):
 ```ts
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import type { EmbeddingConfig } from "@steward/embedding";
 
 export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig | null {
   const endpoint = env.MAIL_EMBED_ENDPOINT ?? "http://127.0.0.1:4000/v1/embeddings";
@@ -1180,8 +1180,8 @@ export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): Embedding
 `apps/calendar-mcp/src/sync.ts`:
 ```ts
 import { createHash } from "node:crypto";
-import { embedTexts } from "@llm-wiki/search";
-import type { EmbeddingConfig } from "@llm-wiki/embedding";
+import { embedTexts } from "@steward/search";
+import type { EmbeddingConfig } from "@steward/embedding";
 import type { IndexDb } from "./index-db.ts";
 import type { CalEvent } from "./types.ts";
 
@@ -1255,7 +1255,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/calendar-mcp/test/search.test.ts`
 
 **Interfaces:**
-- Consumes: `IndexDb`, `rrf` from `@llm-wiki/search`.
+- Consumes: `IndexDb`, `rrf` from `@steward/search`.
 - Produces: `hybridSearch(deps: { index: IndexDb; embedQuery?: (text: string) => Promise<number[] | null> }, query: string, limit: number): Promise<string[]>` (uids best-first).
 
 - [ ] **Step 1: Write the failing test**
@@ -1306,7 +1306,7 @@ Expected: FAIL — module not found.
 
 `apps/calendar-mcp/src/search.ts`:
 ```ts
-import { rrf } from "@llm-wiki/search";
+import { rrf } from "@steward/search";
 import type { IndexDb } from "./index-db.ts";
 
 /** Escape a free-text query so it is safe as an FTS5 MATCH parameter (quote each token). */
@@ -1363,7 +1363,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Test: `apps/calendar-mcp/test/applescript.test.ts`
 
 **Interfaces:**
-- Consumes: `esc`, `runOsa`, `OsaExec` from `@llm-wiki/applescript`.
+- Consumes: `esc`, `runOsa`, `OsaExec` from `@steward/applescript`.
 - Produces: `mapCalendarError(stderr: string): string`; pure builders `buildCreate(a: CreateArgs): string`, `buildUpdate(a: UpdateArgs): string`, `buildDelete(uid: string): string`; runners `createEvent(a, exec?)`, `updateEvent(a, exec?)`, `deleteEvent(uid, exec?)`. Types `CreateArgs { calendar: string; summary: string; start: string; end: string; allDay?: boolean; location?: string; description?: string; url?: string; recurrence?: string }`, `UpdateArgs { uid: string; summary?: string; start?: string; end?: string; location?: string; description?: string; url?: string; recurrence?: string }`.
 
 - [ ] **Step 1: Write the failing test (builders are pure; runner uses injected exec)**
@@ -1407,7 +1407,7 @@ Expected: FAIL — module not found.
 
 `apps/calendar-mcp/src/applescript.ts`:
 ```ts
-import { esc, runOsa, type OsaExec } from "@llm-wiki/applescript";
+import { esc, runOsa, type OsaExec } from "@steward/applescript";
 
 export interface CreateArgs {
   calendar: string; summary: string; start: string; end: string;
@@ -1727,7 +1727,7 @@ import { AppleStore } from "./apple-store.ts";
 import { IndexDb } from "./index-db.ts";
 import { hybridSearch } from "./search.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
-import { embedText } from "@llm-wiki/search";
+import { embedText } from "@steward/search";
 import { createEvent, updateEvent, deleteEvent } from "./applescript.ts";
 import { parseSearchArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { applePath, indexDbPath } from "./paths.ts";

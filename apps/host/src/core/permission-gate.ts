@@ -5,7 +5,7 @@
  * requestApproval is injected so the wrapper stays pure/testable.
  */
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { ApprovalDecision } from "@llm-wiki/protocol";
+import type { ApprovalDecision } from "@steward/protocol";
 import { decideTool, type ToolPolicy } from "./tool-policy.ts";
 
 export interface ApprovalRequest {

@@ -8,7 +8,7 @@ import { IndexDb } from "./index-db.ts";
 import { hybridSearch } from "./search.ts";
 import { resolveRecipient } from "./resolve.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
-import { embedText } from "@llm-wiki/search";
+import { embedText } from "@steward/search";
 import { createContact, updateContact } from "./applescript.ts";
 import { parseSearchArgs, parseResolveArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { sourceDbPaths, indexDbPath } from "./paths.ts";
@@ -58,7 +58,7 @@ function contactsPermissionError(err?: unknown): string {
   const detail = err instanceof Error ? err.message : err ? String(err) : "";
   return [
     "Apple Contacts store is not readable.",
-    "Grant Full Disk Access to LLM Wiki.app in System Settings -> Privacy & Security -> Full Disk Access, then restart LLM Wiki.",
+    "Grant Full Disk Access to Steward.app in System Settings -> Privacy & Security -> Full Disk Access, then restart Steward.",
     detail ? `Detail: ${detail}` : "",
   ].filter(Boolean).join(" ");
 }

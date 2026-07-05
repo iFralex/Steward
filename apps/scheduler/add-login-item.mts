@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
-const APP_NAME = "LLM Wiki Scheduler";
+const APP_NAME = "Steward Scheduler";
 const app = join(homedir(), "Applications", `${APP_NAME}.app`);
 const script = `tell application "System Events"
   if not (exists login item "${APP_NAME}") then

@@ -1,5 +1,5 @@
 import { isAbsolute, normalize } from "node:path";
-import { isForbiddenWriteDir } from "@llm-wiki/sensitive-path";
+import { isForbiddenWriteDir } from "@steward/sensitive-path";
 import type { MessageRef } from "./types.ts";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

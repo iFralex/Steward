@@ -105,14 +105,14 @@ green; nothing sqlite-related goes there.
 
 ### `packages/search`
 - `rrf(rankings, k?)` (moved verbatim from `mail-mcp/src/rrf.ts`).
-- `embedText` / `embedTexts` null-on-failure wrappers over `@llm-wiki/embedding`
+- `embedText` / `embedTexts` null-on-failure wrappers over `@steward/embedding`
   (moved from `mail-mirror/src/embed-client.ts`).
 - `VectorStore` helper: the generic sqlite-vec logic currently inlined in
   `mail-mirror/src/store.ts` — load the extension, `CREATE VIRTUAL TABLE … USING
   vec0(embedding float[dim])`, upsert by rowid, KNN (`embedding MATCH ? ORDER BY
   distance LIMIT ?`), and dimension-change reset — parameterized by table name
   and rowid mapping. mail-mirror's `Store` uses it internally for `vec_messages`.
-- Dependencies: `better-sqlite3`, `sqlite-vec`, `@llm-wiki/embedding`.
+- Dependencies: `better-sqlite3`, `sqlite-vec`, `@steward/embedding`.
 
 ### Refactor obligations
 - mail-mcp: import `rrf`, `runOsa`, `esc` from the packages; pass its Mail error

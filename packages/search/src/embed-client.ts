@@ -1,4 +1,4 @@
-import { fetchEmbedding, fetchEmbeddingBatch, type EmbeddingConfig } from "@llm-wiki/embedding";
+import { fetchEmbedding, fetchEmbeddingBatch, type EmbeddingConfig } from "@steward/embedding";
 
 export async function embedText(
   text: string,

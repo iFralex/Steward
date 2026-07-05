@@ -1,4 +1,4 @@
-import { rrf } from "@llm-wiki/search";
+import { rrf } from "@steward/search";
 import type { IndexDb } from "./index-db.ts";
 
 const CANDIDATE_POOL = 200;

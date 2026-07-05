@@ -63,7 +63,7 @@ Note on `account`: the on-disk path gives the account **UUID** dir and the `.mbo
 `apps/mail-mirror/package.json`:
 ```json
 {
-  "name": "@llm-wiki/mail-mirror",
+  "name": "@steward/mail-mirror",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -1638,7 +1638,7 @@ Local SQLite mirror of Apple Mail (sub-project 1/3). See
 2. Grant **Full Disk Access** to the process that runs the watcher (the
    `node`/`tsx` binary, or the Terminal/daemon launching it) in
    System Settings -> Privacy & Security -> Full Disk Access.
-3. Initial backfill (recent-first): `npm run -w @llm-wiki/mail-mirror exec -- node --import tsx src/cli.ts backfill`
+3. Initial backfill (recent-first): `npm run -w @steward/mail-mirror exec -- node --import tsx src/cli.ts backfill`
    or `cd apps/mail-mirror && node --import tsx src/cli.ts backfill`.
 4. Check progress: `node --import tsx src/cli.ts status`.
 
