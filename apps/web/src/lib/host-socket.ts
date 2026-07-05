@@ -3,7 +3,7 @@
  * event contract. Accumulates the chat transcript, tracks pending tool
  * approvals, and exposes `sendMessage` / `respondApproval`.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch } from "@/lib/auth";
 import { uid } from "@/lib/utils";
 import type {
@@ -409,8 +409,16 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
   // Approvals/questions are per-chat (chatId is optional for back-compat): a
   // card with no chatId is treated as belonging to whatever chat is active so
   // it isn't silently dropped, and it stays visible across chat switches.
-  const visibleApprovals = approvals.filter((a) => !a.chatId || a.chatId === activeChatId);
-  const visibleQuestions = questions.filter((q) => !q.chatId || q.chatId === activeChatId);
+  // Memoized: fresh .filter() arrays every render would retrigger any consumer
+  // effect that depends on them (e.g. the chat auto-scroll) on EVERY render.
+  const visibleApprovals = useMemo(
+    () => approvals.filter((a) => !a.chatId || a.chatId === activeChatId),
+    [approvals, activeChatId],
+  );
+  const visibleQuestions = useMemo(
+    () => questions.filter((q) => !q.chatId || q.chatId === activeChatId),
+    [questions, activeChatId],
+  );
 
   return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, historyLoading, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
 }
