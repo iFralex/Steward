@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useHostSocket } from "@/lib/host-socket";
@@ -82,13 +83,27 @@ function App() {
     : tab === "actions" ? "action"
     : morePane;
 
-  const selectChat = (id: string) => {
+  // flushSync commits the pane switch before .focus(): the composer may not be
+  // in the DOM yet (action/usage pane, or mobile list screen), and iOS only
+  // opens the keyboard for a focus that happens inside the user's tap.
+  const selectChat = (id: string, opts?: { focus?: boolean }) => {
     if (id !== host.activeChatId) setSplitActionId(null);
+    flushSync(() => {
+      setPane("chat");
+      setMobileDrill(true);
+    });
     host.selectChat(id);
-    setPane("chat");
-    setMobileDrill(true);
+    if (isDesktop && opts?.focus !== false) focusComposer();
   };
-  const createChat = () => { setSplitActionId(null); setPane("chat"); host.createChat(); };
+  const createChat = () => {
+    flushSync(() => {
+      setSplitActionId(null);
+      setPane("chat");
+      setMobileDrill(true);
+    });
+    host.createChat();
+    focusComposer();
+  };
   const selectAction = (a: ActionCenterItem) => {
     setSelectedActionId(a.id);
     if (a.status === "new") host.markAction(a.id, "read");
@@ -184,7 +199,9 @@ function App() {
     if (list.length === 0) return;
     const idx = list.findIndex((c) => c.id === host.activeChatId);
     const next = list[Math.min(Math.max((idx < 0 ? 0 : idx) + delta, 0), list.length - 1)];
-    if (next && next.id !== host.activeChatId) selectChat(next.id);
+    // No composer focus here: j/k are for stepping through chats, and focusing
+    // the input would swallow the next keypress as text.
+    if (next && next.id !== host.activeChatId) selectChat(next.id, { focus: false });
   };
 
   // Global keyboard shortcuts. Single-key (no Cmd/Ctrl) so they don't clash with
