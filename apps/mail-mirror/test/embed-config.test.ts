@@ -20,3 +20,12 @@ test("reads endpoint/model/key/dim from env", () => {
   assert.equal(cfg?.apiKey, "k");
   assert.equal(cfg?.outputDimensionality, 768);
 });
+
+test("loadEmbedConfig attaches usage attribution extraHeaders with the caller's service", () => {
+  const cfg = loadEmbedConfig({}, "mail-mcp");
+  assert.ok(cfg);
+  assert.equal(cfg.extraHeaders?.["x-usage-service"], "mail-mcp");
+  assert.equal(cfg.extraHeaders?.["x-usage-action"], "embed");
+  const def = loadEmbedConfig({});
+  assert.equal(def?.extraHeaders?.["x-usage-service"], "mail-mirror");
+});

@@ -72,6 +72,28 @@ export function getLastEmbeddingError(): string | null {
   return lastEmbeddingError
 }
 
+// ── Usage attribution (gateway ledger) ──────────────────────────────────
+//
+// The steward gateway meters embedding calls by attribution headers so
+// its usage ledger can label the volume. Only the local gateway ever
+// receives them — never third-party endpoints (OpenAI, Google, etc).
+// The wiki uses LITERAL header strings rather than importing
+// @steward/protocol: this package must stay importable outside the
+// monorepo (it ships standalone as a Tauri app).
+const STEWARD_GATEWAY_ORIGINS = new Set(["http://127.0.0.1:4000", "http://localhost:4000"])
+
+export function withUsageAttribution(cfg: EmbeddingConfig): EmbeddingConfig {
+  try {
+    if (!cfg.endpoint || !STEWARD_GATEWAY_ORIGINS.has(new URL(cfg.endpoint).origin)) return cfg
+  } catch {
+    return cfg
+  }
+  return {
+    ...cfg,
+    extraHeaders: { ...(cfg.extraHeaders ?? {}), "x-usage-service": "llm-wiki", "x-usage-action": "embed" },
+  }
+}
+
 export function resetEmbeddingOptimizeAccountingForTests(): void {
   incrementalOptimizeCounts.clear()
 }
@@ -94,7 +116,7 @@ export async function fetchEmbedding(
   maxRetries = 3,
 ): Promise<number[] | null> {
   const httpFetch = await getHttpFetch()
-  const result = await coreFetchEmbedding(text, cfg, {
+  const result = await coreFetchEmbedding(text, withUsageAttribution(cfg), {
     fetch: httpFetch,
     originHeader: localLlmOriginHeader,
     isNetworkError: isFetchNetworkError,

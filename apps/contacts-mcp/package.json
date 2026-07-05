@@ -11,6 +11,7 @@
   "dependencies": {
     "@steward/applescript": "*",
     "@steward/embedding": "*",
+    "@steward/protocol": "*",
     "@steward/search": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",

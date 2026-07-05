@@ -27,7 +27,7 @@ const store = dbReady ? Store.openReadonly(path) : Store.open(":memory:");
 if (dbReady) store.enableVectors();
 const enriched = dbReady && enrichmentReady(store);
 
-const embedCfg = loadEmbedConfig();
+const embedCfg = loadEmbedConfig(process.env, "mail-mcp");
 const embedQuery = embedCfg ? (text: string) => embedText(text, embedCfg) : undefined;
 
 const writeOps = WriteOpsStore.open();
