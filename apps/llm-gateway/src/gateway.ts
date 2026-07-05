@@ -184,6 +184,9 @@ function prepareProviderBody(body: Json, target: GatewayModel): Json {
   if (Array.isArray(next.tools) && next.tools.length > 0) {
     next.thinking = { type: "disabled" };
   }
+  if (next.stream === true && next.stream_options === undefined) {
+    next.stream_options = { include_usage: true };
+  }
   return next;
 }
 
@@ -234,7 +237,6 @@ async function proxyJson(path: string, body: Json, res: ServerResponse, meta: Ca
   });
 }
 
-// `meta` is threaded through but unused until Task 4 wires up streaming metering.
 async function proxyStream(path: string, body: Json, res: ServerResponse, meta: CallMeta): Promise<void> {
   const requestedModel = typeof body.model === "string" ? body.model : "";
   const attempts = attemptsFor(requestedModel);
@@ -245,7 +247,7 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
 
   let lastStatus = 502;
   let lastText = "";
-  for (const { target } of attempts) {
+  for (const { name, target } of attempts) {
     const base = directOpenAIBaseUrl(target);
     if (!base) { lastText = `no route for provider ${target.provider}`; continue; }
 
@@ -253,11 +255,13 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
     try {
       const upstream = await callProvider(base, path, body, target);
       if (upstream.ok) {
-        await pipeStreamingResponse(upstream, res);
+        const { usage, model } = await pipeStreamingResponse(upstream, res);
+        recordCall(meta, name, model ?? target.model, 200, true, usage);
         return;
       }
       const text = await upstream.text();
       if (!shouldFallback(upstream.status)) {
+        recordCall(meta, name, target.model, upstream.status, false, null);
         res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
         res.end(text);
         return;
@@ -275,6 +279,7 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
       const text = await upstream.text();
       if (!upstream.ok) {
         if (!shouldFallback(upstream.status)) {
+          recordCall(meta, name, target.model, upstream.status, false, null);
           res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
           res.end(text);
           return;
@@ -283,6 +288,9 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
         lastText = text;
         continue;
       }
+      let parsed: { usage?: unknown; model?: unknown } = {};
+      try { parsed = JSON.parse(text) as typeof parsed; } catch { /* writeSyntheticSse re-parses and reports */ }
+      recordCall(meta, name, typeof parsed.model === "string" ? parsed.model : target.model, 200, true, parsed.usage ?? null);
       writeSyntheticSse(text, res);
       return;
     } catch (err) {
@@ -291,6 +299,7 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
     }
   }
 
+  recordCall(meta, null, "", lastStatus, false, null);
   json(res, lastStatus, {
     error: {
       message: `All gateway streaming attempts failed for ${requestedModel}: ${lastText.slice(0, 500)}`,
@@ -299,22 +308,39 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
   });
 }
 
-async function pipeStreamingResponse(upstream: Response, res: ServerResponse): Promise<void> {
+async function pipeStreamingResponse(upstream: Response, res: ServerResponse): Promise<{ usage: unknown; model: string | null }> {
   res.writeHead(upstream.status, {
     "content-type": upstream.headers.get("content-type") ?? "text/event-stream",
     "cache-control": upstream.headers.get("cache-control") ?? "no-cache",
   });
   if (!upstream.body) {
     res.end();
-    return;
+    return { usage: null, model: null };
   }
   const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  // Keep only the last 64KB of SSE text: the usage block arrives in the final
+  // chunk, and capping the buffer keeps memory flat on long streams.
+  let tail = "";
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
     res.write(Buffer.from(value));
+    tail = (tail + decoder.decode(value, { stream: true })).slice(-65536);
   }
   res.end();
+
+  let usage: unknown = null;
+  let model: string | null = null;
+  for (const line of tail.split("\n")) {
+    if (!line.startsWith("data: ") || line.startsWith("data: [DONE]")) continue;
+    try {
+      const obj = JSON.parse(line.slice(6)) as { usage?: unknown; model?: unknown };
+      if (obj.usage) usage = obj.usage;
+      if (typeof obj.model === "string") model = obj.model;
+    } catch { /* first line may be truncated by the 64KB cap */ }
+  }
+  return { usage, model };
 }
 
 function writeSyntheticSse(upstreamText: string, res: ServerResponse): void {
