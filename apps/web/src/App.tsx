@@ -72,6 +72,7 @@ function App() {
     : morePane;
 
   const selectChat = (id: string) => {
+    if (id !== host.activeChatId) setSplitActionId(null);
     host.selectChat(id);
     setPane("chat");
     setMobileDrill(true);
