@@ -367,7 +367,7 @@ function App() {
 
   return (
     <div className="bg-background text-foreground flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b px-4 py-3">
+      <header className="flex items-center justify-between border-b px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <h1 className="text-sm font-semibold">Steward</h1>
         <div className="flex items-center gap-3">
           {host.usage && (
@@ -502,7 +502,7 @@ function App() {
       </div>
 
       {/* Bottom nav (mobile only) */}
-      <nav className="flex border-t lg:hidden">
+      <nav className="flex border-t pb-[env(safe-area-inset-bottom)] lg:hidden">
         {([["chat", "💬 Chat"], ["actions", "⚡ Azioni"], ["more", "⚙ Altro"]] as const).map(([t, label]) => (
           <button
             key={t}
@@ -510,7 +510,7 @@ function App() {
             onClick={() => { setTab(t); setMobileDrill(false); }}
             aria-current={tab === t ? "page" : undefined}
             className={cn(
-              "relative flex-1 py-2.5 text-center text-xs transition",
+              "relative flex-1 py-4 text-center text-xs transition",
               tab === t ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
