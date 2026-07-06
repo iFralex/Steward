@@ -535,7 +535,8 @@
         "remoteUrlHint": "备份仓库的 HTTPS 地址。请确保已配置 gh 凭证助手（gh auth setup-git）。",
         "runNow": "立即执行备份",
         "running": "备份中…",
-        "runOk": "备份已成功启动。"
+        "runOk": "备份已成功启动。",
+        "lastSuccess": "上次成功推送"
       },
       "output": {
         "title": "输出偏好",
