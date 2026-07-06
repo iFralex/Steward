@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/logo.png" alt="Steward logo" width="96" /></p>
+
 # Steward — local-first personal agent for macOS
 
 ![Steward chat, with the sidebar full of past conversations](docs/images/chat-home.png)
