@@ -73,13 +73,23 @@ function notifyNewProposals(store: ActionStore, items: ActionCenterItem[]): void
   }
 }
 
-interface ProposedStep {
+interface ProposedToolStep {
   id: string;
   label: string;
+  kind?: "tool";
   tool: string;
   input: Record<string, unknown>;
   writes: boolean;
 }
+
+interface ProposedManualStep {
+  id: string;
+  label: string;
+  kind: "manual";
+  links?: { url: string; label?: string }[];
+}
+
+type ProposedStep = ProposedToolStep | ProposedManualStep;
 
 interface ProposedAction {
   id: string;
@@ -92,11 +102,12 @@ interface ProposedAction {
 const REVISE_PROPOSAL_SYSTEM = `You revise exactly one saved Action Center proposed action.
 Return ONLY JSON:
 {"proposal":{"id": string, "label": string, "summary": string, "confidence": "low"|"medium"|"high",
-"steps":[{"id": string, "label": string, "tool": string, "input": object, "writes": boolean}]}}.
+"steps":[{"id": string, "label": string, "kind": "tool"|"manual", "tool": string|null, "input": object|null, "writes": boolean|null, "links": [{"url": string, "label": string|null}]|null}]}}.
 Rules:
 - Revise only the selected proposal according to the user's instruction.
 - Preserve the same proposal id.
 - Preserve executable write-tool steps unless the instruction requires changing the tool.
+- Preserve manual/link steps (kind:"manual") exactly as given unless the instruction explicitly asks to change them. Never invent a links URL that was not already present on the step.
 - Do not execute anything.
 - Do not include read-only gathering steps.
 - Tool inputs must be ready for approval/execution.`;
@@ -122,6 +133,10 @@ export function markAction(id: number, status: ActionStatus): ActionCenterState 
   return loadActionCenterState();
 }
 
+export function executableSteps(steps: ProposedStep[]): ProposedToolStep[] {
+  return steps.filter((s): s is ProposedToolStep => s.kind !== "manual");
+}
+
 export async function executeActionProposal(args: {
   config: HostConfig;
   session: Session;
@@ -139,7 +154,7 @@ export async function executeActionProposal(args: {
   const record = (msg: PersistedMessage) => { if (args.chatId) chatStore().addMessage(args.chatId, msg); };
   record({ id: randomUUID(), role: "user", text: `Esegui: ${proposal.label}` });
 
-  for (const step of proposal.steps) {
+  for (const step of executableSteps(proposal.steps)) {
     const decision = decideTool(args.config.policy, step.tool);
     if (decision === "deny") throw new Error(`Tool denied by policy: ${step.tool}`);
 
@@ -308,7 +323,7 @@ function updateActionProposal(action: ActionCenterItem, revised: ProposedAction,
 function buildRevisionPrompt(
   action: ActionCenterItem,
   proposal: ProposedAction,
-  step: ProposedStep,
+  step: ProposedToolStep,
   note?: string,
 ): string {
   return [
@@ -327,13 +342,28 @@ function buildRevisionPrompt(
   ].filter(Boolean).join("\n\n");
 }
 
-function normalizeStep(raw: unknown): ProposedStep | null {
+export function normalizeStep(raw: unknown): ProposedStep | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Record<string, unknown>;
+  if (s.kind === "manual") {
+    const links = Array.isArray(s.links)
+      ? s.links
+          .map((l) => (l && typeof l === "object" ? l as Record<string, unknown> : null))
+          .filter((l): l is Record<string, unknown> => !!l && typeof l.url === "string" && l.url.trim().length > 0)
+          .map((l) => (typeof l.label === "string" && l.label.trim() ? { url: (l.url as string).trim(), label: l.label.trim() } : { url: (l.url as string).trim() }))
+      : [];
+    return {
+      id: typeof s.id === "string" ? s.id : "manual-step",
+      label: typeof s.label === "string" ? s.label : "Manual step",
+      kind: "manual",
+      links,
+    };
+  }
   if (typeof s.tool !== "string") return null;
   return {
     id: typeof s.id === "string" ? s.id : s.tool,
     label: typeof s.label === "string" ? s.label : s.tool,
+    kind: "tool",
     tool: s.tool,
     input: s.input && typeof s.input === "object" && !Array.isArray(s.input) ? s.input as Record<string, unknown> : {},
     writes: s.writes !== false,
