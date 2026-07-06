@@ -216,6 +216,24 @@ The host can transcribe uploaded audio through local `whisper.cpp` when configur
 
 There is also a `/quick-send` path for shortcuts such as an iPhone Action Button. It can send text or audio into a headless chat runner. Gated writes still require approval; unattended sensitive actions time out rather than silently executing.
 
+### Audit Trail
+
+Steward keeps a redacted, queryable audit log of what happened across chat, tools, approvals and write operations.
+
+`packages/audit-log` is a shared SQLite ledger. It records:
+
+- user and assistant chat messages;
+- tool policy decisions (allow/gate/deny) and their results;
+- approval requests and responses, including timeouts;
+- write-operation lifecycle (started, confirmed, retried, failed);
+- Action Center item creation, execution and revision, including background items created by the scheduler;
+- mail-to-wiki promotion writes;
+- session, file and system events (connect, upload, open, autostart, ...).
+
+Redaction happens before anything is written to disk. Secrets (tokens, API keys, passwords) are stripped by key name, and full email or document bodies are never stored — only a short snippet, the same convention `packages/write-ops` already uses for mail bodies. The raw, unredacted payload never touches disk.
+
+The host exposes the ledger at `/audit` (filterable by actor, event type, risk, chat, tool, date range or free text). The web UI has an **Audit** page — reachable from the desktop sidebar footer and the mobile bottom-nav's "Altro" overflow — with a filterable timeline and a per-event detail view showing the redacted payload and any linked files/sources.
+
 ## Architecture
 
 ```text
@@ -259,8 +277,8 @@ There are three operating planes:
 
 | Path | Purpose |
 |---|---|
-| [apps/web](apps/web/) | React + Vite + PWA UI. Provides chat, chat list, mobile layout, Action Center, approval/question cards, tool cards, rich cards, file uploads/chips, audio recording, Usage page, System page, phone pairing, notification controls and service worker. |
-| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket sessions, runs Pi agent sessions, loads MCP tools, applies the tool policy, stores chats, records usage, handles approvals/questions, serves tokenized files, registers uploaded/local files, manages auth/pairing, push, speech transcription and system status. |
+| [apps/web](apps/web/) | React + Vite + PWA UI. Provides chat, chat list, mobile layout, Action Center, approval/question cards, tool cards, rich cards, file uploads/chips, audio recording, Usage page, Audit page, System page, phone pairing, notification controls and service worker. |
+| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket sessions, runs Pi agent sessions, loads MCP tools, applies the tool policy, stores chats, records usage, handles approvals/questions, serves tokenized files, registers uploaded/local files, manages auth/pairing, push, speech transcription, system status and the audit ledger. |
 | [packages/protocol](packages/protocol/) | Dependency-free event contract between host and clients. Keeps chat, approvals, questions, tool calls, files and Action Center state portable across future clients. |
 | [packages/mcp-bridge](packages/mcp-bridge/) | Converts stdio MCP servers into Pi custom tools named like `mcp__server__tool`. |
 | [apps/llm-gateway](apps/llm-gateway/) | Local OpenAI-compatible gateway on `:4000`. Provides `tier-1` through `tier-6`, `local-embed`, `/rates`, `/health`, `/v1/models`, chat completions and embeddings. Routes to Ollama and DeepSeek by default. |
@@ -274,6 +292,7 @@ There are three operating planes:
 | [apps/shell-mcp](apps/shell-mcp/) | Safe shell/files connector. Finds files, runs constrained read-only commands, and gates write commands. |
 | [apps/scheduler](apps/scheduler/) | Background daemon. Runs periodic CLI jobs with no-overlap scheduling, timeouts and isolated errors. |
 | [packages/write-ops](packages/write-ops/) | Journal and confirm/retry state machine for AppleScript writes such as mail sends/replies/scheduled sends and calendar CRUD. |
+| [packages/audit-log](packages/audit-log/) | Shared, redacted SQLite audit ledger used by the host, write-ops, action-center and mail-promoter; queried by the host's `/audit` endpoint and the web Audit page. |
 | [packages/usage-ledger](packages/usage-ledger/) | Per-turn usage ledger. Stores tokens, cost, per-tier cost attribution and tool timings/errors for the Usage page. |
 | [packages/embedding](packages/embedding/) | Shared embedding client with batching and retry. |
 | [packages/search](packages/search/) | Shared hybrid-search helpers: reciprocal rank fusion and sqlite-vec vector store primitives. |
@@ -299,7 +318,7 @@ Callers choose a tier. The gateway maps that tier to real providers. Non-streami
 
 | Port | Service |
 |---|---|
-| `4317` | Steward host HTTP on localhost. WebSocket protocol, static web app, `/health`, `/upload`, `/usage`, `/file/<token>`, `/resolve`, `/system/*`, `/settings/notification-lang`, `/push/*`, `/quick-send`, `/transcribe`. |
+| `4317` | Steward host HTTP on localhost. WebSocket protocol, static web app, `/health`, `/upload`, `/usage`, `/audit`, `/file/<token>`, `/resolve`, `/system/*`, `/settings/notification-lang`, `/push/*`, `/quick-send`, `/transcribe`. |
 | `4318` | Optional Steward HTTPS listener for phone/Tailscale when `STEWARD_TLS_CERT` and `STEWARD_TLS_KEY` are set; override with `STEWARD_TLS_PORT`. |
 | `4000` | LLM gateway. `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/rates`, `/health`. |
 | `11434` | Ollama. Used for local embeddings and optional local chat. |
@@ -327,6 +346,7 @@ Most Steward data lives under `~/Library/Application Support/`:
 | `steward-chats/chats.db` | Chat list and transcripts. |
 | `steward-chats/` session files | Per-chat agent session state. |
 | `steward-usage/usage.db` | Token/cost/tool usage ledger. |
+| `steward-audit/audit.db` | Redacted audit trail of chat, tool, approval, write-op and Action Center events. |
 | `steward-uploads/` | Files uploaded through the web UI. |
 
 Read sources include:
@@ -363,6 +383,7 @@ Steward is designed so trust is structural, not based on the model behaving perf
 - **Default-deny tools** — [apps/host/src/core/tool-policy.ts](apps/host/src/core/tool-policy.ts) classifies tool calls. Read-only tools are allow-listed. Sensitive writes are gated. Unknown or disallowed tools are denied.
 - **Human approval for writes** — the agent can request an action, but the host turns it into an approval card before execution.
 - **Write journal** — AppleScript writes are recorded before they run and confirmed afterwards against local mirrors.
+- **Audit trail** — chat messages, tool policy/approval decisions, write-ops and Action Center events are recorded in a redacted SQLite ledger ([packages/audit-log](packages/audit-log/)); secrets and full email/document bodies are never persisted, only short snippets.
 - **No raw shell** — shell-like commands are parsed and executed with explicit binaries/argv. Dangerous shell features are rejected.
 - **Sensitive path blocking** — path guards protect secrets such as `.env`, SSH keys and other private locations.
 - **Token-gated data routes** — data HTTP routes and WebSocket connections require the host auth token.
@@ -547,7 +568,6 @@ The host speaks a small channel protocol. Tools are MCP servers. Models are hidd
 - browser automation;
 - richer action policies and allowlists;
 - long-running workflows and follow-ups;
-- deeper structured memory over the wiki and local indexes;
-- fuller audit trails for actions, reads and decisions.
+- deeper structured memory over the wiki and local indexes.
 
 The core idea stays the same: keep private context local, keep memory inspectable, make useful actions easy, and require explicit approval for anything that changes the outside world.
