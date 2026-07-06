@@ -162,7 +162,12 @@ export class Mail {
       const att = typeof args.attachment === "number"
         ? parsed.attachments[args.attachment - 1]
         : parsed.attachments.find((a) => a.filename === args.attachment);
-      if (!att?.content) return null;
+      // A *.partial.emlx (Mail hasn't downloaded this attachment's bytes from
+      // the server yet) still yields a defined, zero-length Buffer here — a
+      // truthy `att.content` check alone would "successfully" write an empty
+      // file. Require actual bytes; otherwise fall through to the live
+      // AppleScript save, which asks Mail.app to fetch the real content.
+      if (!att?.content?.length) return null;
       const dest = join(dir, basename(att.filename || `attachment-${args.attachment}`));
       writeFileSync(dest, att.content);
       return { path: dest };

@@ -4,8 +4,44 @@ import { Store, type MessageRow } from "../../mail-mirror/src/store.ts";
 import { Mail } from "../src/mail.ts";
 import { WriteOpsStore } from "@steward/write-ops";
 import { assertSafeDestPath } from "../src/validate.ts";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+
+/**
+ * Build a minimal on-disk .emlx whose one attachment part declares a
+ * filename but has zero content bytes between the MIME boundaries — this
+ * is what Apple Mail leaves on disk for a message it has only partially
+ * downloaded (a `*.partial.emlx`): headers/text are present, but attachment
+ * bytes were never fetched from the IMAP server yet.
+ */
+function writePartialEmlxWithEmptyAttachment(): string {
+  const message = [
+    "Content-Type: multipart/mixed; boundary=\"B\"",
+    "From: italo@mail.italotreno.it",
+    "Subject: test",
+    "Date: Mon, 01 Jan 2024 00:00:00 +0000",
+    "Message-Id: <partial-test@example.com>",
+    "",
+    "--B",
+    "Content-Type: text/plain",
+    "",
+    "Hello body",
+    "--B",
+    "Content-Type: application/pdf; name=\"ticket.pdf\"",
+    "Content-Disposition: attachment; filename=\"ticket.pdf\"",
+    "Content-Transfer-Encoding: base64",
+    "",
+    "--B--",
+    "",
+  ].join("\r\n");
+  const body = Buffer.from(message, "utf8");
+  const emlx = Buffer.concat([Buffer.from(`${body.length}\n`, "ascii"), body]);
+  const dir = mkdtempSync(join(tmpdir(), "mail-mcp-test-"));
+  const path = join(dir, "93029.partial.emlx");
+  writeFileSync(path, emlx);
+  return path;
+}
 
 /** Minimal in-memory store for tests that do not exercise DB behaviour. */
 function emptyStore(): Store {
@@ -27,6 +63,21 @@ test("saveAttachment falls back to AppleScript when the message isn't in the mir
   const r = await mail.saveAttachment({ messageId: "missing@x", attachment: "x.pdf", destDir: "/tmp" });
   assert.equal(ran, true, "no mirror row → live AppleScript save");
   assert.equal(r.path, "/tmp/x.pdf");
+});
+
+test("saveAttachment falls back to AppleScript instead of writing a 0-byte file when the mirrored .emlx has an empty (partial) attachment", async () => {
+  const emlxPath = writePartialEmlxWithEmptyAttachment();
+  const s = Store.open(":memory:");
+  s.upsertMessage({ ...row("partial-test@example.com", "test", "Hello body"), emlxPath });
+  let ran = false;
+  const mail = new Mail({
+    store: s,
+    runner: async () => { ran = true; return "/tmp/ticket.pdf"; },
+  });
+  const r = await mail.saveAttachment({ messageId: "partial-test@example.com", attachment: "ticket.pdf", destDir: "/tmp" });
+  assert.equal(ran, true, "an empty attachment in the mirror must not be treated as a successful save");
+  assert.equal(r.path, "/tmp/ticket.pdf");
+  s.close();
 });
 
 test("send with sendAt queues the email and does NOT run AppleScript", async () => {
