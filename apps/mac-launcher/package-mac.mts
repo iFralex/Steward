@@ -3,6 +3,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 
 const APP_NAME = "Steward";
 const BUNDLE_ID = "com.steward.launcher";
@@ -20,6 +21,15 @@ const nodePath = join(nodeDir, "node");
 const nodeModulesDir = join(resourcesDir, "node_modules");
 const appIcon = join(repoRoot, "apps", "mac-launcher", "assets", "Steward.icns");
 const speechAssetsDir = join(repoRoot, "apps", "mac-launcher", "speech");
+
+// The Whisper GGML model is ~148MB — too large for git (GitHub rejects any
+// blob over 100MB). It's downloaded on demand instead of committed, cached at
+// this path across builds (only re-fetched if missing or checksum-mismatched).
+// Source + checksum: https://huggingface.co/ggerganov/whisper.cpp (SHA-1,
+// listed in that repo's models/README.md for the "base" model).
+const WHISPER_MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+const WHISPER_MODEL_SHA1 = "465707469ff3a37a2b9b8d8f89f2f99de7299dac";
+const whisperModelPath = join(speechAssetsDir, "models", "ggml-base.bin");
 const debugPackage = process.env.PACKAGE_DEBUG === "1";
 const skipLLMWikiBuild = process.env.PACKAGE_SKIP_LLM_WIKI_BUILD === "1";
 
@@ -143,6 +153,36 @@ function copyRuntimeNodeModules(): void {
   console.log(`Copied ${seen.size} runtime packages into ${nodeModulesDir}`);
 }
 
+function sha1File(path: string): string {
+  return createHash("sha1").update(readFileSync(path)).digest("hex");
+}
+
+/**
+ * Download the Whisper model into the source tree if it's missing or its
+ * checksum doesn't match (corrupt/partial download), so it's cached across
+ * builds like any other local asset. Skipped entirely when already present
+ * and valid — no network call on the common path.
+ */
+async function ensureWhisperModel(): Promise<void> {
+  if (existsSync(whisperModelPath) && sha1File(whisperModelPath) === WHISPER_MODEL_SHA1) {
+    return;
+  }
+  console.log(`Downloading Whisper model (~148MB) from ${WHISPER_MODEL_URL} ...`);
+  mkdirSync(dirname(whisperModelPath), { recursive: true });
+  const res = await fetch(WHISPER_MODEL_URL);
+  if (!res.ok || !res.body) {
+    throw new Error(`Failed to download Whisper model: HTTP ${res.status}`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  writeFileSync(whisperModelPath, buf);
+  const actual = sha1File(whisperModelPath);
+  if (actual !== WHISPER_MODEL_SHA1) {
+    rmSync(whisperModelPath, { force: true });
+    throw new Error(`Whisper model checksum mismatch: expected ${WHISPER_MODEL_SHA1}, got ${actual}`);
+  }
+  console.log(`Downloaded and verified Whisper model at ${whisperModelPath}`);
+}
+
 function copySpeechAssets(): void {
   if (!existsSync(speechAssetsDir)) {
     console.log("Speech assets not found; skipping bundled Whisper.");
@@ -189,6 +229,7 @@ for (const [outRel, entry] of Object.entries(entries)) {
 writeFileSync(join(servicesDir, "package.json"), JSON.stringify({ type: "module" }, null, 2) + "\n");
 cpSync(join(repoRoot, "apps", "web", "dist"), join(resourcesDir, "web"), { recursive: true });
 cpSync(appIcon, join(resourcesDir, "Steward.icns"));
+await ensureWhisperModel();
 copySpeechAssets();
 mkdirSync(llmWikiBundleDir, { recursive: true });
 cpSync(findLLMWikiAppBundle(), join(llmWikiBundleDir, "LLM Wiki.app"), { recursive: true });

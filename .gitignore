@@ -14,6 +14,10 @@ apps/web/dist/
 apps/mac-launcher/.build/
 apps/mac-launcher/.module-cache/
 
+# Whisper GGML model (~148MB, exceeds GitHub's 100MB limit) — downloaded on
+# demand by package-mac.mts, checksum-verified, not committed.
+apps/mac-launcher/speech/models/
+
 # Local secrets — never commit
 .env
 **/.env
