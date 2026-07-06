@@ -251,7 +251,8 @@
       "from": "From", "to": "To", "cc": "Cc", "bcc": "Bcc", "subject": "Subject", "body": "Body",
       "attachments": "Attachments", "scheduledSend": "Scheduled send", "replyAll": "Reply all",
       "calendar": "Calendar", "title": "Title", "start": "Start", "end": "End", "location": "Location",
-      "description": "Description", "url": "URL", "alarms": "Alerts (minutes before, comma-separated)"
+      "description": "Description", "url": "URL", "allDay": "All day", "recurrence": "Recurrence",
+      "alarms": "Alerts (minutes before, comma-separated)"
     },
     "filesPlaceholder": "Drag a file from the chat, or paste a path + Enter",
     "approvalRequested": "approval requested",

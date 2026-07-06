@@ -46,9 +46,11 @@ const FORMS: Record<string, Field[]> = {
     { key: "summary", labelKey: "title", kind: "text" },
     { key: "start", labelKey: "start", kind: "datetime" },
     { key: "end", labelKey: "end", kind: "datetime" },
+    { key: "allDay", labelKey: "allDay", kind: "bool" },
     { key: "location", labelKey: "location", kind: "text" },
     { key: "description", labelKey: "description", kind: "textarea" },
     { key: "url", labelKey: "url", kind: "text" },
+    { key: "recurrence", labelKey: "recurrence", kind: "text" },
     { key: "alarms", labelKey: "alarms", kind: "numbers" },
   ],
   update_event: [
@@ -58,6 +60,7 @@ const FORMS: Record<string, Field[]> = {
     { key: "location", labelKey: "location", kind: "text" },
     { key: "description", labelKey: "description", kind: "textarea" },
     { key: "url", labelKey: "url", kind: "text" },
+    { key: "recurrence", labelKey: "recurrence", kind: "text" },
     { key: "alarms", labelKey: "alarms", kind: "numbers" },
   ],
 };
@@ -173,10 +176,10 @@ export function ApprovalCard({
     <Card className="border-amber-500/40">
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
-          <Badge variant="outline" className="border-amber-500/60 text-amber-600">{t("approval.approvalRequested")}</Badge>
-          <span className="font-mono">{approval.tool}</span>
+          <Badge variant="outline" className="border-amber-500/60 text-amber-600 shrink-0">{t("approval.approvalRequested")}</Badge>
+          <span className="min-w-0 flex-1 truncate font-mono">{approval.tool}</span>
           {fields && (
-            <button type="button" className="text-muted-foreground hover:text-foreground ml-auto text-xs underline" onClick={() => setEditing(true)}>
+            <button type="button" className="text-muted-foreground hover:text-foreground shrink-0 text-xs underline" onClick={() => setEditing(true)}>
               {t("approval.edit")}
             </button>
           )}
