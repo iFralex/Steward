@@ -13,6 +13,7 @@ import { actionDbPath } from "../../../action-center/src/paths.ts";
 import { gatewayChat, jsonFromLlm } from "../../../action-center/src/llm.ts";
 import type { HostConfig } from "../config.ts";
 import type { Emit, Session } from "./session.ts";
+import type { ApprovalOutcome } from "./permission-gate.ts";
 import { decideTool } from "./tool-policy.ts";
 import { extractToolOutput, sharedMcpBridge } from "./agent-runner.ts";
 import { filesFromOutput } from "./file-registry.ts";
@@ -137,6 +138,19 @@ export function executableSteps(steps: ProposedStep[]): ProposedToolStep[] {
   return steps.filter((s): s is ProposedToolStep => s.kind !== "manual");
 }
 
+/**
+ * A bare "deny" with no note is a hard stop (nothing for the model to act
+ * on). A "revise" always retries. A "deny" that carries a note behaves the
+ * same as "revise" here: the normal chat/tool-approval flow already lets a
+ * denied-with-note call continue and have the model react to the note
+ * (permission-gate.ts); action execution isn't running inside an agent loop,
+ * so the equivalent is kicking off a fresh chat turn with the note.
+ */
+export function shouldRetryWithRevision(outcome: Pick<ApprovalOutcome, "decision" | "note">): boolean {
+  if (outcome.decision === "revise") return true;
+  return outcome.decision === "deny" && !!outcome.note?.trim();
+}
+
 export async function executeActionProposal(args: {
   config: HostConfig;
   session: Session;
@@ -161,7 +175,7 @@ export async function executeActionProposal(args: {
     let input = step.input ?? {};
     if (decision === "gate") {
       const approved = await args.session.requestApproval({ tool: step.tool, input, chatId: args.chatId });
-      if (approved.decision === "revise") {
+      if (shouldRetryWithRevision(approved)) {
         throw new ActionRevisionRequestedError(buildRevisionPrompt(action, proposal, step, approved.note));
       }
       if (approved.decision !== "allow") {

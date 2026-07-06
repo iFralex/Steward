@@ -421,6 +421,16 @@ function App() {
     setMobileDrill(true);
   };
 
+  // Execute also runs in a temporary action chat (server-side, same as
+  // openActionInChat) — follow the user there so they see it happen live.
+  const executeProposalInChat = (actionId: number, proposalId: string) => {
+    host.executeProposal(actionId, proposalId);
+    setSplitActionId(actionId);
+    setTab("chat");
+    setPane("chat");
+    setMobileDrill(true);
+  };
+
   if (!authToken) {
     return (
       <PairingScreen
@@ -710,7 +720,7 @@ function App() {
                   action={selectedAction}
                   onOpenChat={openActionInChat}
                   onMark={(status) => selectedAction && host.markAction(selectedAction.id, status)}
-                  onExecute={(proposalId) => selectedAction && host.executeProposal(selectedAction.id, proposalId)}
+                  onExecute={(proposalId) => selectedAction && executeProposalInChat(selectedAction.id, proposalId)}
                   onRevise={(proposalId, instruction) => selectedAction && host.reviseProposal(selectedAction.id, proposalId, instruction)}
                 />
               </div>
@@ -735,7 +745,7 @@ function App() {
                   action={splitAction}
                   onOpenChat={openActionInChat}
                   onMark={(status) => { host.markAction(splitAction.id, status); if (status === "done" || status === "dismissed") setSplitActionId(null); }}
-                  onExecute={(proposalId) => host.executeProposal(splitAction.id, proposalId)}
+                  onExecute={(proposalId) => executeProposalInChat(splitAction.id, proposalId)}
                   onRevise={(proposalId, instruction) => host.reviseProposal(splitAction.id, proposalId, instruction)}
                 />
               </aside>

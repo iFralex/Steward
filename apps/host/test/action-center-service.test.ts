@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { executableSteps, normalizeStep } from "../src/core/action-center-service.ts";
+import { executableSteps, normalizeStep, shouldRetryWithRevision } from "../src/core/action-center-service.ts";
 
 test("normalizeStep parses a legacy step with no kind as a tool step", () => {
   const step = normalizeStep({ id: "s1", label: "Reply", tool: "mcp__mail__reply", input: { to: "a@b.com" }, writes: true });
@@ -50,4 +50,22 @@ test("executableSteps returns an empty array for an all-manual proposal", () => 
   ].filter((s): s is NonNullable<typeof s> => !!s);
 
   assert.deepEqual(executableSteps(steps), []);
+});
+
+test("shouldRetryWithRevision is true for an explicit revise decision", () => {
+  assert.equal(shouldRetryWithRevision({ decision: "revise", note: "usa ferie" }), true);
+  assert.equal(shouldRetryWithRevision({ decision: "revise" }), true);
+});
+
+test("shouldRetryWithRevision is true for a deny that carries a non-empty note", () => {
+  assert.equal(shouldRetryWithRevision({ decision: "deny", note: "manda invece a Marco" }), true);
+});
+
+test("shouldRetryWithRevision is false for a bare deny with no note", () => {
+  assert.equal(shouldRetryWithRevision({ decision: "deny" }), false);
+  assert.equal(shouldRetryWithRevision({ decision: "deny", note: "   " }), false);
+});
+
+test("shouldRetryWithRevision is false for allow", () => {
+  assert.equal(shouldRetryWithRevision({ decision: "allow", note: "anything" }), false);
 });
