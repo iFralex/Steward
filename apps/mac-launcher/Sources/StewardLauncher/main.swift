@@ -162,6 +162,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.autoresizingMask = [.width, .height]
+        webView.uiDelegate = self
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
@@ -537,6 +538,60 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             Unmanaged.passUnretained(self).toOpaque(),
             nil
         )
+    }
+}
+
+// The web UI's chat rename/delete confirmations use plain window.prompt/
+// window.confirm/window.alert. A bare WKWebView has no WKUIDelegate by
+// default, so WebKit silently drops those calls instead of showing
+// anything — they work in a real phone browser but are invisible here
+// unless we implement the native panels ourselves.
+extension LauncherDelegate: WKUIDelegate {
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping () -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        completionHandler()
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (String?) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = prompt
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        let response = alert.runModal()
+        completionHandler(response == .alertFirstButtonReturn ? field.stringValue : nil)
     }
 }
 
