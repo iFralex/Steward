@@ -23,6 +23,7 @@
     },
     "usageButtonTitle": "Last turn: ${{cost}} · {{total}} tokens (in {{input}} / out {{output}} / cache {{cache}}) — open Usage",
     "menu": {
+      "title": "Menu",
       "copyJson": "Copy JSON",
       "copied": "Copied ✓",
       "shortcuts": "Shortcuts ⌨"
@@ -89,6 +90,7 @@
       "newTitle": "New chat",
       "empty": "No chats.",
       "untitled": "New chat",
+      "temp": "temp",
       "messageCount_one": "{{count}} message",
       "messageCount_other": "{{count}} messages",
       "saveTitle": "Save this chat (make it permanent)",

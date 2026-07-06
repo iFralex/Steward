@@ -164,7 +164,7 @@ function ChatList({
             >
               <button type="button" onClick={() => onSelect(c.id)} className="block w-full text-left">
                 <div className="flex items-center gap-1.5 pr-10">
-                  {c.temporary && <span className="bg-primary/15 text-primary rounded px-1 py-px text-[10px] font-medium uppercase">temp</span>}
+                  {c.temporary && <span className="bg-primary/15 text-primary rounded px-1 py-px text-[10px] font-medium uppercase">{t("sidebar.chatList.temp")}</span>}
                   <span className="truncate text-sm font-medium">{titleOf(c)}</span>
                 </div>
                 <div className="text-muted-foreground mt-0.5 text-xs">

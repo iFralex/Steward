@@ -622,7 +622,7 @@ function App() {
           )}
           <ConnectionDot connected={host.connected} state={host.state} />
           <Popover>
-            <PopoverTrigger className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md px-2 py-1 text-sm" title="Menu">
+            <PopoverTrigger className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-md px-2 py-1 text-sm" title={t("app.menu.title")}>
               ⋯
             </PopoverTrigger>
             <PopoverContent align="end" className="w-48 space-y-1 p-1">
