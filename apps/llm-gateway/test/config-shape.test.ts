@@ -1,7 +1,7 @@
 // apps/llm-gateway/test/config-shape.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attemptsFor, fallbackOrder, models } from "../src/gateway.ts";
+import { attemptsFor, fallbackOrder, models, rates } from "../src/gateway.ts";
 
 test("compat gateway declares the capability ladder tier-1..tier-6 + local-embed", () => {
   for (const name of ["tier-1", "tier-2", "tier-3", "tier-4", "tier-5", "tier-6", "local-embed"]) {
@@ -33,4 +33,9 @@ test("paid tiers fall back across the paid DeepSeek ladder only", () => {
 
 test("DeepSeek API keys are read from env at module load time", async () => {
   assert.equal(models["tier-2"].apiKey, process.env.DEEPSEEK_API_KEY);
+});
+
+test("local-embed rates are zero so embed tokens are never priced at a paid fallback", () => {
+  assert.ok(rates["local-embed"], "missing rates entry for local-embed");
+  assert.deepEqual(rates["local-embed"], { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 });

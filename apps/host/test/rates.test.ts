@@ -22,3 +22,13 @@ test("costByKindFromTiers falls back to the flat config cost for unknown tiers o
   assert.ok(Math.abs(costByKindFromTiers(byTier, {}, flash).input - 0.14) < 1e-9);
   assert.ok(Math.abs(costByKindFromTiers(byTier, null, flash).input - 0.14) < 1e-9);
 });
+
+test("local-embed tokens price at zero when the gateway rates map carries a zero entry for it", () => {
+  const zeroEmbed = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const byTier = [{ tier: "local-embed", input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 }];
+  const out = costByKindFromTiers(byTier, { "local-embed": zeroEmbed }, flash);
+  assert.equal(out.input, 0);
+  assert.equal(out.output, 0);
+  assert.equal(out.cacheRead, 0);
+  assert.equal(out.cacheWrite, 0);
+});

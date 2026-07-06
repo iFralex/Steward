@@ -444,6 +444,9 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       const costByKind = costByKindFromTiers(summary.byTier, ratesMap, config.gateway.cost);
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ ...summary, costByKind }));
+    }).catch((err) => {
+      res.writeHead(500, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
     });
     return;
   }

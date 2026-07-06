@@ -95,8 +95,8 @@ export class UsageLedger {
 
   constructor(db: Database.Database) {
     this.raw = db;
-    this.raw.pragma("journal_mode = WAL");
     this.raw.pragma("busy_timeout = 2000");
+    this.raw.pragma("journal_mode = WAL");
     this.raw.exec(SCHEMA);
   }
 

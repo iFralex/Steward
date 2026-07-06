@@ -75,6 +75,7 @@ export const rates: Record<string, { input: number; output: number; cacheRead: n
   "tier-4": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
   "tier-5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
   "tier-6": { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0.435 },
+  "local-embed": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 interface CallMeta {
