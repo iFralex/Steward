@@ -231,7 +231,9 @@
       "cancel": "Annulla",
       "updating": "Aggiornamento…",
       "confirmRevision": "Conferma revisione",
-      "execute": "Esegui proposta"
+      "execute": "Esegui proposta",
+      "openLink": "Apri link",
+      "openLinkNumbered": "Apri link {{index}}"
     },
     "mailKind": {
       "mainThread": "Thread principale",

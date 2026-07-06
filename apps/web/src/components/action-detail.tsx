@@ -18,7 +18,7 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+import { cn, safeHref } from "@/lib/utils";
 import { formatWhen, priorityVariant } from "@/lib/format";
 import { currentLocale } from "@/lib/locale";
 import type { ActionCenterItem } from "@steward/protocol";
@@ -145,6 +145,11 @@ function mailKindLabel(kind: RelatedMailGroup["kind"], t: TFunction): string {
   return t("actionDetail.mailKind.referencedMail");
 }
 
+function openLink(url: string): void {
+  const href = safeHref(url);
+  if (href) window.open(href, "_blank", "noopener,noreferrer");
+}
+
 function ProposalCard({
   proposal,
   actionUpdatedAt,
@@ -182,11 +187,30 @@ function ProposalCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <ol className="text-muted-foreground list-inside list-decimal space-y-1 text-xs">
-          {(proposal.steps ?? []).map((step) => (
-            <li key={step.id}>
-              <span className="font-mono">{step.tool}</span> — {step.label}
-            </li>
-          ))}
+          {(proposal.steps ?? []).map((step) => {
+            if (step.kind === "manual") {
+              const links = step.links ?? [];
+              return (
+                <li key={step.id}>
+                  {step.label}
+                  {links.length > 0 && (
+                    <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">
+                      {links.map((link, i) => (
+                        <Button key={link.url} size="xs" variant="outline" onClick={() => openLink(link.url)}>
+                          {link.label ?? (links.length > 1 ? t("actionDetail.proposal.openLinkNumbered", { index: i + 1 }) : t("actionDetail.proposal.openLink"))}
+                        </Button>
+                      ))}
+                    </span>
+                  )}
+                </li>
+              );
+            }
+            return (
+              <li key={step.id}>
+                <span className="font-mono">{step.tool}</span> — {step.label}
+              </li>
+            );
+          })}
         </ol>
         <div className="flex flex-wrap gap-2">
           <Popover
@@ -231,7 +255,9 @@ function ProposalCard({
               </div>
             </PopoverContent>
           </Popover>
-          <Button size="sm" onClick={() => onExecute(proposal.id)}>{t("actionDetail.proposal.execute")}</Button>
+          {(proposal.steps ?? []).some((step) => step.kind !== "manual") && (
+            <Button size="sm" onClick={() => onExecute(proposal.id)}>{t("actionDetail.proposal.execute")}</Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -257,7 +283,10 @@ interface ProposedActionView {
   id: string;
   label?: string;
   summary?: string;
-  steps?: { id: string; label?: string; tool: string; input?: Record<string, unknown> }[];
+  steps?: (
+    | { id: string; label?: string; kind?: "tool"; tool: string; input?: Record<string, unknown> }
+    | { id: string; label?: string; kind: "manual"; links?: { url: string; label?: string }[] }
+  )[];
 }
 
 interface RelatedMailGroup {

@@ -231,7 +231,9 @@
       "cancel": "Cancel",
       "updating": "Updating…",
       "confirmRevision": "Confirm revision",
-      "execute": "Execute proposal"
+      "execute": "Execute proposal",
+      "openLink": "Open link",
+      "openLinkNumbered": "Open link {{index}}"
     },
     "mailKind": {
       "mainThread": "Main thread",
