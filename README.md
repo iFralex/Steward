@@ -407,6 +407,7 @@ ollama pull llama3.2:1b
 ```
 
 - A DeepSeek API key for paid tiers, placed in `apps/llm-gateway/.env` using [apps/llm-gateway/.env.example](apps/llm-gateway/.env.example).
+- Optional per-project overrides (e.g. Whisper language) go in `apps/host/.env`, same convention — see [apps/host/.env.example](apps/host/.env.example).
 - Full Disk Access for the terminal, launcher or packaged app running Steward.
 - Automation permissions when macOS prompts for Mail/Calendar/Contacts writes.
 
@@ -526,7 +527,7 @@ Logs go in:
 | `STEWARD_PUSH_CONTACT` | VAPID contact URI for Web Push. |
 | `STEWARD_WHISPER_BIN` | Path to `whisper.cpp` binary for transcription. |
 | `STEWARD_WHISPER_MODEL` | Path to local Whisper model file. |
-| `STEWARD_SPEECH_LANGUAGE` | Speech language, default `it`. |
+| `STEWARD_SPEECH_LANGUAGE` | Speech language, default `en`. |
 | `STEWARD_SPEECH_ENABLED` | Set `0` to disable transcription. |
 | `SCHED_*_MIN` | Override scheduler intervals. |
 | `LLM_WIKI_BUNDLED_SERVICES` / `STEWARD_BUNDLED_SERVICES` | Tell services they are running from the packaged bundle. |

@@ -13,6 +13,24 @@ import { defaultPolicy, type ToolPolicy } from "./core/tool-policy.ts";
 import type { McpServerSpec } from "@steward/mcp-bridge";
 import type { GatewayConfig } from "./core/pi-provider.ts";
 
+loadDotEnv(new URL("../.env", import.meta.url));
+
+/** Same convention as apps/llm-gateway: a local, gitignored .env for per-project overrides. */
+function loadDotEnv(url: URL): void {
+  const path = fileURLToPath(url);
+  if (!existsSync(path)) return;
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const raw = trimmed.slice(eq + 1).trim();
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = raw.replace(/^(['"])(.*)\1$/, "$2");
+  }
+}
+
 export interface HostConfig {
   port: number;
   systemPrompt: string;
@@ -173,7 +191,7 @@ export function loadConfig(): HostConfig {
       enabled: process.env.STEWARD_SPEECH_ENABLED !== "0",
       whisperBin: process.env.STEWARD_WHISPER_BIN,
       whisperModel: process.env.STEWARD_WHISPER_MODEL,
-      language: process.env.STEWARD_SPEECH_LANGUAGE ?? "it",
+      language: process.env.STEWARD_SPEECH_LANGUAGE ?? "en",
       timeoutMs: Number(process.env.STEWARD_SPEECH_TIMEOUT_MS ?? 120_000),
       convertTimeoutMs: Number(process.env.STEWARD_AUDIO_CONVERT_TIMEOUT_MS ?? 30_000),
     },
