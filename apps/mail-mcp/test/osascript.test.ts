@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mapOsaError, runOsa } from "../src/osascript.ts";
+import { forceQuitMail, mapOsaError, runOsa } from "../src/osascript.ts";
 
 test("mapOsaError gives a friendly message for Mail not running / not authorized", () => {
   assert.match(
@@ -46,4 +46,28 @@ test("runOsa does not retry a transient -609 failure when isTransient is disable
     },
   }));
   assert.equal(calls, 1);
+});
+
+test("forceQuitMail runs killall -9 Mail", async () => {
+  const calls: { bin: string; args: string[] }[] = [];
+  await forceQuitMail(async (bin, args) => { calls.push({ bin, args }); });
+  assert.deepEqual(calls, [{ bin: "killall", args: ["-9", "Mail"] }]);
+});
+
+test("forceQuitMail never rejects, even when the quit itself fails (e.g. Mail already dead)", async () => {
+  await assert.doesNotReject(forceQuitMail(async () => { throw new Error("No matching processes"); }));
+});
+
+test("runOsa forwards an explicit onStall through to the shared stall watcher (same wiring forceQuitMail relies on)", async () => {
+  let stallCount = 0;
+  let resolveExec!: (v: string) => void;
+  const pending = runOsa("script", {
+    timeoutMs: 40,
+    onStall: () => { stallCount += 1; },
+    exec: () => new Promise((resolve) => { resolveExec = resolve; }),
+  });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(stallCount, 1);
+  resolveExec("done");
+  assert.equal(await pending, "done");
 });

@@ -14,6 +14,13 @@ export interface OsaOptions {
   mapError?: (stderr: string) => string;
   /** Decide whether a failure message is worth one automatic retry. */
   isTransient?: (message: string) => boolean;
+  /**
+   * Called (best-effort, errors swallowed) if a single attempt is still
+   * pending at half of `timeoutMs` with no result yet — e.g. to force-quit a
+   * wedged target app. The attempt keeps waiting normally afterwards, for
+   * its result or its own timeout; this does not itself abort anything.
+   */
+  onStall?: () => void | Promise<void>;
 }
 
 function defaultIsTransient(message: string): boolean {
@@ -38,12 +45,21 @@ const defaultExec: OsaExec = (script, timeoutMs) =>
     );
   });
 
+/** Runs `attempt`; fires `onStall` once if it's still pending at half of `timeoutMs`. */
+function withStallWatch<T>(attempt: Promise<T>, timeoutMs: number, onStall?: () => void | Promise<void>): Promise<T> {
+  if (!onStall) return attempt;
+  const timer = setTimeout(() => {
+    Promise.resolve().then(onStall).catch(() => {});
+  }, timeoutMs / 2);
+  return attempt.finally(() => clearTimeout(timer));
+}
+
 export async function runOsa(script: string, opts: OsaOptions = {}): Promise<string> {
   const exec = opts.exec ?? defaultExec;
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const isTransient = opts.isTransient ?? defaultIsTransient;
   try {
-    return await exec(script, timeoutMs);
+    return await withStallWatch(exec(script, timeoutMs), timeoutMs, opts.onStall);
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
     if (!isTransient(raw)) {
@@ -51,7 +67,7 @@ export async function runOsa(script: string, opts: OsaOptions = {}): Promise<str
     }
     await new Promise((r) => setTimeout(r, 300));
     try {
-      return await exec(script, timeoutMs);
+      return await withStallWatch(exec(script, timeoutMs), timeoutMs, opts.onStall);
     } catch (err2) {
       const raw2 = err2 instanceof Error ? err2.message : String(err2);
       throw new Error(opts.mapError ? opts.mapError(raw2) : raw2);
