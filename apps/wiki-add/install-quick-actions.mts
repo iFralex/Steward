@@ -11,26 +11,39 @@
  */
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 const ENTRY = fileURLToPath(new URL("./src/index.ts", import.meta.url));
+const require = createRequire(import.meta.url);
+const TSX_LOADER = require.resolve("tsx");
 // Base command the shell script runs; "$@" (the selected paths) is appended.
-const BASE_CMD = process.env.WIKI_ADD_CMD ?? `"${process.execPath}" --import tsx "${ENTRY}"`;
+const BASE_CMD = process.env.WIKI_ADD_CMD ?? `"${process.execPath}" --import "${TSX_LOADER}" "${ENTRY}"`;
 const SERVICES_DIR = join(homedir(), "Library", "Services");
 
 function infoPlist(menuName: string): string {
+  const bundleID = `com.steward.wiki-add.${menuName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase()}`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>${bundleID}</string>
+  <key>CFBundleName</key><string>${menuName}</string>
+  <key>CFBundlePackageType</key><string>BNDL</string>
   <key>NSServices</key>
   <array><dict>
     <key>NSMenuItem</key><dict><key>default</key><string>${menuName}</string></dict>
     <key>NSMessage</key><string>runWorkflowAsService</string>
     <key>NSRequiredContext</key><dict><key>NSApplicationIdentifier</key><string>com.apple.finder</string></dict>
-    <key>NSSendFileTypes</key><array><string>public.item</string></array>
+    <key>NSSendFileTypes</key><array>
+      <string>public.item</string>
+      <string>public.folder</string>
+      <string>public.directory</string>
+      <string>public.content</string>
+      <string>public.data</string>
+    </array>
   </dict></array>
 </dict></plist>
 `;
@@ -100,7 +113,7 @@ function documentWflow(command: string): string {
     <key>inputTypeIdentifier</key><string>com.apple.Automator.fileSystemObject</string>
     <key>outputTypeIdentifier</key><string>com.apple.Automator.nothing</string>
     <key>presentationMode</key><integer>11</integer>
-    <key>processesInput</key><integer>0</integer>
+    <key>processesInput</key><integer>1</integer>
     <key>serviceApplicationBundleID</key><string>com.apple.finder</string>
     <key>serviceInputTypeIdentifier</key><string>com.apple.Automator.fileSystemObject</string>
     <key>serviceInputTypeIdentifierIndex</key><integer>0</integer>
@@ -121,11 +134,15 @@ function escapeXml(s: string): string {
 function installWorkflow(menuName: string, command: string): string {
   const bundle = join(SERVICES_DIR, `${menuName}.workflow`);
   const contents = join(bundle, "Contents");
+  const resources = join(contents, "Resources");
   mkdirSync(contents, { recursive: true });
+  mkdirSync(resources, { recursive: true });
   writeFileSync(join(contents, "Info.plist"), infoPlist(menuName));
-  writeFileSync(join(contents, "document.wflow"), documentWflow(command));
-  for (const f of ["Info.plist", "document.wflow"]) {
-    execFileSync("plutil", ["-lint", join(contents, f)], { stdio: "pipe" });
+  const workflow = documentWflow(command);
+  writeFileSync(join(resources, "document.wflow"), workflow);
+  writeFileSync(join(contents, "document.wflow"), workflow);
+  for (const f of [join(contents, "Info.plist"), join(resources, "document.wflow"), join(contents, "document.wflow")]) {
+    execFileSync("plutil", ["-lint", f], { stdio: "pipe" });
   }
   return bundle;
 }
@@ -139,6 +156,7 @@ for (const s of services) installWorkflow(s.name, s.cmd);
 
 // Rebuild the Services database so the items appear (and pick up removed ones).
 try { execFileSync("/System/Library/CoreServices/pbs", ["-flush"], { stdio: "pipe" }); } catch { /* best-effort */ }
+try { execFileSync("launchctl", ["kickstart", "-k", `gui/${process.getuid?.() ?? ""}/com.apple.pbs`], { stdio: "pipe" }); } catch { /* best-effort */ }
 
 console.log("Installed Finder Quick Actions:");
 for (const s of services) console.log(`  ${s.name}`);

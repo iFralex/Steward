@@ -39,6 +39,7 @@ const entries: Record<string, string> = {
   "cli/write-ops.js": "apps/scheduler/src/write-ops-cli.ts",
   "cli/calendar.js": "apps/calendar-mcp/src/cli.ts",
   "cli/contacts.js": "apps/contacts-mcp/src/cli.ts",
+  "cli/wiki-add.js": "apps/wiki-add/src/index.ts",
 };
 
 function run(cmd: string, args: string[]): void {
