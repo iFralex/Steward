@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Globe, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
 import QRCode from "qrcode";
+import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { authFetch } from "@/lib/auth";
 import { enablePush, pushSubscribed, type EnablePushResult } from "@/lib/push";
 import { cn } from "@/lib/utils";
+import { currentLocale } from "@/lib/locale";
+import i18n, { type Lang } from "@/i18n";
 
 type ServiceState = "ok" | "warning" | "error" | "unknown";
 
@@ -43,6 +46,7 @@ interface SystemStatus {
 }
 
 export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingAutostart, setSavingAutostart] = useState(false);
@@ -139,12 +143,12 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">System</h2>
-          <p className="text-muted-foreground text-sm">Servizi locali, tool MCP e avvio al login.</p>
+          <h2 className="text-lg font-semibold">{t("system.title")}</h2>
+          <p className="text-muted-foreground text-sm">{t("system.subtitle")}</p>
         </div>
-        <Button variant="outline" onClick={() => void refresh()} disabled={loading} title="Aggiorna stato">
+        <Button variant="outline" onClick={() => void refresh()} disabled={loading} title={t("system.refreshTitle")}>
           <RefreshCw className={cn("size-4", loading && "animate-spin")} />
-          Refresh
+          {t("system.refresh")}
         </Button>
       </div>
 
@@ -155,9 +159,9 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
       )}
 
       <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_1.35fr]">
-        <SummaryTile label="OK" value={counts.ok} state="ok" />
-        <SummaryTile label="Warning" value={counts.warning} state="warning" />
-        <SummaryTile label="Error" value={counts.error} state="error" />
+        <SummaryTile label={t("system.summary.ok")} value={counts.ok} state="ok" />
+        <SummaryTile label={t("system.summary.warning")} value={counts.warning} state="warning" />
+        <SummaryTile label={t("system.summary.error")} value={counts.error} state="error" />
         <AutostartPanel
           autostart={status?.autostart ?? null}
           bundled={status?.bundled ?? false}
@@ -166,43 +170,45 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
         />
       </div>
 
+      <LanguageCard />
+
       {pairToken && <PairingPanel token={pairToken} />}
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <Smartphone className="size-4" /> Notifiche push
+            <Smartphone className="size-4" /> {t("system.push.title")}
           </CardTitle>
           <CardDescription>
-            Ricevi una notifica quando c'è una proposta da approvare, anche ad app chiusa. Su iPhone: aggiungi prima Steward alla schermata Home.
+            {t("system.push.description")}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           <Button onClick={() => void turnOnNotifications()} disabled={pushBusy || pushOn}>
-            {pushOn ? "Notifiche attive ✓" : pushBusy ? "Attivazione…" : "Attiva notifiche"}
+            {pushOn ? t("system.push.on") : pushBusy ? t("system.push.enabling") : t("system.push.enable")}
           </Button>
           {pushOn && (
             <Button variant="outline" onClick={() => void sendTestPush()} disabled={pushTest === "scheduled"}>
-              {pushTest === "scheduled" ? "In arrivo tra ~15s…" : "Invia notifica di test"}
+              {pushTest === "scheduled" ? t("system.push.testArriving") : t("system.push.testSend")}
             </Button>
           )}
           {pushTest === "scheduled" && (
-            <span className="text-muted-foreground text-sm">Puoi anche chiudere l'app: la notifica arriva comunque.</span>
+            <span className="text-muted-foreground text-sm">{t("system.push.testHint")}</span>
           )}
           {pushTest === "error" && (
-            <span className="text-destructive text-sm">Invio non riuscito — riprova.</span>
+            <span className="text-destructive text-sm">{t("system.push.testError")}</span>
           )}
           {pushMsg && pushMsg !== "ok" && (
             <span className="text-muted-foreground text-sm">
               {pushMsg === "denied"
-                ? "Permesso negato — abilitalo nelle impostazioni del browser."
+                ? t("system.push.msgDenied")
                 : pushMsg === "insecure-context"
-                  ? "Le notifiche richiedono una connessione sicura (HTTPS). Sul telefono via http non sono disponibili: serve abilitare HTTPS su Tailscale e aprire l'app via https://…"
+                  ? t("system.push.msgInsecure")
                   : pushMsg === "needs-home-screen"
-                    ? "Su iPhone: prima aggiungi Steward alla schermata Home (Condividi → Aggiungi a Home), poi apri l'app dall'icona e riprova."
+                    ? t("system.push.msgNeedsHomeScreen")
                     : pushMsg === "unsupported"
-                      ? "Questo browser non supporta le notifiche push (funzionano dall'app in Home sul telefono, non dalla finestra sul Mac)."
-                      : "Attivazione non riuscita — riprova."}
+                      ? t("system.push.msgUnsupported")
+                      : t("system.push.msgError")}
             </span>
           )}
         </CardContent>
@@ -215,7 +221,7 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
         {!status && !error && (
           <Card className="md:col-span-2 xl:col-span-3">
             <CardContent className="text-muted-foreground py-8 text-center text-sm">
-              Caricamento stato servizi...
+              {t("system.servicesLoading")}
             </CardContent>
           </Card>
         )}
@@ -223,10 +229,35 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
 
       {status && (
         <p className="text-muted-foreground text-xs">
-          Ultimo aggiornamento: {new Date(status.generatedAt).toLocaleTimeString("it-IT")}.
+          {t("system.lastUpdated", { time: new Date(status.generatedAt).toLocaleTimeString(currentLocale()) })}
         </p>
       )}
     </div>
+  );
+}
+
+function LanguageCard() {
+  const { t, i18n: i18nInstance } = useTranslation();
+  const current = i18nInstance.language === "it" ? "it" : "en";
+  const setLang = (lang: Lang) => void i18n.changeLanguage(lang);
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Globe className="size-4" />
+          {t("system.language.title")}
+        </CardTitle>
+        <CardDescription>{t("system.language.description")}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex gap-2">
+        <Button size="sm" variant={current === "en" ? "default" : "outline"} onClick={() => setLang("en")}>
+          English
+        </Button>
+        <Button size="sm" variant={current === "it" ? "default" : "outline"} onClick={() => setLang("it")}>
+          Italiano
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -248,6 +279,7 @@ function SummaryTile({ label, value, state }: { label: string; value: number; st
  *  encodes this page's own origin (works over Tailscale too — it's whatever
  *  origin served this page) with ?token= so the phone auto-pairs on scan. */
 function PairingPanel({ token }: { token: string }) {
+  const { t } = useTranslation();
   const [qr, setQr] = useState<string | null>(null);
   const pairUrl = `${window.location.origin}/?token=${encodeURIComponent(token)}`;
   const canceledRef = useRef(false);
@@ -265,12 +297,12 @@ function PairingPanel({ token }: { token: string }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Smartphone className="size-4" />
-          Connetti il telefono
+          {t("system.pairing.title")}
         </CardTitle>
-        <CardDescription>Scansiona dal telefono (stessa rete Tailscale) per collegarlo.</CardDescription>
+        <CardDescription>{t("system.pairing.description")}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap items-center gap-4">
-        {qr && <img src={qr} alt="QR di pairing" className="size-[110px] rounded-md border bg-white p-1" />}
+        {qr && <img src={qr} alt={t("system.pairing.qrAlt")} className="size-[110px] rounded-md border bg-white p-1" />}
         <p className="text-muted-foreground min-w-0 flex-1 break-all font-mono text-xs">{pairUrl}</p>
       </CardContent>
     </Card>
@@ -288,6 +320,7 @@ function AutostartPanel({
   busy: boolean;
   onToggle: (enabled: boolean) => void | Promise<void>;
 }) {
+  const { t } = useTranslation();
   const enabled = autostart?.enabled ?? false;
   const canToggle = !!autostart?.supported && !!autostart?.appPath;
   return (
@@ -295,24 +328,24 @@ function AutostartPanel({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Power className="size-4" />
-          Avvio al login
+          {t("system.autostart.title")}
         </CardTitle>
-        <CardDescription>{bundled ? "Bundle production" : "Ambiente dev"}</CardDescription>
+        <CardDescription>{bundled ? t("system.autostart.bundled") : t("system.autostart.dev")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <Badge variant={enabled ? "default" : "outline"}>{enabled ? "attivo" : "disattivo"}</Badge>
+          <Badge variant={enabled ? "default" : "outline"}>{enabled ? t("system.autostart.on") : t("system.autostart.off")}</Badge>
           <Button
             size="sm"
             variant={enabled ? "outline" : "default"}
             disabled={!canToggle || busy}
             onClick={() => void onToggle(!enabled)}
           >
-            {busy ? "Salvo..." : enabled ? "Disattiva" : "Attiva"}
+            {busy ? t("system.autostart.saving") : enabled ? t("system.autostart.disable") : t("system.autostart.enable")}
           </Button>
         </div>
         <p className="text-muted-foreground break-words text-xs">
-          {autostart?.appPath ?? "Path app non disponibile."}
+          {autostart?.appPath ?? t("system.autostart.pathUnavailable")}
         </p>
         {autostart?.detail && <p className="text-destructive text-xs">{autostart.detail}</p>}
       </CardContent>
@@ -321,13 +354,14 @@ function AutostartPanel({
 }
 
 function ServiceRow({ service }: { service: SystemServiceStatus }) {
+  const { t } = useTranslation();
   return (
     <Card size="sm">
       <CardHeader className="grid-cols-[auto_1fr_auto]">
         <StateIcon state={service.state} />
         <div className="min-w-0">
           <CardTitle className="truncate">{service.label}</CardTitle>
-          <CardDescription className="truncate">{service.detail ?? "No detail"}</CardDescription>
+          <CardDescription className="truncate">{service.detail ?? t("system.serviceNoDetail")}</CardDescription>
         </div>
         <Badge variant={badgeVariant(service.state)}>{service.state}</Badge>
       </CardHeader>

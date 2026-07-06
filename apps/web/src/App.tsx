@@ -3,9 +3,12 @@ import { flushSync } from "react-dom";
 import { Mic, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useHostSocket } from "@/lib/host-socket";
 import { resolveToken, setToken } from "@/lib/auth";
 import { hostWsUrl, hostHttpBase } from "@/lib/host-url";
+import { currentLocale } from "@/lib/locale";
 import { ApprovalCard } from "@/components/approval-card";
 import { QuestionCard } from "@/components/question-card";
 import { Button } from "@/components/ui/button";
@@ -45,7 +48,8 @@ function AppMark({ className }: { className?: string }) {
 }
 
 function ConnectionDot({ connected, state }: { connected: boolean; state: "idle" | "running" }) {
-  const label = connected ? (state === "running" ? "Sta pensando" : "Connesso") : "Disconnesso";
+  const { t } = useTranslation();
+  const label = connected ? (state === "running" ? t("app.connection.thinking") : t("app.connection.connected")) : t("app.connection.disconnected");
   return (
     <span
       aria-label={label}
@@ -72,6 +76,7 @@ function consumeSendParam(): { text: string; from?: string | null; created?: boo
 }
 
 function App() {
+  const { t } = useTranslation();
   // Localhost (the Mac) auto-pairs via the host-injected global; a phone pairs
   // by scanning the System page's QR (?token=…, consumed once then stripped
   // from the address bar). No token yet → show the pairing screen instead of
@@ -289,7 +294,7 @@ function App() {
   const startRecording = async () => {
     if (recording || transcribing || host.state === "running") return;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      window.alert("La registrazione audio non e' supportata da questo browser.");
+      window.alert(t("app.audioNotSupported"));
       return;
     }
     try {
@@ -454,7 +459,7 @@ function App() {
         ) : (
         <div className="mx-auto w-full max-w-[52rem] space-y-3">
           {host.historyLoading && host.messages.length === 0 && (
-            <div className="flex justify-center py-10" aria-label="caricamento chat">
+            <div className="flex justify-center py-10" aria-label={t("app.loadingChat")}>
               <span className="border-muted-foreground/40 border-t-foreground size-5 animate-spin rounded-full border-2" />
             </div>
           )}
@@ -527,7 +532,7 @@ function App() {
                   </div>
                   <button
                     type="button"
-                    title="Rimuovi allegato"
+                    title={t("app.composer.removeAttachment")}
                     className="text-muted-foreground hover:text-destructive shrink-0 rounded p-1"
                     onClick={() => setAttachments((prev) => prev.filter((p) => p.token !== f.token))}
                   >
@@ -549,7 +554,7 @@ function App() {
               type="button"
               variant="outline"
               size="icon"
-              title="Allega file"
+              title={t("app.composer.attachFile")}
               disabled={!host.connected || uploading}
               onClick={() => fileInputRef.current?.click()}
             >
@@ -560,29 +565,29 @@ function App() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder={
-                transcribing ? "Trascrizione audio..."
-                  : recording ? "Registrazione in corso..."
-                  : dragOver ? "Rilascia i file qui…"
-                  : "Message your agent…  (/ per focus, trascina file per allegarli)"
+                transcribing ? t("app.composer.transcribing")
+                  : recording ? t("app.composer.recording")
+                  : dragOver ? t("app.composer.dropFiles")
+                  : t("app.composer.placeholder")
               }
             />
             <Button
               type="button"
               variant={recording ? "destructive" : "outline"}
               size="icon"
-              title={recording ? "Ferma registrazione" : "Registra audio"}
+              title={recording ? t("app.composer.stopRecording") : t("app.composer.startRecording")}
               disabled={!host.connected || transcribing || host.state === "running"}
               onClick={recording ? stopRecording : startRecording}
             >
               {recording ? <Square className="size-4" /> : transcribing ? "…" : <Mic className="size-4" />}
             </Button>
             {host.state === "running" ? (
-              <Button type="button" variant="destructive" onClick={host.stop} title="Stop generazione (Esc)">
-                ■ Stop
+              <Button type="button" variant="destructive" onClick={host.stop} title={t("app.composer.stopGeneration")}>
+                {t("app.composer.stop")}
               </Button>
             ) : (
-              <Button type="submit" title="Invia (Invio / ⌘↵)" disabled={!host.connected || (!draft.trim() && attachments.length === 0)}>
-                Send
+              <Button type="submit" title={t("app.composer.sendTitle")} disabled={!host.connected || (!draft.trim() && attachments.length === 0)}>
+                {t("app.composer.send")}
               </Button>
             )}
           </div>
@@ -596,7 +601,7 @@ function App() {
       <header className="flex items-center justify-between border-b px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <h1 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           <AppMark />
-          <span className="truncate">Steward</span>
+          <span className="truncate">{t("app.appName")}</span>
         </h1>
         <div className="flex items-center gap-3">
           {host.usage && (
@@ -604,7 +609,13 @@ function App() {
               type="button"
               onClick={openUsage}
               className="text-muted-foreground border-border hover:bg-muted rounded-md border px-2 py-0.5 text-xs tabular-nums transition"
-              title={`Ultimo turno: $${host.usage.turnCostUsd.toFixed(4)} · ${host.usage.tokens.total.toLocaleString("it-IT")} token (in ${host.usage.tokens.input.toLocaleString("it-IT")} / out ${host.usage.tokens.output.toLocaleString("it-IT")} / cache ${host.usage.tokens.cacheRead.toLocaleString("it-IT")}) — apri Usage`}
+              title={t("app.usageButtonTitle", {
+                cost: host.usage.turnCostUsd.toFixed(4),
+                total: host.usage.tokens.total.toLocaleString(currentLocale()),
+                input: host.usage.tokens.input.toLocaleString(currentLocale()),
+                output: host.usage.tokens.output.toLocaleString(currentLocale()),
+                cache: host.usage.tokens.cacheRead.toLocaleString(currentLocale()),
+              })}
             >
               ${host.usage.costUsd.toFixed(4)}
             </button>
@@ -621,14 +632,14 @@ function App() {
                 disabled={host.messages.length === 0}
                 onClick={copyJson}
               >
-                {copied ? "Copied ✓" : "Copy JSON"}
+                {copied ? t("app.menu.copied") : t("app.menu.copyJson")}
               </button>
               <button
                 type="button"
                 className="hover:bg-muted w-full rounded px-2 py-1.5 text-left text-sm"
                 onClick={() => setShowShortcuts(true)}
               >
-                Scorciatoie ⌨
+                {t("app.menu.shortcuts")}
               </button>
             </PopoverContent>
           </Popover>
@@ -676,12 +687,12 @@ function App() {
         >
           <div className="flex items-center gap-2 border-b px-3 py-2 lg:hidden">
             {canNavigateBack && (
-              <button type="button" aria-label="Indietro" className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
+              <button type="button" aria-label={t("app.back")} className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
             )}
             <span className="truncate text-sm font-medium">
-              {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title ?? "Chat")
-                : tab === "actions" ? (selectedAction?.title ?? "Azioni")
-                : tab === "usage" ? "Usage" : "System"}
+              {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title ?? t("app.mobileHeader.chatFallback"))
+                : tab === "actions" ? (selectedAction?.title ?? t("app.mobileHeader.actionsFallback"))
+                : tab === "usage" ? t("app.mobileHeader.usage") : t("app.mobileHeader.system")}
             </span>
           </div>
           {shown === "usage" ? (
@@ -713,7 +724,7 @@ function App() {
                 <div className="mb-2 flex justify-end">
                   <button
                     type="button"
-                    title="Chiudi pannello azione"
+                    title={t("actionDetail.closePanel")}
                     className="text-muted-foreground hover:text-foreground rounded p-1 text-sm"
                     onClick={() => setSplitActionId(null)}
                   >
@@ -738,24 +749,24 @@ function App() {
       {/* Bottom nav (mobile only) */}
       <nav className="flex border-t pb-[env(safe-area-inset-bottom)] lg:hidden">
         {([
-          ["chat", "💬 Chat", "flex-[2]"],
-          ["actions", "⚡ Azioni", "flex-[2]"],
-          ["usage", "Usage", "flex-1"],
-          ["system", "System", "flex-1"],
-        ] as const).map(([t, label, widthClass]) => (
+          ["chat", t("app.bottomNav.chat"), "flex-[2]"],
+          ["actions", t("app.bottomNav.actions"), "flex-[2]"],
+          ["usage", t("app.bottomNav.usage"), "flex-1"],
+          ["system", t("app.bottomNav.system"), "flex-1"],
+        ] as const).map(([tabKey, label, widthClass]) => (
           <button
-            key={t}
+            key={tabKey}
             type="button"
-            onClick={() => openMobileTab(t)}
-            aria-current={tab === t ? "page" : undefined}
+            onClick={() => openMobileTab(tabKey)}
+            aria-current={tab === tabKey ? "page" : undefined}
             className={cn(
               "relative py-4 text-center text-xs transition",
               widthClass,
-              tab === t ? "text-foreground font-medium" : "text-muted-foreground",
+              tab === tabKey ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
             {label}
-            {t === "actions" && newActionCount > 0 && (
+            {tabKey === "actions" && newActionCount > 0 && (
               <span className="bg-primary text-primary-foreground absolute -mt-1 ml-0.5 rounded-full px-1 text-[9px] font-semibold tabular-nums">
                 {newActionCount}
               </span>
@@ -775,6 +786,7 @@ export default App;
  * Mac's System page (either read off the QR pairing URL, or typed by hand).
  */
 function PairingScreen({ onPaired }: { onPaired: (token: string) => void }) {
+  const { t } = useTranslation();
   const [value, setValue] = useState("");
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -786,19 +798,19 @@ function PairingScreen({ onPaired }: { onPaired: (token: string) => void }) {
       <form onSubmit={submit} className="w-full max-w-sm space-y-3 rounded-lg border p-5">
         <h1 className="flex items-center gap-2 text-sm font-semibold">
           <AppMark />
-          <span>Steward</span>
+          <span>{t("app.appName")}</span>
         </h1>
         <p className="text-muted-foreground text-sm">
-          Incolla il token dal tuo Mac (pagina System).
+          {t("app.pairing.instructions")}
         </p>
         <Input
           autoFocus
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Token di pairing"
+          placeholder={t("app.pairing.placeholder")}
         />
         <Button type="submit" className="w-full" disabled={!value.trim()}>
-          Salva
+          {t("app.pairing.save")}
         </Button>
       </form>
     </div>
@@ -806,9 +818,10 @@ function PairingScreen({ onPaired }: { onPaired: (token: string) => void }) {
 }
 
 function ThinkingIndicator() {
+  const { t } = useTranslation();
   return (
     <div className="text-left">
-      <div className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-lg px-3 py-3" aria-label="sta ragionando">
+      <div className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-lg px-3 py-3" aria-label={t("app.thinking")}>
         <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
         <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
         <span className="size-1.5 animate-bounce rounded-full bg-current" />
@@ -824,57 +837,63 @@ function sameDay(a: number, b: number): boolean {
 }
 
 function fmtTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleTimeString(currentLocale(), { hour: "2-digit", minute: "2-digit" });
 }
 
-function fmtDay(ts: number): string {
+function fmtDay(ts: number, t: TFunction): string {
   const now = new Date();
   const d = new Date(ts);
   const today = sameDay(now.getTime(), ts);
   const yesterday = sameDay(now.getTime() - 86400_000, ts);
-  if (today) return "Oggi";
-  if (yesterday) return "Ieri";
-  return d.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+  if (today) return t("app.today");
+  if (yesterday) return t("app.yesterday");
+  return d.toLocaleDateString(currentLocale(), { weekday: "long", day: "numeric", month: "long" });
 }
 
 function DateDivider({ ts }: { ts: number }) {
+  const { t } = useTranslation();
   return (
     <div className="my-2 flex items-center gap-3">
       <div className="border-border flex-1 border-t" />
-      <span className="text-muted-foreground text-[10px] uppercase tracking-wide">{fmtDay(ts)}</span>
+      <span className="text-muted-foreground text-[10px] uppercase tracking-wide">{fmtDay(ts, t)}</span>
       <div className="border-border flex-1 border-t" />
     </div>
   );
 }
 
-const SHORTCUTS: [string, string][] = [
-  ["Invio", "Invia messaggio"],
-  ["Esc", "Ferma la generazione (o esci dal campo)"],
-  ["/", "Vai al campo messaggio"],
-  ["c", "Nuova chat"],
-  ["j / k", "Chat successiva / precedente"],
-  ["a", "Sidebar: Chat ⇄ Azioni"],
-  ["u", "Contenuto ⇄ Usage"],
-  ["?", "Mostra/nascondi questa guida"],
+/** [physical key label (untranslated literal, or "enterKey" for the one that
+ *  reads differently per language), translation key under app.shortcuts]. */
+const SHORTCUT_ROWS: [string, string][] = [
+  ["enterKey", "enter"],
+  ["Esc", "esc"],
+  ["/", "slash"],
+  ["c", "c"],
+  ["j / k", "jk"],
+  ["a", "a"],
+  ["u", "u"],
+  ["?", "question"],
 ];
 
 function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-background w-full max-w-sm rounded-lg border p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Scorciatoie da tastiera</h2>
+          <h2 className="text-sm font-semibold">{t("app.shortcuts.title")}</h2>
           <button type="button" className="text-muted-foreground hover:text-foreground text-sm" onClick={onClose}>✕</button>
         </div>
         <dl className="space-y-1.5">
-          {SHORTCUTS.map(([keys, desc]) => (
-            <div key={keys} className="flex items-center justify-between gap-4 text-sm">
-              <dt className="text-muted-foreground">{desc}</dt>
-              <dd className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs tabular-nums">{keys}</dd>
+          {SHORTCUT_ROWS.map(([keys, descKey]) => (
+            <div key={descKey} className="flex items-center justify-between gap-4 text-sm">
+              <dt className="text-muted-foreground">{t(`app.shortcuts.${descKey}`)}</dt>
+              <dd className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs tabular-nums">
+                {keys === "enterKey" ? t("app.shortcuts.enterKey") : keys}
+              </dd>
             </div>
           ))}
         </dl>
-        <p className="text-muted-foreground mt-3 text-[11px]">⌘ = Ctrl su Windows/Linux.</p>
+        <p className="text-muted-foreground mt-3 text-[11px]">{t("app.shortcuts.footer")}</p>
       </div>
     </div>
   );
@@ -946,12 +965,12 @@ const SUGGESTIONS: { icon: string; tint: string; label: string; draft: string }[
   { icon: "📚", tint: "border-pink-500/25 bg-pink-500/10", label: "Cosa sai di…?", draft: "Cosa sai di " },
 ];
 
-function greeting(): string {
+function greetingKey(): "night" | "morning" | "afternoon" | "evening" {
   const h = new Date().getHours();
-  if (h < 6) return "Buonanotte";
-  if (h < 13) return "Buongiorno";
-  if (h < 18) return "Buon pomeriggio";
-  return "Buonasera";
+  if (h < 6) return "night";
+  if (h < 13) return "morning";
+  if (h < 18) return "afternoon";
+  return "evening";
 }
 
 /** Empty-state of a fresh chat: breathing aurora behind a gradient greeting,
@@ -965,6 +984,7 @@ function EmptyChat({
   onSuggestion: (draft: string) => void;
   onOpenActions: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="relative flex h-full flex-col items-center justify-center gap-7 overflow-hidden px-4">
       <div
@@ -974,9 +994,9 @@ function EmptyChat({
       />
       <div className="relative text-center motion-reduce:animate-none" style={{ animation: "steward-rise 0.5s ease-out both" }}>
         <h2 className="bg-gradient-to-r from-indigo-500 via-violet-500 to-amber-500 bg-clip-text text-3xl font-semibold text-transparent">
-          {greeting()}, Alessio
+          {t(`app.greeting.${greetingKey()}`)}, Alessio
         </h2>
-        <p className="text-muted-foreground mt-2 text-sm">Chiedimi qualcosa o affidami un compito.</p>
+        <p className="text-muted-foreground mt-2 text-sm">{t("app.emptyChatSubtitle")}</p>
       </div>
       <div className="relative grid w-full max-w-md gap-2 sm:grid-cols-2">
         {SUGGESTIONS.map((s, i) => (
@@ -1001,16 +1021,16 @@ function EmptyChat({
           className="relative flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-500 transition hover:bg-amber-500/20 motion-reduce:animate-none"
           style={{ animation: "steward-rise 0.5s ease-out both", animationDelay: "430ms" }}
         >
-          ⚡ {newActionCount} {newActionCount === 1 ? "azione in attesa" : "azioni in attesa"}
+          {t("app.pendingActions", { count: newActionCount })}
         </button>
       )}
       <div
         className="text-muted-foreground/70 relative hidden items-center gap-3 text-[11px] lg:flex motion-reduce:animate-none"
         style={{ animation: "steward-rise 0.5s ease-out both", animationDelay: "500ms" }}
       >
-        <span><Kbd>/</Kbd> scrivi</span>
-        <span><Kbd>c</Kbd> nuova chat</span>
-        <span><Kbd>?</Kbd> scorciatoie</span>
+        <span><Kbd>/</Kbd> {t("app.kbdType")}</span>
+        <span><Kbd>c</Kbd> {t("app.kbdNewChat")}</span>
+        <span><Kbd>?</Kbd> {t("app.kbdShortcuts")}</span>
       </div>
     </div>
   );

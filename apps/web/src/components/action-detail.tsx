@@ -4,6 +4,8 @@
  * from App.tsx; helpers below are only used here.
  */
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -18,6 +20,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { formatWhen, priorityVariant } from "@/lib/format";
+import { currentLocale } from "@/lib/locale";
 import type { ActionCenterItem } from "@steward/protocol";
 
 export function ActionDetail({
@@ -33,10 +36,11 @@ export function ActionDetail({
   onExecute: (proposalId: string) => void;
   onRevise: (proposalId: string, instruction: string) => void;
 }) {
-  if (!action) return <p className="text-muted-foreground text-sm">Seleziona una action.</p>;
+  const { t } = useTranslation();
+  if (!action) return <p className="text-muted-foreground text-sm">{t("actionDetail.selectAction")}</p>;
   const proposals = Array.isArray(action.payload.proposedActions) ? action.payload.proposedActions as ProposedActionView[] : [];
-  const deadline = readDeadline(action);
-  const mailGroups = collectRelatedMailGroups(action);
+  const deadline = readDeadline(action, t);
+  const mailGroups = collectRelatedMailGroups(action, t);
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -48,18 +52,18 @@ export function ActionDetail({
         <h2 className="text-lg font-semibold">{action.title}</h2>
         <p className="text-muted-foreground text-sm">{action.summary}</p>
         <p className="text-muted-foreground text-xs">
-          Updated {formatWhen(action.updatedAt)} · Due {action.dueAt ? formatWhen(action.dueAt) : "—"}
+          {t("actionDetail.updated", { when: formatWhen(action.updatedAt) })} · {t("actionDetail.due", { when: action.dueAt ? formatWhen(action.dueAt) : "—" })}
         </p>
         <div className="rounded-md border p-2 text-sm">
-          <span className="font-medium">Deadline: </span>
+          <span className="font-medium">{t("actionDetail.deadlineLabel")} </span>
           <span>{deadline.label}</span>
-          {deadline.estimated && <span className="text-muted-foreground"> · estimated</span>}
+          {deadline.estimated && <span className="text-muted-foreground"> · {t("actionDetail.estimated")}</span>}
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => onOpenChat(action)}>Open in chat</Button>
-        <Button size="sm" variant="outline" onClick={() => onMark("done")}>Done</Button>
-        <Button size="sm" variant="outline" onClick={() => onMark("dismissed")}>Dismiss</Button>
+        <Button size="sm" onClick={() => onOpenChat(action)}>{t("actionDetail.openInChat")}</Button>
+        <Button size="sm" variant="outline" onClick={() => onMark("done")}>{t("actionDetail.done")}</Button>
+        <Button size="sm" variant="outline" onClick={() => onMark("dismissed")}>{t("actionDetail.dismiss")}</Button>
       </div>
       {mailGroups.length > 0 && (
         <Card size="sm" className="overflow-hidden">
@@ -68,9 +72,9 @@ export function ActionDetail({
               <AccordionItem value="related-mail" className="border-0">
                 <AccordionTrigger className="px-4 py-3 no-underline hover:no-underline">
                   <div className="text-left">
-                    <div className="text-sm font-semibold">Related mail</div>
+                    <div className="text-sm font-semibold">{t("actionDetail.relatedMail.title")}</div>
                     <div className="text-muted-foreground text-xs">
-                      {mailGroups.length} {mailGroups.length === 1 ? "contesto" : "contesti"} deduplicati
+                      {t("actionDetail.relatedMail.count", { count: mailGroups.length })}
                     </div>
                   </div>
                 </AccordionTrigger>
@@ -81,7 +85,7 @@ export function ActionDetail({
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant="outline">{group.kind}</Badge>
+                              <Badge variant="outline">{mailKindLabel(group.kind, t)}</Badge>
                               <span className="truncate text-sm font-medium">{group.title}</span>
                             </div>
                             <div className="text-muted-foreground mt-1 text-xs">
@@ -89,7 +93,7 @@ export function ActionDetail({
                             </div>
                           </div>
                           <Button className="shrink-0" size="sm" variant="outline" onClick={() => { window.location.href = group.url; }}>
-                            {group.kind === "Main thread" ? "Open representative mail" : "Open in Mail"}
+                            {group.kind === "Main thread" ? t("actionDetail.relatedMail.openRepresentative") : t("actionDetail.relatedMail.openInMail")}
                           </Button>
                         </div>
                         {group.description && <p className="text-muted-foreground text-xs leading-relaxed">{group.description}</p>}
@@ -108,8 +112,8 @@ export function ActionDetail({
         </Card>
       )}
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold">Proposed actions</h3>
-        {proposals.length === 0 ? <p className="text-muted-foreground text-sm">Nessuna proposta salvata.</p> : proposals.map((proposal) => (
+        <h3 className="text-sm font-semibold">{t("actionDetail.proposedActions")}</h3>
+        {proposals.length === 0 ? <p className="text-muted-foreground text-sm">{t("actionDetail.noProposals")}</p> : proposals.map((proposal) => (
           <ProposalCard
             key={proposal.id}
             proposal={proposal}
@@ -122,8 +126,8 @@ export function ActionDetail({
       </div>
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Context</CardTitle>
-          <CardDescription>Snapshot salvato dall’Action Center.</CardDescription>
+          <CardTitle>{t("actionDetail.context.title")}</CardTitle>
+          <CardDescription>{t("actionDetail.context.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <pre className="bg-muted max-h-72 overflow-auto rounded-md p-2 text-xs">
@@ -133,6 +137,12 @@ export function ActionDetail({
       </Card>
     </div>
   );
+}
+
+function mailKindLabel(kind: RelatedMailGroup["kind"], t: TFunction): string {
+  if (kind === "Main thread") return t("actionDetail.mailKind.mainThread");
+  if (kind === "Related fact") return t("actionDetail.mailKind.relatedFact");
+  return t("actionDetail.mailKind.referencedMail");
 }
 
 function ProposalCard({
@@ -148,6 +158,7 @@ function ProposalCard({
   onExecute: (proposalId: string) => void;
   onRevise: (proposalId: string, instruction: string) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [pendingRevision, setPendingRevision] = useState<{ revisionCount: number; updatedAt: number } | null>(null);
@@ -186,18 +197,18 @@ function ProposalCard({
             }}
           >
             <PopoverTrigger className={cn(buttonVariants({ size: "sm", variant: "outline" }))}>
-              Revise proposal
+              {t("actionDetail.proposal.revise")}
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="w-80">
               <PopoverHeader>
-                <PopoverTitle>Revise this proposal</PopoverTitle>
+                <PopoverTitle>{t("actionDetail.proposal.reviseTitle")}</PopoverTitle>
                 <PopoverDescription>
-                  Describe only how this saved proposal should change.
+                  {t("actionDetail.proposal.reviseDescription")}
                 </PopoverDescription>
               </PopoverHeader>
               <textarea
                 className="border-input bg-muted h-24 w-full resize-y rounded-md border p-2 text-xs outline-none"
-                placeholder="Es. “usa ferie e scusati per il ritardo”"
+                placeholder={t("actionDetail.proposal.revisePlaceholder")}
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
                 disabled={pendingRevision != null}
@@ -205,7 +216,7 @@ function ProposalCard({
               />
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={closeAndClear} disabled={pendingRevision != null}>
-                  Cancel
+                  {t("actionDetail.proposal.cancel")}
                 </Button>
                 <Button
                   size="sm"
@@ -215,19 +226,19 @@ function ProposalCard({
                     onRevise(proposal.id, instruction);
                   }}
                 >
-                  {pendingRevision ? "Updating…" : "Confirm revision"}
+                  {pendingRevision ? t("actionDetail.proposal.updating") : t("actionDetail.proposal.confirmRevision")}
                 </Button>
               </div>
             </PopoverContent>
           </Popover>
-          <Button size="sm" onClick={() => onExecute(proposal.id)}>Execute proposal</Button>
+          <Button size="sm" onClick={() => onExecute(proposal.id)}>{t("actionDetail.proposal.execute")}</Button>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function readDeadline(action: ActionCenterItem): { label: string; estimated: boolean } {
+function readDeadline(action: ActionCenterItem, t: TFunction): { label: string; estimated: boolean } {
   const raw = action.payload.deadline;
   if (raw && typeof raw === "object") {
     const d = raw as Record<string, unknown>;
@@ -239,7 +250,7 @@ function readDeadline(action: ActionCenterItem): { label: string; estimated: boo
       return { label: formatWhen(Math.floor(Date.parse(iso) / 1000)), estimated };
     }
   }
-  return action.dueAt ? { label: formatWhen(action.dueAt), estimated: true } : { label: "None", estimated: false };
+  return action.dueAt ? { label: formatWhen(action.dueAt), estimated: true } : { label: t("actionDetail.noDeadline"), estimated: false };
 }
 
 interface ProposedActionView {
@@ -261,7 +272,7 @@ interface RelatedMailGroup {
   date?: string;
 }
 
-function collectRelatedMailGroups(action: ActionCenterItem): RelatedMailGroup[] {
+function collectRelatedMailGroups(action: ActionCenterItem, t: TFunction): RelatedMailGroup[] {
   const groups = new Map<string, RelatedMailGroup>();
   const actionThreadId = typeof action.payload.threadId === "number" ? action.payload.threadId : null;
   const context = action.payload.contextSnapshot as Record<string, unknown> | undefined;
@@ -295,10 +306,10 @@ function collectRelatedMailGroups(action: ActionCenterItem): RelatedMailGroup[] 
       key: `fact:${threadId}`,
       kind: "Related fact",
       url: normalized.url,
-      title: typeof fact.subject === "string" ? cleanSubject(fact.subject) : "Related mail",
+      title: typeof fact.subject === "string" ? cleanSubject(fact.subject) : t("actionDetail.mailKind.relatedFact"),
       description: typeof fact.meaning === "string"
         ? fact.meaning.replace(/^Alessio already told the recipient/i, "Alessio ha già comunicato a Giulia")
-        : "Informazione correlata trovata in un altro thread.",
+        : t("actionDetail.relatedFactFallback"),
       snippet: typeof fact.snippet === "string" ? fact.snippet.slice(0, 240) : undefined,
       date,
       dateLabel: formatDateLabel(date),
@@ -317,9 +328,9 @@ function collectRelatedMailGroups(action: ActionCenterItem): RelatedMailGroup[] 
         key: `thread:${actionThreadId ?? "main"}`,
         kind: "Main thread",
         url: representativeUrl,
-        title: cleanSubject(String(action.payload.subject ?? latest.subject ?? "Thread principale")),
-        description: "Thread da cui nasce questa action.",
-        countLabel: `${mainThreadRecords.length} email`,
+        title: cleanSubject(String(action.payload.subject ?? latest.subject ?? t("actionDetail.mainThreadFallbackTitle"))),
+        description: t("actionDetail.mainThreadDescription"),
+        countLabel: t("actionDetail.mainThreadEmailCount", { count: mainThreadRecords.length }),
         date,
         dateLabel: formatDateLabel(date),
       });
@@ -331,7 +342,7 @@ function collectRelatedMailGroups(action: ActionCenterItem): RelatedMailGroup[] 
       kind: "Referenced mail",
       url: mailUrlFromMessageId(action.payload.messageId),
       title: cleanSubject(String(action.payload.subject ?? shortMessageId(action.payload.messageId))),
-      description: "Email principale associata all'action.",
+      description: t("actionDetail.referencedMailDescription"),
       date,
       dateLabel: formatDateLabel(date),
     });
@@ -441,7 +452,7 @@ function maxDate(a?: string, b?: string): string | undefined {
 
 function formatDateLabel(date?: string): string | undefined {
   if (!date || !Number.isFinite(Date.parse(date))) return undefined;
-  return new Date(date).toLocaleString("it-IT", {
+  return new Date(date).toLocaleString(currentLocale(), {
     day: "2-digit",
     month: "short",
     hour: "2-digit",

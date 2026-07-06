@@ -1,7 +1,8 @@
 import type { ActionCenterItem } from "@steward/protocol";
+import { currentLocale } from "@/lib/locale";
 
 export function formatWhen(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toLocaleString("it-IT", {
+  return new Date(unixSeconds * 1000).toLocaleString(currentLocale(), {
     month: "short",
     day: "numeric",
     hour: "2-digit",

@@ -6,6 +6,7 @@
  * it on Finder copies the file out.
  */
 import { Download } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { authTokenKey, isLocalClient } from "@/lib/auth";
 import { hostHttpBase } from "@/lib/host-url";
@@ -44,6 +45,7 @@ export function FileChip({
   onOpen: (token: string) => void;
   onReveal: (token: string) => void;
 }) {
+  const { t } = useTranslation();
   const url = fileUrl(file.token);
   const local = isLocalClient(); // Mac-only actions (native open / Finder) hidden on the phone
   return (
@@ -60,22 +62,22 @@ export function FileChip({
         e.dataTransfer.effectAllowed = "copy";
       }}
       className="bg-muted/60 hover:bg-muted flex items-center gap-2 rounded-md border px-2 py-1.5"
-      title="Trascina per copiare il file"
+      title={t("fileChip.dragTitle")}
     >
       <span aria-hidden>{iconFor(file.mime)}</span>
       <button
         type="button"
         onClick={() => window.open(url, "_blank")}
         className="min-w-0 flex-1 truncate text-left font-medium hover:underline"
-        title="Apri il file"
+        title={t("fileChip.openFileTitle")}
       >
         {file.name}
       </button>
       <span className="text-muted-foreground tabular-nums">{fmtSize(file.size)}</span>
       {local ? (
         <>
-          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onOpen(file.token)} title="Apri nell'app di sistema">Apri</Button>
-          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title="Mostra nel Finder">Finder</Button>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onOpen(file.token)} title={t("fileChip.openSystemTitle")}>{t("fileChip.open")}</Button>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title={t("fileChip.finderTitle")}>{t("fileChip.finder")}</Button>
         </>
       ) : (
         <a
@@ -83,8 +85,8 @@ export function FileChip({
           download={file.name}
           onClick={(e) => e.stopPropagation()}
           className="text-muted-foreground hover:text-foreground rounded p-1"
-          title="Scarica il file"
-          aria-label="Scarica il file"
+          title={t("fileChip.downloadTitle")}
+          aria-label={t("fileChip.downloadTitle")}
         >
           <Download className="size-4" />
         </a>

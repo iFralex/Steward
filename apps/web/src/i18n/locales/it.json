@@ -1,0 +1,291 @@
+{
+  "app": {
+    "appName": "Steward",
+    "connection": {
+      "thinking": "Sta pensando",
+      "connected": "Connesso",
+      "disconnected": "Disconnesso"
+    },
+    "loadingChat": "caricamento chat",
+    "composer": {
+      "transcribing": "Trascrizione audio...",
+      "recording": "Registrazione in corso...",
+      "dropFiles": "Rilascia i file qui…",
+      "placeholder": "Scrivi al tuo agente…  (/ per il focus, trascina i file per allegarli)",
+      "attachFile": "Allega file",
+      "removeAttachment": "Rimuovi allegato",
+      "stopRecording": "Ferma registrazione",
+      "startRecording": "Registra audio",
+      "stopGeneration": "Ferma generazione (Esc)",
+      "stop": "■ Ferma",
+      "send": "Invia",
+      "sendTitle": "Invia (Invio / ⌘↵)"
+    },
+    "usageButtonTitle": "Ultimo turno: ${{cost}} · {{total}} token (in {{input}} / out {{output}} / cache {{cache}}) — apri Usage",
+    "menu": {
+      "copyJson": "Copia JSON",
+      "copied": "Copiato ✓",
+      "shortcuts": "Scorciatoie ⌨"
+    },
+    "mobileHeader": {
+      "chatFallback": "Chat",
+      "actionsFallback": "Azioni",
+      "usage": "Utilizzo",
+      "system": "Sistema"
+    },
+    "bottomNav": {
+      "chat": "💬 Chat",
+      "actions": "⚡ Azioni",
+      "usage": "Utilizzo",
+      "system": "Sistema"
+    },
+    "back": "Indietro",
+    "audioNotSupported": "La registrazione audio non è supportata da questo browser.",
+    "pairing": {
+      "instructions": "Incolla il token dal tuo Mac (pagina System).",
+      "placeholder": "Token di pairing",
+      "save": "Salva"
+    },
+    "thinking": "sta ragionando",
+    "today": "Oggi",
+    "yesterday": "Ieri",
+    "shortcuts": {
+      "title": "Scorciatoie da tastiera",
+      "footer": "⌘ = Ctrl su Windows/Linux.",
+      "enterKey": "Invio",
+      "enter": "Invia messaggio",
+      "esc": "Ferma la generazione (o esci dal campo)",
+      "slash": "Vai al campo messaggio",
+      "c": "Nuova chat",
+      "jk": "Chat successiva / precedente",
+      "a": "Sidebar: Chat ⇄ Azioni",
+      "u": "Contenuto ⇄ Usage",
+      "question": "Mostra/nascondi questa guida"
+    },
+    "greeting": {
+      "night": "Buonanotte",
+      "morning": "Buongiorno",
+      "afternoon": "Buon pomeriggio",
+      "evening": "Buonasera"
+    },
+    "emptyChatSubtitle": "Chiedimi qualcosa o affidami un compito.",
+    "pendingActions_one": "⚡ {{count}} azione in attesa",
+    "pendingActions_other": "⚡ {{count}} azioni in attesa",
+    "kbdType": "scrivi",
+    "kbdNewChat": "nuova chat",
+    "kbdShortcuts": "scorciatoie"
+  },
+  "sidebar": {
+    "tabs": { "chat": "Chat", "actions": "Azioni" },
+    "footer": { "usage": "Utilizzo", "system": "Sistema" },
+    "chatList": {
+      "new": "+ Nuova",
+      "newTitle": "Nuova chat",
+      "empty": "Nessuna chat.",
+      "messageCount_one": "{{count}} messaggio",
+      "messageCount_other": "{{count}} messaggi",
+      "saveTitle": "Salva questa chat (rendila permanente)",
+      "saveAria": "Salva la chat {{title}}",
+      "renameTitle": "Rinomina",
+      "renameAria": "Rinomina la chat {{title}}",
+      "renamePrompt": "Rinomina chat",
+      "deleteTitle": "Elimina",
+      "deleteAria": "Elimina la chat {{title}}",
+      "deleteConfirm": "Eliminare la chat \"{{title}}\"? L'azione è irreversibile."
+    },
+    "actionList": {
+      "diagnostics": "{{new}} nuove · {{stale}} obsolete · prossima {{next}}",
+      "refreshTitle": "Aggiorna",
+      "filtersTitle": "Filtri e diagnostica",
+      "status": { "new": "nuove", "read": "lette", "done": "completate", "dismissed": "scartate" },
+      "deferred": "Rimandate: {{list}}",
+      "showDone": "Mostra completate/scartate",
+      "empty": "Nessuna azione."
+    }
+  },
+  "system": {
+    "title": "Sistema",
+    "subtitle": "Servizi locali, tool MCP e avvio al login.",
+    "refresh": "Aggiorna",
+    "refreshTitle": "Aggiorna stato",
+    "summary": { "ok": "OK", "warning": "Attenzione", "error": "Errore" },
+    "autostart": {
+      "title": "Avvio al login",
+      "bundled": "Bundle production",
+      "dev": "Ambiente dev",
+      "on": "attivo",
+      "off": "disattivo",
+      "saving": "Salvo...",
+      "disable": "Disattiva",
+      "enable": "Attiva",
+      "pathUnavailable": "Path app non disponibile."
+    },
+    "pairing": {
+      "title": "Connetti il telefono",
+      "description": "Scansiona dal telefono (stessa rete Tailscale) per collegarlo.",
+      "qrAlt": "QR di pairing"
+    },
+    "push": {
+      "title": "Notifiche push",
+      "description": "Ricevi una notifica quando c'è una proposta da approvare, anche ad app chiusa. Su iPhone: aggiungi prima Steward alla schermata Home.",
+      "on": "Notifiche attive ✓",
+      "enabling": "Attivazione…",
+      "enable": "Attiva notifiche",
+      "testArriving": "In arrivo tra ~15s…",
+      "testSend": "Invia notifica di test",
+      "testHint": "Puoi anche chiudere l'app: la notifica arriva comunque.",
+      "testError": "Invio non riuscito — riprova.",
+      "msgDenied": "Permesso negato — abilitalo nelle impostazioni del browser.",
+      "msgInsecure": "Le notifiche richiedono una connessione sicura (HTTPS). Sul telefono via http non sono disponibili: serve abilitare HTTPS su Tailscale e aprire l'app via https://…",
+      "msgNeedsHomeScreen": "Su iPhone: prima aggiungi Steward alla schermata Home (Condividi → Aggiungi a Home), poi apri l'app dall'icona e riprova.",
+      "msgUnsupported": "Questo browser non supporta le notifiche push (funzionano dall'app in Home sul telefono, non dalla finestra sul Mac).",
+      "msgError": "Attivazione non riuscita — riprova."
+    },
+    "servicesLoading": "Caricamento stato servizi...",
+    "serviceNoDetail": "Nessun dettaglio",
+    "lastUpdated": "Ultimo aggiornamento: {{time}}.",
+    "language": {
+      "title": "Lingua",
+      "description": "Scegli la lingua dell'app."
+    }
+  },
+  "usage": {
+    "periods": { "7": "Ultimi 7 giorni", "30": "Ultimi 30 giorni", "all": "Tutto" },
+    "kinds": { "input": "Input", "output": "Output", "cacheRead": "Lettura cache", "cacheWrite": "Scrittura cache" },
+    "title": "Utilizzo",
+    "subtitle": "Ogni chiamata LLM, per servizio e azione · {{calls}} chiamate nel periodo",
+    "refresh": "Aggiorna",
+    "loadError": "Impossibile caricare i costi: {{error}}",
+    "retry": "Riprova",
+    "loading": "Caricamento…",
+    "noData": "—",
+    "stats": { "totalCost": "Costo totale", "costToday": "Costo oggi", "calls": "Chiamate LLM", "totalTokens": "Token totali", "tokensSub": "{{count}} token" },
+    "byService": {
+      "title": "Costo per servizio",
+      "unknownWarning": "⚠ Sono presenti chiamate «unknown»: un chiamante non manda gli header di attribuzione.",
+      "empty": "Nessuna chiamata nel periodo.",
+      "needsLabel": "da etichettare",
+      "row": "{{cost}} · {{calls}} chiamate · {{tokens}} tok"
+    },
+    "byAction": {
+      "title": "Costo per azione",
+      "empty": "Nessuna azione nel periodo.",
+      "headers": { "service": "Servizio", "action": "Azione", "calls": "Chiamate", "tokens": "Token", "avgCost": "Costo medio / pezzo", "totalCost": "Costo totale" }
+    },
+    "byDay": { "title": "Costo per giorno", "empty": "Nessun dato.", "chartAria": "Costo per giorno per servizio", "tooltip": "{{day}} · {{service}}: {{cost}} · {{tokens}} tok · {{calls}} chiamate" },
+    "byKind": { "title": "Costo per tipo di token" },
+    "byModel": { "title": "Costo per modello", "row": "{{cost}} · {{tokens}} tok · {{calls}} chiamate" },
+    "byTool": {
+      "title": "Tool",
+      "empty": "Nessuna invocazione registrata.",
+      "calls": "{{count}} chiamate",
+      "errors": "{{count}} errori",
+      "total": "{{time}} totali",
+      "headers": { "tool": "Tool", "calls": "Chiamate", "errors": "Errori", "avg": "Media", "max": "Max", "total": "Totale", "frequency": "Frequenza" }
+    },
+    "recent": {
+      "title": "Chiamate recenti",
+      "empty": "Nessuna chiamata registrata.",
+      "error": "errore",
+      "headers": { "when": "Quando", "service": "Servizio", "action": "Azione", "model": "Modello", "in": "In", "out": "Out", "duration": "Durata", "cost": "Costo" }
+    }
+  },
+  "actionDetail": {
+    "closePanel": "Chiudi pannello azione",
+    "selectAction": "Seleziona una action.",
+    "updated": "Aggiornata il {{when}}",
+    "due": "Scadenza {{when}}",
+    "deadlineLabel": "Scadenza:",
+    "noDeadline": "Nessuna",
+    "estimated": "stimata",
+    "openInChat": "Apri in chat",
+    "done": "Fatto",
+    "dismiss": "Ignora",
+    "relatedMail": {
+      "title": "Mail correlate",
+      "count_one": "{{count}} contesto deduplicato",
+      "count_other": "{{count}} contesti deduplicati",
+      "openRepresentative": "Apri mail rappresentativa",
+      "openInMail": "Apri in Mail"
+    },
+    "proposedActions": "Azioni proposte",
+    "noProposals": "Nessuna proposta salvata.",
+    "context": {
+      "title": "Contesto",
+      "description": "Snapshot salvato dall'Action Center."
+    },
+    "proposal": {
+      "revise": "Rivedi proposta",
+      "reviseTitle": "Rivedi questa proposta",
+      "reviseDescription": "Descrivi solo come deve cambiare questa proposta salvata.",
+      "revisePlaceholder": "Es. \"usa ferie e scusati per il ritardo\"",
+      "cancel": "Annulla",
+      "updating": "Aggiornamento…",
+      "confirmRevision": "Conferma revisione",
+      "execute": "Esegui proposta"
+    },
+    "mailKind": {
+      "mainThread": "Thread principale",
+      "relatedFact": "Fatto correlato",
+      "referencedMail": "Mail referenziata"
+    },
+    "relatedFactFallback": "Informazione correlata trovata in un altro thread.",
+    "mainThreadDescription": "Thread da cui nasce questa action.",
+    "mainThreadEmailCount": "{{count}} email",
+    "mainThreadFallbackTitle": "Thread principale",
+    "referencedMailDescription": "Email principale associata all'action."
+  },
+  "approval": {
+    "fields": {
+      "from": "Da", "to": "A", "cc": "Cc", "bcc": "Ccn", "subject": "Oggetto", "body": "Corpo",
+      "attachments": "Allegati", "scheduledSend": "Invio posticipato", "replyAll": "Rispondi a tutti",
+      "calendar": "Calendario", "title": "Titolo", "start": "Inizio", "end": "Fine", "location": "Luogo",
+      "description": "Descrizione", "url": "URL", "alarms": "Avvisi (minuti prima, separati da virgola)"
+    },
+    "filesPlaceholder": "Trascina un file dalla chat, o incolla un percorso + Invio",
+    "approvalRequested": "approvazione richiesta",
+    "edit": "Modifica",
+    "argsMustBeObject": "Gli argomenti devono essere un oggetto JSON",
+    "invalidJson": "JSON non valido",
+    "notePlaceholder": "Nota opzionale (inviata all'agente)",
+    "approve": "Approva",
+    "reject": "Rifiuta",
+    "editDialogTitle": "Modifica · {{name}}",
+    "confirmDone": "Fatto"
+  },
+  "question": { "skip": "Salta", "send": "Invia" },
+  "toolCard": {
+    "results_one": "{{count}} risultato",
+    "results_other": "{{count}} risultati",
+    "error": "errore",
+    "sent": "inviata",
+    "eventCreated": "evento creato",
+    "eventUpdated": "evento aggiornato",
+    "eventDeleted": "evento eliminato",
+    "input": "Input",
+    "output": "Output",
+    "statusRunning": "in corso",
+    "statusError": "errore",
+    "statusOk": "ok"
+  },
+  "fileChip": {
+    "dragTitle": "Trascina per copiare il file",
+    "openFileTitle": "Apri il file",
+    "open": "Apri",
+    "openSystemTitle": "Apri nell'app di sistema",
+    "finder": "Finder",
+    "finderTitle": "Mostra nel Finder",
+    "downloadTitle": "Scarica il file"
+  },
+  "cards": {
+    "noSubject": "(senza oggetto)",
+    "fields": { "from": "Da", "to": "A", "cc": "Cc", "bcc": "Ccn", "date": "Data", "scheduledSend": "Invio posticipato" },
+    "replyAll": "↩︎ Rispondi a tutti",
+    "openInMail": "Apri in Mail",
+    "noEventTitle": "(evento)",
+    "eventFields": { "when": "Quando", "location": "Luogo", "calendar": "Calendario", "alerts": "Avvisi", "url": "URL" },
+    "alarms": { "days": "{{count}}g prima", "hours": "{{count}}h prima", "minutes": "{{count}} min prima" },
+    "noResults": "Nessun risultato."
+  },
+  "datetimePicker": { "chooseDate": "Scegli data", "clear": "Cancella" }
+}

@@ -6,11 +6,13 @@
  * SVG, no charting dependency.
  */
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { currentLocale } from "@/lib/locale";
 
 interface Totals { calls: number; cost: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 interface ServiceRow { service: string; cost: number; calls: number; tokens: number }
@@ -38,18 +40,14 @@ interface UsageSummary {
 }
 
 type Period = "7" | "30" | "all";
-const PERIODS: { key: Period; label: string }[] = [
-  { key: "7", label: "7 giorni" },
-  { key: "30", label: "30 giorni" },
-  { key: "all", label: "Tutto" },
-];
+const PERIODS: Period[] = ["7", "30", "all"];
 
-/** The four token kinds, with display label and a stable color. */
+/** The four token kinds, with a stable color; the display label is translated. */
 const KINDS = [
-  { key: "input", label: "Input", color: "#6366f1" },
-  { key: "output", label: "Output", color: "#10b981" },
-  { key: "cacheRead", label: "Cache read", color: "#f59e0b" },
-  { key: "cacheWrite", label: "Cache write", color: "#ec4899" },
+  { key: "input", color: "#6366f1" },
+  { key: "output", color: "#10b981" },
+  { key: "cacheRead", color: "#f59e0b" },
+  { key: "cacheWrite", color: "#ec4899" },
 ] as const;
 
 /** Stable per-service colors (fallback palette for services not listed). */
@@ -70,7 +68,7 @@ function serviceColor(service: string, index: number): string {
 }
 
 const usd = (n: number) => `$${n >= 1 ? n.toFixed(2) : n >= 0.01 ? n.toFixed(4) : n.toFixed(6)}`;
-const intl = (n: number) => Math.round(n).toLocaleString("it-IT");
+const intl = (n: number) => Math.round(n).toLocaleString(currentLocale());
 const compact = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(Math.round(n));
 const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}s` : `${Math.round(n)}ms`);
@@ -82,6 +80,7 @@ const todayKey = () => {
 };
 
 export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState<Period>("30");
   const [data, setData] = useState<UsageSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -108,73 +107,73 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
   if (error) {
     return (
       <div className="p-6">
-        <p className="text-destructive text-sm">Impossibile caricare i costi: {error}</p>
+        <p className="text-destructive text-sm">{t("usage.loadError", { error })}</p>
         <Button size="sm" variant="outline" className="mt-3" onClick={() => void load()}>
-          Riprova
+          {t("usage.retry")}
         </Button>
       </div>
     );
   }
   if (!data) {
-    return <div className="text-muted-foreground p-6 text-sm">{loading ? "Caricamento…" : "—"}</div>;
+    return <div className="text-muted-foreground p-6 text-sm">{loading ? t("usage.loading") : t("usage.noData")}</div>;
   }
 
-  const t = data.totals;
-  const totalTokens = t.input + t.output + t.cacheRead + t.cacheWrite;
+  const totals = data.totals;
+  const totalTokens = totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
   const costToday = data.byDay.filter((d) => d.day === todayKey()).reduce((s, d) => s + d.cost, 0);
   const hasUnknown = data.byService.some((s) => s.service === "unknown");
-  const costByKind = KINDS.map((k) => ({ ...k, tokens: t[k.key], cost: data.costByKind[k.key] }));
+  const costByKind = KINDS.map((k) => ({ ...k, label: t(`usage.kinds.${k.key}`), tokens: totals[k.key], cost: data.costByKind[k.key] }));
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Usage</h2>
+          <h2 className="text-lg font-semibold">{t("usage.title")}</h2>
           <p className="text-muted-foreground text-sm">
-            Ogni chiamata LLM, per servizio e azione · {intl(t.calls)} chiamate nel periodo
+            {t("usage.subtitle", { calls: intl(totals.calls) })}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex rounded-md border">
             {PERIODS.map((p) => (
               <Button
-                key={p.key}
+                key={p}
                 size="sm"
-                variant={period === p.key ? "secondary" : "ghost"}
+                variant={period === p ? "secondary" : "ghost"}
                 className="rounded-none first:rounded-l-md last:rounded-r-md"
-                onClick={() => setPeriod(p.key)}
+                onClick={() => setPeriod(p)}
               >
-                {p.label}
+                {t(`usage.periods.${p}`)}
               </Button>
             ))}
           </div>
           <Button size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
-            {loading ? "…" : "Refresh"}
+            {loading ? "…" : t("usage.refresh")}
           </Button>
         </div>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Costo totale" value={usd(t.cost)} />
-        <Stat label="Costo oggi" value={usd(costToday)} />
-        <Stat label="Chiamate LLM" value={intl(t.calls)} />
-        <Stat label="Token totali" value={compact(totalTokens)} sub={`${intl(totalTokens)} token`} />
+        <Stat label={t("usage.stats.totalCost")} value={usd(totals.cost)} />
+        <Stat label={t("usage.stats.costToday")} value={usd(costToday)} />
+        <Stat label={t("usage.stats.calls")} value={intl(totals.calls)} />
+        <Stat label={t("usage.stats.totalTokens")} value={compact(totalTokens)} sub={t("usage.stats.tokensSub", { count: intl(totalTokens) })} />
       </div>
 
       {/* Cost by service */}
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Costo per servizio</CardTitle>
+          <CardTitle>{t("usage.byService.title")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {hasUnknown && (
             <p className="text-destructive text-xs">
-              ⚠ Sono presenti chiamate «unknown»: un chiamante non manda gli header di attribuzione.
+              {t("usage.byService.unknownWarning")}
             </p>
           )}
           {data.byService.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Nessuna chiamata nel periodo.</p>
+            <p className="text-muted-foreground text-sm">{t("usage.byService.empty")}</p>
           ) : (
             <>
               <StackedBar
@@ -190,10 +189,10 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
                         <span className="flex items-center gap-1.5 font-medium">
                           <span className="size-2.5 rounded-sm" style={{ background: serviceColor(s.service, i) }} />
                           {s.service}
-                          {s.service === "unknown" && <Badge variant="destructive">da etichettare</Badge>}
+                          {s.service === "unknown" && <Badge variant="destructive">{t("usage.byService.needsLabel")}</Badge>}
                         </span>
                         <span className="text-muted-foreground tabular-nums">
-                          {usd(s.cost)} · {intl(s.calls)} chiamate · {compact(s.tokens)} tok
+                          {t("usage.byService.row", { cost: usd(s.cost), calls: intl(s.calls), tokens: compact(s.tokens) })}
                         </span>
                       </div>
                       <div className="bg-muted h-2 overflow-hidden rounded-full">
@@ -214,22 +213,22 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
       {/* Cost by action — the per-piece price list */}
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Costo per azione</CardTitle>
+          <CardTitle>{t("usage.byAction.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           {data.byAction.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Nessuna azione nel periodo.</p>
+            <p className="text-muted-foreground text-sm">{t("usage.byAction.empty")}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-xs">
                 <thead className="text-muted-foreground">
                   <tr>
-                    <Th>Servizio</Th>
-                    <Th>Azione</Th>
-                    <Th right>Chiamate</Th>
-                    <Th right>Token</Th>
-                    <Th right>Costo medio / pezzo</Th>
-                    <Th right>Costo totale</Th>
+                    <Th>{t("usage.byAction.headers.service")}</Th>
+                    <Th>{t("usage.byAction.headers.action")}</Th>
+                    <Th right>{t("usage.byAction.headers.calls")}</Th>
+                    <Th right>{t("usage.byAction.headers.tokens")}</Th>
+                    <Th right>{t("usage.byAction.headers.avgCost")}</Th>
+                    <Th right>{t("usage.byAction.headers.totalCost")}</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -253,11 +252,11 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
       {/* Cost per day, stacked by service */}
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Costo per giorno</CardTitle>
+          <CardTitle>{t("usage.byDay.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           {data.byDay.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Nessun dato.</p>
+            <p className="text-muted-foreground text-sm">{t("usage.byDay.empty")}</p>
           ) : (
             <StackedDayBars rows={data.byDay} serviceOrder={data.byService.map((s) => s.service)} />
           )}
@@ -267,7 +266,7 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
       {/* Cost by token kind */}
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Costo per tipo di token</CardTitle>
+          <CardTitle>{t("usage.byKind.title")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <StackedBar segments={costByKind.map((k) => ({ label: k.label, color: k.color, value: k.cost }))} format={usd} />
@@ -290,7 +289,7 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
       {data.byModel.length > 0 && (
         <Card size="sm">
           <CardHeader>
-            <CardTitle>Costo per modello</CardTitle>
+            <CardTitle>{t("usage.byModel.title")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {(() => {
@@ -300,7 +299,7 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-medium">{m.model || "—"}</span>
                     <span className="text-muted-foreground tabular-nums">
-                      {usd(m.cost)} · {compact(m.tokens)} tok · {intl(m.calls)} chiamate
+                      {t("usage.byModel.row", { cost: usd(m.cost), tokens: compact(m.tokens), calls: intl(m.calls) })}
                     </span>
                   </div>
                   <div className="bg-muted h-2 overflow-hidden rounded-full">
@@ -316,29 +315,29 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
       {/* Tool usage (unchanged data source: host tool_calls) */}
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Tool</CardTitle>
+          <CardTitle>{t("usage.byTool.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           {data.byTool.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Nessuna invocazione registrata.</p>
+            <p className="text-muted-foreground text-sm">{t("usage.byTool.empty")}</p>
           ) : (
             <>
               <div className="text-muted-foreground mb-3 flex gap-4 text-xs">
-                <span><span className="text-foreground font-semibold tabular-nums">{intl(data.toolTotals.calls)}</span> chiamate</span>
-                <span><span className="text-foreground font-semibold tabular-nums">{intl(data.toolTotals.errors)}</span> errori</span>
-                <span><span className="text-foreground font-semibold tabular-nums">{ms(data.toolTotals.totalMs)}</span> totali</span>
+                <span>{t("usage.byTool.calls", { count: intl(data.toolTotals.calls) })}</span>
+                <span>{t("usage.byTool.errors", { count: intl(data.toolTotals.errors) })}</span>
+                <span>{t("usage.byTool.total", { time: ms(data.toolTotals.totalMs) })}</span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-xs">
                   <thead className="text-muted-foreground">
                     <tr>
-                      <Th>Tool</Th>
-                      <Th right>Chiamate</Th>
-                      <Th right>Errori</Th>
-                      <Th right>Media</Th>
-                      <Th right>Max</Th>
-                      <Th right>Totale</Th>
-                      <Th>Frequenza</Th>
+                      <Th>{t("usage.byTool.headers.tool")}</Th>
+                      <Th right>{t("usage.byTool.headers.calls")}</Th>
+                      <Th right>{t("usage.byTool.headers.errors")}</Th>
+                      <Th right>{t("usage.byTool.headers.avg")}</Th>
+                      <Th right>{t("usage.byTool.headers.max")}</Th>
+                      <Th right>{t("usage.byTool.headers.total")}</Th>
+                      <Th>{t("usage.byTool.headers.frequency")}</Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -371,24 +370,24 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
       {/* Recent calls */}
       <Card size="sm">
         <CardHeader>
-          <CardTitle>Chiamate recenti</CardTitle>
+          <CardTitle>{t("usage.recent.title")}</CardTitle>
         </CardHeader>
         <CardContent>
           {data.recent.length === 0 ? (
-            <p className="text-muted-foreground text-sm">Nessuna chiamata registrata.</p>
+            <p className="text-muted-foreground text-sm">{t("usage.recent.empty")}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-xs">
                 <thead className="text-muted-foreground">
                   <tr>
-                    <Th>Quando</Th>
-                    <Th>Servizio</Th>
-                    <Th>Azione</Th>
-                    <Th>Modello</Th>
-                    <Th right>In</Th>
-                    <Th right>Out</Th>
-                    <Th right>Durata</Th>
-                    <Th right>Costo</Th>
+                    <Th>{t("usage.recent.headers.when")}</Th>
+                    <Th>{t("usage.recent.headers.service")}</Th>
+                    <Th>{t("usage.recent.headers.action")}</Th>
+                    <Th>{t("usage.recent.headers.model")}</Th>
+                    <Th right>{t("usage.recent.headers.in")}</Th>
+                    <Th right>{t("usage.recent.headers.out")}</Th>
+                    <Th right>{t("usage.recent.headers.duration")}</Th>
+                    <Th right>{t("usage.recent.headers.cost")}</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -403,7 +402,7 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
                       <Td right>{compact(r.input + r.cacheRead)}</Td>
                       <Td right>{compact(r.output)}</Td>
                       <Td right>{ms(r.durationMs)}</Td>
-                      <Td right className="font-medium">{r.ok === 0 ? "errore" : usd(r.cost)}</Td>
+                      <Td right className="font-medium">{r.ok === 0 ? t("usage.recent.error") : usd(r.cost)}</Td>
                     </tr>
                   ))}
                 </tbody>
@@ -454,6 +453,7 @@ function StackedBar({
 
 /** Vertical bar chart (SVG) of per-day cost, stacked by service. */
 function StackedDayBars({ rows, serviceOrder }: { rows: DayRow[]; serviceOrder: string[] }) {
+  const { t } = useTranslation();
   // rows arrive day DESC with one row per (day, service); pivot to day → segments.
   const days = [...new Set(rows.map((r) => r.day))].sort();
   const byDay = new Map<string, DayRow[]>();
@@ -471,7 +471,7 @@ function StackedDayBars({ rows, serviceOrder }: { rows: DayRow[]; serviceOrder: 
   const colorFor = (service: string) => serviceColor(service, Math.max(0, serviceOrder.indexOf(service)));
   return (
     <div className="overflow-x-auto">
-      <svg width={w} height={h} className="block" role="img" aria-label="Costo per giorno per servizio">
+      <svg width={w} height={h} className="block" role="img" aria-label={t("usage.byDay.chartAria")}>
         {days.map((day, i) => {
           const x = pad + i * ((w - pad) / days.length);
           let y = h - 16;
@@ -483,7 +483,7 @@ function StackedDayBars({ rows, serviceOrder }: { rows: DayRow[]; serviceOrder: 
                 y -= bh;
                 return (
                   <rect key={seg.service} x={x} y={y} width={bw} height={Math.max(bh, 0.5)} rx={1.5} fill={colorFor(seg.service)}>
-                    <title>{`${day} · ${seg.service}: ${usd(seg.cost)} · ${compact(seg.tokens)} tok · ${seg.calls} chiamate`}</title>
+                    <title>{t("usage.byDay.tooltip", { day, service: seg.service, cost: usd(seg.cost), tokens: compact(seg.tokens), calls: seg.calls })}</title>
                   </rect>
                 );
               })}
@@ -506,7 +506,7 @@ function Td({ children, right, className }: { children: React.ReactNode; right?:
 }
 
 function formatTs(ts: number): string {
-  return new Date(ts).toLocaleString("it-IT", {
+  return new Date(ts).toLocaleString(currentLocale(), {
     month: "short",
     day: "numeric",
     hour: "2-digit",

@@ -4,8 +4,11 @@
  * and by the markdown renderer for ```card fenced blocks the model emits.
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { FileChip } from "@/components/file-chip";
 import { safeHref } from "@/lib/utils";
+import { currentLocale } from "@/lib/locale";
 import type { ChannelFile } from "@steward/protocol";
 
 export interface FileApi {
@@ -19,7 +22,7 @@ export interface FileApi {
 function fmtDate(v: unknown): string {
   if (v == null) return "";
   const d = typeof v === "number" ? new Date(v * (v < 1e12 ? 1000 : 1)) : new Date(String(v));
-  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString("it-IT", { dateStyle: "medium", timeStyle: "short" });
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString(currentLocale(), { dateStyle: "medium", timeStyle: "short" });
 }
 
 type Dict = Record<string, unknown>;
@@ -27,9 +30,13 @@ const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" 
 const present = (v: unknown): boolean => v != null && (Array.isArray(v) ? v.length > 0 : String(v).trim().length > 0);
 const joinAddr = (v: unknown): string => (Array.isArray(v) ? v.map(String).join(", ") : str(v));
 
-function formatAlarms(v: unknown): string {
+function formatAlarms(v: unknown, t: TFunction): string {
   return (Array.isArray(v) ? v.map(Number).filter(Number.isFinite) : [])
-    .map((m) => (m % 1440 === 0 ? `${m / 1440}g prima` : m % 60 === 0 ? `${m / 60}h prima` : `${m} min prima`))
+    .map((m) => (m % 1440 === 0
+      ? t("cards.alarms.days", { count: m / 1440 })
+      : m % 60 === 0
+        ? t("cards.alarms.hours", { count: m / 60 })
+        : t("cards.alarms.minutes", { count: m })))
     .join(", ");
 }
 
@@ -43,6 +50,7 @@ function Row({ label, children }: { label?: string; children: ReactNode }) {
 }
 
 function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]; fileApi: FileApi }) {
+  const { t } = useTranslation();
   const attachments = (Array.isArray(data.attachments) ? data.attachments : []).map((a) =>
     typeof a === "string" ? { name: a.split("/").pop() ?? a, path: a } : (a as Dict),
   );
@@ -53,16 +61,16 @@ function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]
   const hasFooter = !!mailUrl || attachments.length > 0 || (files?.length ?? 0) > 0;
   return (
     <div className="bg-card my-1 overflow-hidden rounded-md border text-xs">
-      <div className="bg-muted/40 border-b px-3 py-2 font-medium">{str(data.subject) || "(senza oggetto)"}</div>
+      <div className="bg-muted/40 border-b px-3 py-2 font-medium">{str(data.subject) || t("cards.noSubject")}</div>
       {hasMeta && (
         <div className="space-y-0.5 border-b px-3 py-2">
-          {present(data.from) && <Row label="Da">{str(data.from)}</Row>}
-          {present(data.to) && <Row label="A">{joinAddr(data.to)}</Row>}
-          {present(data.cc) && <Row label="Cc">{joinAddr(data.cc)}</Row>}
-          {present(data.bcc) && <Row label="Ccn">{joinAddr(data.bcc)}</Row>}
-          {present(data.date) && <Row label="Data">{fmtDate(data.date)}</Row>}
-          {present(data.sendAt) && <Row label="Invio posticipato">{fmtDate(data.sendAt)}</Row>}
-          {data.replyAll === true && <Row>↩︎ Rispondi a tutti</Row>}
+          {present(data.from) && <Row label={t("cards.fields.from")}>{str(data.from)}</Row>}
+          {present(data.to) && <Row label={t("cards.fields.to")}>{joinAddr(data.to)}</Row>}
+          {present(data.cc) && <Row label={t("cards.fields.cc")}>{joinAddr(data.cc)}</Row>}
+          {present(data.bcc) && <Row label={t("cards.fields.bcc")}>{joinAddr(data.bcc)}</Row>}
+          {present(data.date) && <Row label={t("cards.fields.date")}>{fmtDate(data.date)}</Row>}
+          {present(data.sendAt) && <Row label={t("cards.fields.scheduledSend")}>{fmtDate(data.sendAt)}</Row>}
+          {data.replyAll === true && <Row>{t("cards.replyAll")}</Row>}
         </div>
       )}
       {present(data.body) && (
@@ -71,8 +79,8 @@ function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]
       {hasFooter && (
         <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
           {mailUrl && (safeMailUrl
-            ? <a href={safeMailUrl} className="text-primary underline">Apri in Mail</a>
-            : <span className="text-muted-foreground">Apri in Mail</span>)}
+            ? <a href={safeMailUrl} className="text-primary underline">{t("cards.openInMail")}</a>
+            : <span className="text-muted-foreground">{t("cards.openInMail")}</span>)}
           {attachments.map((a, i) => {
             const name = str(a.name);
             const f = fileApi.resolve(str(a.path)) ?? fileApi.resolve(name);
@@ -88,17 +96,18 @@ function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]
 }
 
 function EventCard({ data }: { data: Dict }) {
+  const { t } = useTranslation();
   return (
     <div className="bg-card my-1 space-y-0.5 rounded-md border px-3 py-2 text-xs">
-      <div className="font-medium">📅 {str(data.summary) || "(evento)"}</div>
+      <div className="font-medium">📅 {str(data.summary) || t("cards.noEventTitle")}</div>
       {(present(data.start) || present(data.end)) && (
-        <Row label="Quando">{fmtDate(data.start)}{data.end ? ` → ${fmtDate(data.end)}` : ""}</Row>
+        <Row label={t("cards.eventFields.when")}>{fmtDate(data.start)}{data.end ? ` → ${fmtDate(data.end)}` : ""}</Row>
       )}
-      {present(data.location) && <Row label="Luogo">{str(data.location)}</Row>}
-      {present(data.calendar) && <Row label="Calendario">{str(data.calendar)}</Row>}
-      {present(data.alarms) && <Row label="Avvisi">{formatAlarms(data.alarms)}</Row>}
+      {present(data.location) && <Row label={t("cards.eventFields.location")}>{str(data.location)}</Row>}
+      {present(data.calendar) && <Row label={t("cards.eventFields.calendar")}>{str(data.calendar)}</Row>}
+      {present(data.alarms) && <Row label={t("cards.eventFields.alerts")}>{formatAlarms(data.alarms, t)}</Row>}
       {present(data.url) && (
-        <Row label="URL">
+        <Row label={t("cards.eventFields.url")}>
           {safeHref(str(data.url))
             ? <a href={str(data.url)} className="text-primary break-all underline">{str(data.url)}</a>
             : <span className="break-all">{str(data.url)}</span>}
@@ -110,14 +119,15 @@ function EventCard({ data }: { data: Dict }) {
 }
 
 function SearchResultsList({ results }: { results: Dict[] }) {
-  if (!results.length) return <div className="text-muted-foreground text-xs">Nessun risultato.</div>;
+  const { t } = useTranslation();
+  if (!results.length) return <div className="text-muted-foreground text-xs">{t("cards.noResults")}</div>;
   return (
     <div className="my-1 flex flex-col gap-1">
       {results.map((r, i) => {
         const url = safeHref(str(r.mailUrl));
         const inner = (
           <>
-            <div className="truncate font-medium">{str(r.subject) || "(senza oggetto)"}</div>
+            <div className="truncate font-medium">{str(r.subject) || t("cards.noSubject")}</div>
             <div className="text-muted-foreground truncate">{str(r.from)}{r.date ? ` · ${fmtDate(r.date)}` : ""}</div>
             {r.snippet ? <div className="text-muted-foreground truncate opacity-70">{str(r.snippet).replace(/\s+/g, " ").trim()}</div> : null}
           </>

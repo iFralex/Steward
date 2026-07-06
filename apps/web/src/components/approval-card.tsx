@@ -7,6 +7,7 @@
  * tools fall back to a raw-JSON editor.
  */
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,44 +20,45 @@ import type { PendingApproval } from "@/lib/host-socket";
 import type { ApprovalDecision } from "@steward/protocol";
 
 type Kind = "text" | "textarea" | "csv" | "bool" | "numbers" | "datetime" | "files";
-interface Field { key: string; label: string; kind: Kind }
+/** labelKey indexes approval.fields.* in the translation dictionaries. */
+interface Field { key: string; labelKey: string; kind: Kind }
 
 const FORMS: Record<string, Field[]> = {
   send_email: [
-    { key: "from", label: "Da", kind: "text" },
-    { key: "to", label: "A", kind: "csv" },
-    { key: "cc", label: "Cc", kind: "csv" },
-    { key: "bcc", label: "Ccn", kind: "csv" },
-    { key: "subject", label: "Oggetto", kind: "text" },
-    { key: "body", label: "Corpo", kind: "textarea" },
-    { key: "attachments", label: "Allegati", kind: "files" },
-    { key: "sendAt", label: "Invio posticipato", kind: "datetime" },
+    { key: "from", labelKey: "from", kind: "text" },
+    { key: "to", labelKey: "to", kind: "csv" },
+    { key: "cc", labelKey: "cc", kind: "csv" },
+    { key: "bcc", labelKey: "bcc", kind: "csv" },
+    { key: "subject", labelKey: "subject", kind: "text" },
+    { key: "body", labelKey: "body", kind: "textarea" },
+    { key: "attachments", labelKey: "attachments", kind: "files" },
+    { key: "sendAt", labelKey: "scheduledSend", kind: "datetime" },
   ],
   reply: [
-    { key: "from", label: "Da", kind: "text" },
-    { key: "body", label: "Corpo", kind: "textarea" },
-    { key: "replyAll", label: "Rispondi a tutti", kind: "bool" },
-    { key: "attachments", label: "Allegati", kind: "files" },
-    { key: "sendAt", label: "Invio posticipato", kind: "datetime" },
+    { key: "from", labelKey: "from", kind: "text" },
+    { key: "body", labelKey: "body", kind: "textarea" },
+    { key: "replyAll", labelKey: "replyAll", kind: "bool" },
+    { key: "attachments", labelKey: "attachments", kind: "files" },
+    { key: "sendAt", labelKey: "scheduledSend", kind: "datetime" },
   ],
   create_event: [
-    { key: "calendar", label: "Calendario", kind: "text" },
-    { key: "summary", label: "Titolo", kind: "text" },
-    { key: "start", label: "Inizio", kind: "datetime" },
-    { key: "end", label: "Fine", kind: "datetime" },
-    { key: "location", label: "Luogo", kind: "text" },
-    { key: "description", label: "Descrizione", kind: "textarea" },
-    { key: "url", label: "URL", kind: "text" },
-    { key: "alarms", label: "Avvisi (minuti prima, separati da virgola)", kind: "numbers" },
+    { key: "calendar", labelKey: "calendar", kind: "text" },
+    { key: "summary", labelKey: "title", kind: "text" },
+    { key: "start", labelKey: "start", kind: "datetime" },
+    { key: "end", labelKey: "end", kind: "datetime" },
+    { key: "location", labelKey: "location", kind: "text" },
+    { key: "description", labelKey: "description", kind: "textarea" },
+    { key: "url", labelKey: "url", kind: "text" },
+    { key: "alarms", labelKey: "alarms", kind: "numbers" },
   ],
   update_event: [
-    { key: "summary", label: "Titolo", kind: "text" },
-    { key: "start", label: "Inizio", kind: "datetime" },
-    { key: "end", label: "Fine", kind: "datetime" },
-    { key: "location", label: "Luogo", kind: "text" },
-    { key: "description", label: "Descrizione", kind: "textarea" },
-    { key: "url", label: "URL", kind: "text" },
-    { key: "alarms", label: "Avvisi (minuti prima, separati da virgola)", kind: "numbers" },
+    { key: "summary", labelKey: "title", kind: "text" },
+    { key: "start", labelKey: "start", kind: "datetime" },
+    { key: "end", labelKey: "end", kind: "datetime" },
+    { key: "location", labelKey: "location", kind: "text" },
+    { key: "description", labelKey: "description", kind: "textarea" },
+    { key: "url", labelKey: "url", kind: "text" },
+    { key: "alarms", labelKey: "alarms", kind: "numbers" },
   ],
 };
 
@@ -90,6 +92,7 @@ function buildEdited(input: Record<string, unknown>, fields: Field[], vals: Reco
 }
 
 function FilesField({ value, onChange, fileApi }: { value: string; onChange: (v: string) => void; fileApi: FileApi }) {
+  const { t } = useTranslation();
   const paths = value.split("\n").map((s) => s.trim()).filter(Boolean);
   const setPaths = (ps: string[]) => onChange(ps.join("\n"));
   const [draft, setDraft] = useState("");
@@ -114,7 +117,7 @@ function FilesField({ value, onChange, fileApi }: { value: string; onChange: (v:
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) { e.preventDefault(); setPaths([...paths, draft.trim()]); setDraft(""); } }}
-        placeholder="Trascina un file dalla chat, o incolla un percorso + Invio"
+        placeholder={t("approval.filesPlaceholder")}
         className="bg-background/60 rounded border px-2 py-1 text-xs outline-none"
       />
     </div>
@@ -130,6 +133,7 @@ export function ApprovalCard({
   onDecision: (requestId: string, decision: ApprovalDecision, note?: string, editedInput?: Record<string, unknown>) => void;
   fileApi: FileApi;
 }) {
+  const { t } = useTranslation();
   const input = (approval.input ?? {}) as Record<string, unknown>;
   const fields = FORMS[bareName(approval.tool)];
   const [editing, setEditing] = useState(false);
@@ -147,8 +151,8 @@ export function ApprovalCard({
     try {
       const v: unknown = JSON.parse(jsonDraft);
       if (v && typeof v === "object" && !Array.isArray(v)) jsonParsed = v as Record<string, unknown>;
-      else jsonError = "Gli argomenti devono essere un oggetto JSON";
-    } catch (e) { jsonError = e instanceof Error ? e.message : "JSON non valido"; }
+      else jsonError = t("approval.argsMustBeObject");
+    } catch (e) { jsonError = e instanceof Error ? e.message : t("approval.invalidJson"); }
   }
 
   const edited = fields ? buildEdited(input, fields, vals) : input;
@@ -169,11 +173,11 @@ export function ApprovalCard({
     <Card className="border-amber-500/40">
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
-          <Badge variant="outline" className="border-amber-500/60 text-amber-600">approvazione richiesta</Badge>
+          <Badge variant="outline" className="border-amber-500/60 text-amber-600">{t("approval.approvalRequested")}</Badge>
           <span className="font-mono">{approval.tool}</span>
           {fields && (
             <button type="button" className="text-muted-foreground hover:text-foreground ml-auto text-xs underline" onClick={() => setEditing(true)}>
-              Modifica
+              {t("approval.edit")}
             </button>
           )}
         </CardTitle>
@@ -190,23 +194,23 @@ export function ApprovalCard({
           />
         )}
         {jsonError && <p className="text-xs text-red-500">{jsonError}</p>}
-        <Input placeholder="Nota opzionale (inviata all'agente)" value={note} onChange={(e) => setNote(e.target.value)} />
+        <Input placeholder={t("approval.notePlaceholder")} value={note} onChange={(e) => setNote(e.target.value)} />
       </CardContent>
       <CardFooter className="gap-2">
-        <Button size="sm" onClick={approve} disabled={!fields && jsonError !== undefined}>Approva</Button>
-        <Button size="sm" variant="destructive" onClick={() => onDecision(approval.requestId, "deny", note || undefined)}>Rifiuta</Button>
+        <Button size="sm" onClick={approve} disabled={!fields && jsonError !== undefined}>{t("approval.approve")}</Button>
+        <Button size="sm" variant="destructive" onClick={() => onDecision(approval.requestId, "deny", note || undefined)}>{t("approval.reject")}</Button>
       </CardFooter>
 
       {fields && (
         <Dialog open={editing} onOpenChange={setEditing}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>Modifica · {bareName(approval.tool)}</DialogTitle>
+              <DialogTitle>{t("approval.editDialogTitle", { name: bareName(approval.tool) })}</DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               {fields.map((f) => (
                 <label key={f.key} className="block">
-                  <span className="text-muted-foreground mb-1 block text-xs font-medium">{f.label}</span>
+                  <span className="text-muted-foreground mb-1 block text-xs font-medium">{t(`approval.fields.${f.labelKey}`)}</span>
                   {f.kind === "bool" ? (
                     <input type="checkbox" checked={vals[f.key] === true} onChange={(e) => set(f.key, e.target.checked)} className="size-4" />
                   ) : f.kind === "datetime" ? (
@@ -226,7 +230,7 @@ export function ApprovalCard({
               ))}
             </div>
             <div className="flex justify-end">
-              <Button size="sm" onClick={() => setEditing(false)}>Fatto</Button>
+              <Button size="sm" onClick={() => setEditing(false)}>{t("approval.confirmDone")}</Button>
             </div>
           </DialogContent>
         </Dialog>

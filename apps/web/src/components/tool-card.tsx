@@ -7,6 +7,8 @@
 import { type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
 import { FileChip } from "@/components/file-chip";
@@ -31,17 +33,17 @@ function bareName(raw: string): string {
 }
 
 /** One-line summary derived client-side from the tool output (no extra tokens). */
-function toolSummary(rawTool: string, output: unknown): string {
+function toolSummary(rawTool: string, output: unknown, t: TFunction): string {
   if (output == null) return "";
-  if (Array.isArray(output)) return `${output.length} ${output.length === 1 ? "risultato" : "risultati"}`;
+  if (Array.isArray(output)) return t("toolCard.results", { count: output.length });
   if (typeof output !== "object") return "";
   const o = output as Record<string, unknown>;
   const name = bareName(rawTool);
-  if (o.error) return "errore";
-  if (name.includes("reply") || name.includes("send")) return o.sent ? "inviata" : "";
-  if (name === "create_event") return o.uid ? "evento creato" : "";
-  if (name === "update_event") return "evento aggiornato";
-  if (name === "delete_event") return "evento eliminato";
+  if (o.error) return t("toolCard.error");
+  if (name.includes("reply") || name.includes("send")) return o.sent ? t("toolCard.sent") : "";
+  if (name === "create_event") return o.uid ? t("toolCard.eventCreated") : "";
+  if (name === "update_event") return t("toolCard.eventUpdated");
+  if (name === "delete_event") return t("toolCard.eventDeleted");
   if (name === "read_message" && typeof o.subject === "string") return o.subject;
   if (typeof o.path === "string") return o.path.split("/").pop() ?? "";
   if (typeof o.uid === "string") return o.uid;
@@ -53,11 +55,12 @@ function formatDuration(ms: number): string {
 }
 
 function StatusDot({ status }: { status?: ChatMessage["toolStatus"] }) {
+  const { t } = useTranslation();
   if (status === "running") {
-    return <span className="border-muted-foreground/40 border-t-foreground size-3 animate-spin rounded-full border-2" aria-label="running" />;
+    return <span className="border-muted-foreground/40 border-t-foreground size-3 animate-spin rounded-full border-2" aria-label={t("toolCard.statusRunning")} />;
   }
-  if (status === "error") return <span className="text-destructive" aria-label="error">✗</span>;
-  return <span className="text-emerald-600 dark:text-emerald-400" aria-label="ok">✓</span>;
+  if (status === "error") return <span className="text-destructive" aria-label={t("toolCard.statusError")}>✗</span>;
+  return <span className="text-emerald-600 dark:text-emerald-400" aria-label={t("toolCard.statusOk")}>✓</span>;
 }
 
 function JsonBlock({ value, tone }: { value: unknown; tone?: "error" }) {
@@ -91,10 +94,11 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 export function ToolCard({ m, fileApi }: { m: ChatMessage; fileApi: FileApi }) {
+  const { t } = useTranslation();
   const { icon, label } = parseToolName(m.text);
   const running = m.toolStatus === "running";
   const error = m.toolStatus === "error";
-  const summary = error ? (m.toolError ? m.toolError.slice(0, 80) : "errore") : toolSummary(m.text, m.toolOutput);
+  const summary = error ? (m.toolError ? m.toolError.slice(0, 80) : t("toolCard.error")) : toolSummary(m.text, m.toolOutput, t);
   const duration = m.toolDurationMs != null ? formatDuration(m.toolDurationMs) : null;
 
   return (
@@ -114,9 +118,9 @@ export function ToolCard({ m, fileApi }: { m: ChatMessage; fileApi: FileApi }) {
           </AccordionTrigger>
           <AccordionContent className="px-2 pb-2">
             <div className="space-y-2">
-              <Section title="Input"><JsonBlock value={m.toolInput} /></Section>
+              <Section title={t("toolCard.input")}><JsonBlock value={m.toolInput} /></Section>
               {!running && (
-                <Section title={error ? "Error" : "Output"}>
+                <Section title={error ? t("toolCard.error") : t("toolCard.output")}>
                   {error ? (
                     <JsonBlock value={m.toolError} tone="error" />
                   ) : (() => {

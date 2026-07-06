@@ -5,6 +5,7 @@
  * (ChatSidebar, ActionCenterPanel) into this.
  */
 import { BarChart3, Filter, RefreshCw, Settings } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,14 +48,15 @@ export function UnifiedSidebar({
   onOpenUsage: () => void;
   onOpenSystem: () => void;
 }) {
+  const { t } = useTranslation();
   const newCount = diagnostics?.counts.new ?? 0;
   return (
     <div className="flex h-full flex-col">
       {/* Tabs: desktop only — on mobile the bottom nav selects the tab. */}
       <div className="hidden grid-cols-2 gap-1 border-b p-2 lg:grid">
-        <TabButton active={tab === "chat"} onClick={() => onTab("chat")}>Chat</TabButton>
+        <TabButton active={tab === "chat"} onClick={() => onTab("chat")}>{t("sidebar.tabs.chat")}</TabButton>
         <TabButton active={tab === "actions"} onClick={() => onTab("actions")}>
-          Azioni
+          {t("sidebar.tabs.actions")}
           {newCount > 0 && (
             <span className="bg-primary text-primary-foreground ml-1.5 rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums">
               {newCount}
@@ -85,8 +87,8 @@ export function UnifiedSidebar({
       )}
       {/* Footer nav: desktop only — on mobile Usage/System live under the "Altro" tab. */}
       <div className="hidden gap-1 border-t p-2 lg:flex lg:flex-col">
-        <FooterButton icon={<BarChart3 className="size-4" />} label="Usage" active={pane === "usage"} onClick={onOpenUsage} />
-        <FooterButton icon={<Settings className="size-4" />} label="System" active={pane === "system"} onClick={onOpenSystem} />
+        <FooterButton icon={<BarChart3 className="size-4" />} label={t("sidebar.footer.usage")} active={pane === "usage"} onClick={onOpenUsage} />
+        <FooterButton icon={<Settings className="size-4" />} label={t("sidebar.footer.system")} active={pane === "system"} onClick={onOpenSystem} />
       </div>
     </div>
   );
@@ -140,14 +142,15 @@ function ChatList({
   onDelete: (id: string) => void;
   onSave: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-end border-b p-2">
-        <Button size="sm" onClick={onCreate} title="Nuova chat">+ Nuova</Button>
+        <Button size="sm" onClick={onCreate} title={t("sidebar.chatList.newTitle")}>{t("sidebar.chatList.new")}</Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {chats.length === 0 ? (
-          <p className="text-muted-foreground p-3 text-xs">Nessuna chat.</p>
+          <p className="text-muted-foreground p-3 text-xs">{t("sidebar.chatList.empty")}</p>
         ) : (
           chats.map((c) => (
             <div
@@ -164,7 +167,7 @@ function ChatList({
                   <span className="truncate text-sm font-medium">{c.title}</span>
                 </div>
                 <div className="text-muted-foreground mt-0.5 text-xs">
-                  {c.messageCount} {c.messageCount === 1 ? "messaggio" : "messaggi"} · {formatWhen(Math.floor(c.updatedAt / 1000))}
+                  {t("sidebar.chatList.messageCount", { count: c.messageCount })} · {formatWhen(Math.floor(c.updatedAt / 1000))}
                 </div>
               </button>
               {/* Always visible on touch screens (no hover there); desktop keeps the hover reveal. */}
@@ -172,8 +175,8 @@ function ChatList({
                 {c.temporary && (
                   <button
                     type="button"
-                    title="Salva questa chat (rendila permanente)"
-                    aria-label={`Salva la chat ${c.title}`}
+                    title={t("sidebar.chatList.saveTitle")}
+                    aria-label={t("sidebar.chatList.saveAria", { title: c.title })}
                     className="hover:bg-background text-muted-foreground hover:text-primary rounded p-1.5 text-xs"
                     onClick={() => onSave(c.id)}
                   >
@@ -182,11 +185,11 @@ function ChatList({
                 )}
                 <button
                   type="button"
-                  title="Rinomina"
-                  aria-label={`Rinomina la chat ${c.title}`}
+                  title={t("sidebar.chatList.renameTitle")}
+                  aria-label={t("sidebar.chatList.renameAria", { title: c.title })}
                   className="hover:bg-background text-muted-foreground rounded p-1.5 text-xs"
                   onClick={() => {
-                    const title = window.prompt("Rinomina chat", c.title);
+                    const title = window.prompt(t("sidebar.chatList.renamePrompt"), c.title);
                     if (title != null) onRename(c.id, title);
                   }}
                 >
@@ -194,11 +197,11 @@ function ChatList({
                 </button>
                 <button
                   type="button"
-                  title="Elimina"
-                  aria-label={`Elimina la chat ${c.title}`}
+                  title={t("sidebar.chatList.deleteTitle")}
+                  aria-label={t("sidebar.chatList.deleteAria", { title: c.title })}
                   className="hover:bg-background text-muted-foreground hover:text-destructive rounded p-1.5 text-xs"
                   onClick={() => {
-                    if (window.confirm(`Eliminare la chat "${c.title}"? L'azione è irreversibile.`)) onDelete(c.id);
+                    if (window.confirm(t("sidebar.chatList.deleteConfirm", { title: c.title }))) onDelete(c.id);
                   }}
                 >
                   <span aria-hidden>🗑</span>
@@ -223,19 +226,23 @@ function ActionList({
   onRefresh: () => void;
   onSelect: (item: ActionCenterItem) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="text-muted-foreground flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
         <span className="truncate tabular-nums">
-          {diagnostics?.counts.new ?? 0} new · {diagnostics?.staleNew ?? 0} stale · next{" "}
-          {diagnostics?.nextDueAt ? formatWhen(diagnostics.nextDueAt) : "—"}
+          {t("sidebar.actionList.diagnostics", {
+            new: diagnostics?.counts.new ?? 0,
+            stale: diagnostics?.staleNew ?? 0,
+            next: diagnostics?.nextDueAt ? formatWhen(diagnostics.nextDueAt) : "—",
+          })}
         </span>
         <div className="flex shrink-0 items-center gap-0.5">
-          <button type="button" title="Refresh" className="hover:bg-muted hover:text-foreground rounded p-1" onClick={onRefresh}>
+          <button type="button" title={t("sidebar.actionList.refreshTitle")} className="hover:bg-muted hover:text-foreground rounded p-1" onClick={onRefresh}>
             <RefreshCw className="size-3.5" />
           </button>
           <Popover>
-            <PopoverTrigger className="hover:bg-muted hover:text-foreground rounded p-1" title="Filtri e diagnostica">
+            <PopoverTrigger className="hover:bg-muted hover:text-foreground rounded p-1" title={t("sidebar.actionList.filtersTitle")}>
               <Filter className="size-3.5" />
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72 space-y-3">
@@ -243,18 +250,20 @@ function ActionList({
                 {(["new", "read", "done", "dismissed"] as const).map((key) => (
                   <div key={key} className="bg-muted rounded-md p-2">
                     <div className="font-semibold">{diagnostics?.counts[key] ?? 0}</div>
-                    <div className="text-muted-foreground">{key}</div>
+                    <div className="text-muted-foreground">{t(`sidebar.actionList.status.${key}`)}</div>
                   </div>
                 ))}
               </div>
               {diagnostics?.deferredReasons && Object.keys(diagnostics.deferredReasons).length > 0 && (
                 <div className="text-muted-foreground rounded-md border p-2 text-xs">
-                  Deferred: {Object.entries(diagnostics.deferredReasons).map(([k, v]) => `${v}× ${k}`).join(", ")}
+                  {t("sidebar.actionList.deferred", {
+                    list: Object.entries(diagnostics.deferredReasons).map(([k, v]) => `${v}× ${k}`).join(", "),
+                  })}
                 </div>
               )}
               <label className="flex items-center gap-2 text-xs">
                 <input type="checkbox" checked={showDone} onChange={(e) => onShowDone(e.currentTarget.checked)} />
-                Show done/dismissed
+                {t("sidebar.actionList.showDone")}
               </label>
             </PopoverContent>
           </Popover>
@@ -262,14 +271,14 @@ function ActionList({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {items.length === 0 ? (
-          <p className="text-muted-foreground p-3 text-sm">Nessuna action.</p>
+          <p className="text-muted-foreground p-3 text-sm">{t("sidebar.actionList.empty")}</p>
         ) : items.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => onSelect(item)}
             className={cn(
-              "hover:bg-muted w-full rounded-lg p-3 text-left transition",
+              "hover:bg-muted block w-full rounded-lg p-3 text-left transition",
               selectedId === item.id && "bg-muted",
             )}
           >

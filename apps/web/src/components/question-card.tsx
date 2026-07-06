@@ -4,6 +4,7 @@
  * a `question_response`. "Skip" replies with no choice (empty selection).
  */
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ export function QuestionCard({
   question: PendingQuestion;
   onRespond: (requestId: string, selected: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<string[]>([]);
 
   const toggle = (opt: string) => {
@@ -66,10 +68,10 @@ export function QuestionCard({
         </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="ghost" onClick={() => onRespond(question.requestId, [])}>
-            Salta
+            {t("question.skip")}
           </Button>
           <Button size="sm" disabled={!canSubmit} onClick={() => onRespond(question.requestId, selected)}>
-            Invia{question.multiSelect && selected.length > 0 ? ` (${selected.length})` : ""}
+            {t("question.send")}{question.multiSelect && selected.length > 0 ? ` (${selected.length})` : ""}
           </Button>
         </div>
       </CardContent>
