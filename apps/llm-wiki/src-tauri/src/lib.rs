@@ -262,7 +262,12 @@ pub fn run() {
                         continue;
                     }
                     match backup::run_backup(&project, &cfg) {
-                        Ok(msg) => eprintln!("[backup] {msg}"),
+                        Ok(result) => {
+                            if let Err(e) = backup::write_backup_status(&store_path, &result) {
+                                eprintln!("[backup] status write error: {e}");
+                            }
+                            eprintln!("[backup] {}", result.status);
+                        }
                         Err(e) => eprintln!("[backup] error: {e}"),
                     }
                 });

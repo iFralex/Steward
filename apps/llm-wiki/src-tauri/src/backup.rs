@@ -5,12 +5,23 @@
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use serde::Serialize;
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct BackupConfig {
     pub enabled: bool,
     pub remote_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupRunResult {
+    pub status: String,
+    pub pushed: bool,
+    pub commit: Option<String>,
+    pub pushed_at: Option<u64>,
+    pub remote_url: Option<String>,
 }
 
 /// `.gitignore` for the backup repo. Excludes regenerable caches that
@@ -52,6 +63,24 @@ pub fn read_backup_config(store_path: &Path) -> BackupConfig {
     }
 }
 
+pub fn write_backup_status(store_path: &Path, result: &BackupRunResult) -> Result<(), String> {
+    if !result.pushed {
+        return Ok(());
+    }
+    let mut root = std::fs::read_to_string(store_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    root.insert(
+        "backupStatus".to_string(),
+        serde_json::to_value(result).map_err(|e| format!("failed to serialize backup status: {e}"))?,
+    );
+    let raw = serde_json::to_string_pretty(&Value::Object(root))
+        .map_err(|e| format!("failed to encode app-state.json: {e}"))?;
+    std::fs::write(store_path, raw).map_err(|e| format!("failed to write app-state.json: {e}"))
+}
+
 fn git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Command::new("git")
         .current_dir(cwd)
@@ -61,10 +90,16 @@ fn git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 }
 
 /// Initialize the repo if needed, refresh .gitignore, stage, commit only
-/// if there are changes, and push. Returns a human-readable status.
-pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<String, String> {
+/// if there are changes, and push. Returns a structured status for UI/API use.
+pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<BackupRunResult, String> {
     if !cfg.enabled {
-        return Ok("backup disabled".to_string());
+        return Ok(BackupRunResult {
+            status: "backup disabled".to_string(),
+            pushed: false,
+            commit: None,
+            pushed_at: None,
+            remote_url: None,
+        });
     }
     if cfg.remote_url.trim().is_empty() {
         return Err("backup remote_url is empty".to_string());
@@ -98,7 +133,13 @@ pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<String, Stri
     // 5. commit only if there are staged changes.
     let dirty = !git(root, &["diff", "--cached", "--quiet"])?.status.success();
     if !dirty {
-        return Ok("no changes to back up".to_string());
+        return Ok(BackupRunResult {
+            status: "no changes to back up".to_string(),
+            pushed: false,
+            commit: None,
+            pushed_at: None,
+            remote_url: None,
+        });
     }
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -120,7 +161,18 @@ pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<String, Stri
             String::from_utf8_lossy(&push.stderr)
         ));
     }
-    Ok("backup pushed".to_string())
+    let commit = git(root, &["rev-parse", "HEAD"])
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|hash| !hash.is_empty());
+    Ok(BackupRunResult {
+        status: "backup pushed".to_string(),
+        pushed: true,
+        commit,
+        pushed_at: Some(secs),
+        remote_url: Some(cfg.remote_url.clone()),
+    })
 }
 
 #[cfg(test)]

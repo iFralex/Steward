@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { ApiConfig, BackupStatus, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
@@ -165,6 +165,7 @@ export async function loadBackgroundMode(): Promise<boolean> {
 // which reads `backupConfig.{enabled,remoteUrl}` from `app-state.json`
 // to decide whether to run the 6-hour periodic backup and where to push.
 const BACKUP_CONFIG_KEY = "backupConfig"
+const BACKUP_STATUS_KEY = "backupStatus"
 
 export async function saveBackupConfig(config: { enabled: boolean; remoteUrl: string }): Promise<void> {
   const store = await getStore()
@@ -175,6 +176,17 @@ export async function saveBackupConfig(config: { enabled: boolean; remoteUrl: st
 export async function loadBackupConfig(): Promise<{ enabled: boolean; remoteUrl: string } | null> {
   const store = await getStore()
   return (await store.get<{ enabled: boolean; remoteUrl: string }>(BACKUP_CONFIG_KEY)) ?? null
+}
+
+export async function saveBackupStatus(status: BackupStatus): Promise<void> {
+  const store = await getStore()
+  await store.set(BACKUP_STATUS_KEY, status)
+  await store.save()
+}
+
+export async function loadBackupStatus(): Promise<BackupStatus | null> {
+  const store = await getStore()
+  return (await store.get<BackupStatus>(BACKUP_STATUS_KEY)) ?? null
 }
 
 // IMPORTANT: Keep this key in sync with the Rust setup hook

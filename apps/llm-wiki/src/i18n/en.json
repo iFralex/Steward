@@ -535,7 +535,8 @@
         "remoteUrlHint": "HTTPS URL of the backup repository. Make sure the gh credential helper is configured (gh auth setup-git).",
         "runNow": "Run backup now",
         "running": "Backup in progress…",
-        "runOk": "Backup started successfully."
+        "runOk": "Backup completed.",
+        "lastSuccess": "Last successful push"
       },
       "output": {
         "title": "Output Preferences",

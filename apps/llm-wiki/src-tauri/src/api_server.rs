@@ -1520,13 +1520,19 @@ fn handle_backup_run(app: &AppHandle) -> ApiResponse {
     let Some(dir) = app.path().app_data_dir().ok() else {
         return err(500, "could not resolve app data dir");
     };
-    let cfg = crate::backup::read_backup_config(&dir.join("app-state.json"));
+    let store_path = dir.join("app-state.json");
+    let cfg = crate::backup::read_backup_config(&store_path);
     let project = clip_server::current_project_path();
     if project.is_empty() {
         return err(400, "no current project");
     }
     match crate::backup::run_backup(&project, &cfg) {
-        Ok(status) => ok(json!({ "ok": true, "status": status })),
+        Ok(result) => {
+            if let Err(e) = crate::backup::write_backup_status(&store_path, &result) {
+                return err(500, e);
+            }
+            ok(json!({ "ok": true, "result": result }))
+        }
         Err(e) => err(500, e),
     }
 }

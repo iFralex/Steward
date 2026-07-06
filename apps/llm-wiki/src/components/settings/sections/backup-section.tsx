@@ -5,18 +5,34 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { useWikiStore } from "@/stores/wiki-store"
-import { saveBackupConfig } from "@/lib/project-store"
+import { saveBackupConfig, saveBackupStatus } from "@/lib/project-store"
 import { API_SERVER_BASE_URL } from "@/lib/api-server-constants"
-import type { BackupConfig } from "@/stores/wiki-store"
+import type { BackupConfig, BackupStatus } from "@/stores/wiki-store"
+
+type BackupRunResponse = {
+  status?: string
+  result?: BackupStatus
+}
+
+function formatBackupTime(value?: number | null): string | null {
+  if (!value) return null
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value * 1000))
+}
 
 export function BackupSection() {
   const { t } = useTranslation()
   const backupConfig = useWikiStore((s) => s.backupConfig)
+  const backupStatus = useWikiStore((s) => s.backupStatus)
   const setBackupConfig = useWikiStore((s) => s.setBackupConfig)
+  const setBackupStatus = useWikiStore((s) => s.setBackupStatus)
   const apiToken = useWikiStore((s) => s.apiConfig.token)
 
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "ok" | "error">("idle")
   const [runError, setRunError] = useState<string | null>(null)
+  const [runMessage, setRunMessage] = useState<string | null>(null)
 
   const handleChange = useCallback(
     async (next: BackupConfig) => {
@@ -29,6 +45,7 @@ export function BackupSection() {
   const handleRunNow = useCallback(async () => {
     setRunStatus("running")
     setRunError(null)
+    setRunMessage(null)
     try {
       const headers: Record<string, string> = {}
       if (apiToken) {
@@ -42,12 +59,22 @@ export function BackupSection() {
         const text = await res.text().catch(() => res.statusText)
         throw new Error(`HTTP ${res.status}: ${text}`)
       }
+      const body = (await res.json().catch(() => null)) as BackupRunResponse | null
+      const result = body?.result
+      setRunMessage(result?.status ?? body?.status ?? null)
+      if (result?.pushed) {
+        setBackupStatus(result)
+        await saveBackupStatus(result)
+      }
       setRunStatus("ok")
     } catch (err) {
       setRunStatus("error")
       setRunError(err instanceof Error ? err.message : String(err))
     }
-  }, [apiToken])
+  }, [apiToken, setBackupStatus])
+
+  const lastPushTime = formatBackupTime(backupStatus?.pushedAt)
+  const shortCommit = backupStatus?.commit ? backupStatus.commit.slice(0, 12) : null
 
   return (
     <div className="space-y-6">
@@ -119,11 +146,21 @@ export function BackupSection() {
         </Button>
         {runStatus === "ok" && (
           <p className="text-xs text-green-600">
-            {t("settings.sections.backup.runOk", { defaultValue: "Backup started successfully." })}
+            {runMessage ??
+              t("settings.sections.backup.runOk", { defaultValue: "Backup completed." })}
           </p>
         )}
         {runStatus === "error" && runError && (
           <p className="text-xs text-destructive">{runError}</p>
+        )}
+        {backupStatus?.pushed && (
+          <p className="text-xs text-muted-foreground">
+            {t("settings.sections.backup.lastSuccess", {
+              defaultValue: "Last successful push",
+            })}
+            {lastPushTime ? `: ${lastPushTime}` : ""}
+            {shortCommit ? ` · ${shortCommit}` : ""}
+          </p>
         )}
       </div>
     </div>
