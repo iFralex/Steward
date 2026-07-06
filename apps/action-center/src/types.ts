@@ -14,17 +14,27 @@ export type ActionPriority = "low" | "normal" | "high";
 export interface ProposedToolStep {
   id: string;
   label: string;
+  kind?: "tool";
   tool: string;
   input: Record<string, unknown>;
   writes: boolean;
 }
+
+export interface ProposedManualStep {
+  id: string;
+  label: string;
+  kind: "manual";
+  links?: { url: string; label?: string }[];
+}
+
+export type ProposedStep = ProposedToolStep | ProposedManualStep;
 
 export interface ProposedAction {
   id: string;
   label: string;
   summary: string;
   confidence: "low" | "medium" | "high";
-  steps: ProposedToolStep[];
+  steps: ProposedStep[];
 }
 
 export interface ContextSnapshot {

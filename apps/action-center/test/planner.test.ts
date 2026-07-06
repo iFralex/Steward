@@ -62,9 +62,10 @@ test("planMailAction stores executable scheduling proposals", async () => {
   assert.equal(calls, 2);
   assert.ok(card);
   assert.equal(card.kind, "scheduling-request");
-  assert.equal(card.proposedActions[0].steps[1].tool, "mcp__calendar__create_event");
-  assert.equal(card.proposedActions[0].steps[1].input.calendar, "Work");
-  assert.deepEqual(card.proposedActions[0].steps[1].input.alarms, [60]);
+  const eventStep = card.proposedActions[0].steps[1] as { tool: string; input: Record<string, unknown> };
+  assert.equal(eventStep.tool, "mcp__calendar__create_event");
+  assert.equal(eventStep.input.calendar, "Work");
+  assert.deepEqual(eventStep.input.alarms, [60]);
   assert.equal(card.contextSnapshot.mail?.messageId, "m1");
 });
 
@@ -178,7 +179,123 @@ test("planMailAction can run follow-up read tools and removes read-only proposal
     "mcp__mail__get_thread",
     "mcp__calendar__search_events",
   ]);
-  assert.deepEqual(card.proposedActions[0].steps.map((s) => s.tool), ["mcp__mail__reply"]);
+  assert.deepEqual(card.proposedActions[0].steps.map((s) => (s as { tool?: string }).tool), ["mcp__mail__reply"]);
+});
+
+test("planMailAction keeps a manual step whose link appears in the mail body", async () => {
+  const m = msg();
+  m.bodyText = "Carica il certificato qui: https://portal.universita.example/upload prima di venerdì.";
+  let calls = 0;
+  const card = await planMailAction(m, async (system) => {
+    calls++;
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "document-action",
+        priority: "high",
+        summary: "Carica il certificato sul portale.",
+        dueDateTime: null,
+        scheduling: null,
+        replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null },
+        reasoning: "Document upload requested.",
+      });
+    }
+    return JSON.stringify({
+      title: "Carica certificato",
+      summary: "Il portale richiede il caricamento del certificato.",
+      proposedActions: [{
+        id: "upload",
+        label: "Carica il certificato",
+        summary: "Apri il portale e carica il documento.",
+        confidence: "high",
+        steps: [
+          { id: "open-portal", label: "Apri il portale di caricamento", kind: "manual", links: [{ url: "https://portal.universita.example/upload", label: "Apri portale" }] },
+        ],
+      }],
+    });
+  });
+
+  assert.equal(calls, 2);
+  assert.ok(card);
+  const step = card!.proposedActions[0].steps[0];
+  assert.equal(step.kind, "manual");
+  assert.deepEqual((step as { links?: { url: string }[] }).links, [{ url: "https://portal.universita.example/upload", label: "Apri portale" }]);
+});
+
+test("planMailAction drops a manual link that is not present in the mail body, but keeps the step", async () => {
+  const m = msg();
+  m.bodyText = "Ciao Alessio, ricordati di completare la procedura sul portale universitario.";
+  const card = await planMailAction(m, async (system) => {
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "document-action",
+        priority: "normal",
+        summary: "Completa la procedura sul portale.",
+        dueDateTime: null,
+        scheduling: null,
+        replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null },
+        reasoning: "Portal action requested.",
+      });
+    }
+    return JSON.stringify({
+      title: "Completa la procedura",
+      summary: "Il portale universitario richiede un'azione.",
+      proposedActions: [{
+        id: "portal",
+        label: "Completa la procedura",
+        summary: "Vai sul portale.",
+        confidence: "medium",
+        steps: [
+          { id: "open-portal", label: "Apri il portale universitario", kind: "manual", links: [{ url: "https://not-in-the-email.example/made-up", label: "Portale" }] },
+        ],
+      }],
+    });
+  });
+
+  assert.ok(card);
+  const step = card!.proposedActions[0].steps[0];
+  assert.equal(step.kind, "manual");
+  assert.deepEqual((step as { links?: unknown[] }).links, []);
+});
+
+test("planMailAction preserves a proposal mixing a tool step and a manual step", async () => {
+  const m = msg();
+  m.bodyText = "Ciao Alessio, conferma la presenza e carica il modulo qui: https://portal.example/modulo";
+  const card = await planMailAction(m, async (system) => {
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "document-action",
+        priority: "normal",
+        summary: "Conferma e carica il modulo.",
+        dueDateTime: null,
+        scheduling: null,
+        replyDrafts: { accept: "Confermo la presenza.", decline: null, proposeAlternative: null, askClarification: null },
+        reasoning: "Reply plus document upload.",
+      });
+    }
+    return JSON.stringify({
+      title: "Conferma e carica il modulo",
+      summary: "Serve una risposta e il caricamento del modulo.",
+      proposedActions: [{
+        id: "confirm-and-upload",
+        label: "Conferma e carica",
+        summary: "Rispondi e carica il modulo.",
+        confidence: "high",
+        steps: [
+          { id: "reply", label: "Conferma la presenza", tool: "mcp__mail__reply", input: { messageId: m.messageId, body: "Confermo la presenza.", replyAll: false }, writes: true },
+          { id: "upload", label: "Carica il modulo", kind: "manual", links: [{ url: "https://portal.example/modulo" }] },
+        ],
+      }],
+    });
+  });
+
+  assert.ok(card);
+  const steps = card!.proposedActions[0].steps;
+  assert.equal(steps.length, 2);
+  assert.equal((steps[0] as { tool?: string }).tool, "mcp__mail__reply");
+  assert.equal(steps[1].kind, "manual");
 });
 
 test("planMailAction seeds cross-thread sent-mail search for administrative replies and surfaces a generic already-replied-elsewhere fact", async () => {

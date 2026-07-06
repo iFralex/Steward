@@ -1,7 +1,7 @@
 import { cleanBody } from "../../mail-promoter/src/clean-body.ts";
 import type { Chat } from "./llm.ts";
 import { jsonFromLlm } from "./llm.ts";
-import type { ActionKind, ActionPriority, ContextSnapshot, ProposedAction } from "./types.ts";
+import type { ActionKind, ActionPriority, ContextSnapshot, ProposedAction, ProposedManualStep, ProposedToolStep } from "./types.ts";
 import { lookupCalendarContext, lookupContactContext, lookupWikiContext, type CalendarContext } from "./context.ts";
 import { collectReadToolContext, isAllowedReadTool, type ReadToolExecutor } from "./tool-context.ts";
 
@@ -64,7 +64,7 @@ const PLAN_SYSTEM = `You turn an analyzed action item plus context into executab
 Return ONLY JSON:
 {"title": string, "summary": string, "proposedActions": [
   {"id": string, "label": string, "summary": string, "confidence": "low"|"medium"|"high",
-   "steps": [{"id": string, "label": string, "tool": string, "input": object, "writes": boolean}]}
+   "steps": [{"id": string, "label": string, "kind": "tool"|"manual", "tool": string|null, "input": object|null, "writes": boolean|null, "links": [{"url": string, "label": string|null}]|null}]}
 ]}.
 Available write tools:
 - mcp__mail__reply with {messageId, from, body, replyAll}
@@ -85,6 +85,8 @@ Rules:
 - Calendar alarms must be numbers: minutes before event start, e.g. [15], not objects.
 - Calendar names must be real calendar names when known; avoid placeholders like "primary".
 - Do not propose forwarding/copying notifications to Alessio unless explicitly useful.
+- Use kind:"manual" for a step that requires Alessio to open an external link himself because no automation tool exists for it (e.g. uploading a document to a web portal, clicking a provided connection/registration/confirmation link). Manual steps must omit tool/input/writes and set links instead.
+- A manual step's links[].url must be copied verbatim from a URL that literally appears in the email content below. Never invent, guess, or complete a partial URL. If you are not certain of the exact URL, omit links entirely — the step's label alone still tells Alessio what to do.
 - The host will guard all write tools, so output concrete executable inputs.
 - Preserve uncertainty in summaries, but keep tool inputs usable.`;
 
@@ -266,10 +268,11 @@ async function planActions(
     messageId: msg.messageId,
     subject: msg.subject,
     from: msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr,
+    bodyText: msg.bodyText,
   }, analyzed, contextSnapshot, calendar }, null, 2));
   const parsed = jsonFromLlm<Record<string, unknown>>(out);
   if (!parsed) return null;
-  const proposedActions = normalizeProposedActions(parsed.proposedActions, analyzed);
+  const proposedActions = normalizeProposedActions(parsed.proposedActions, analyzed, msg.bodyText);
   if (!proposedActions.length) return null;
   return {
     title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : defaultTitle(analyzed.kind, msg.subject),
@@ -332,30 +335,15 @@ function normalizeAnalyzed(p: Record<string, unknown>): AnalyzedMail {
   };
 }
 
-function normalizeProposedActions(value: unknown, analyzed?: AnalyzedMail): ProposedAction[] {
+function normalizeProposedActions(value: unknown, analyzed: AnalyzedMail | undefined, rawBodyText: string): ProposedAction[] {
   if (!Array.isArray(value)) return [];
   return value.map((a, index) => {
     if (!a || typeof a !== "object") return null;
     const obj = a as Record<string, unknown>;
     const steps = Array.isArray(obj.steps)
-      ? obj.steps.map((s, sIndex) => {
-          if (!s || typeof s !== "object") return null;
-          const step = s as Record<string, unknown>;
-          if (typeof step.tool !== "string" || !step.tool.startsWith("mcp__")) return null;
-          if (isAllowedReadTool(step.tool)) return null;
-          const input = normalizeToolInput(
-            step.tool,
-            step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input as Record<string, unknown> : {},
-            analyzed,
-          );
-          return {
-            id: typeof step.id === "string" ? step.id : `step-${sIndex + 1}`,
-            label: typeof step.label === "string" ? step.label : step.tool,
-            tool: step.tool,
-            input,
-            writes: step.writes !== false,
-          };
-        }).filter((s): s is NonNullable<typeof s> => !!s)
+      ? obj.steps
+          .map((s, sIndex) => normalizeProposedStep(s, sIndex, analyzed, rawBodyText))
+          .filter((s): s is ProposedToolStep | ProposedManualStep => !!s)
       : [];
     if (!steps.length) return null;
     return {
@@ -366,6 +354,53 @@ function normalizeProposedActions(value: unknown, analyzed?: AnalyzedMail): Prop
       steps,
     };
   }).filter((a): a is ProposedAction => !!a);
+}
+
+function normalizeProposedStep(
+  raw: unknown,
+  index: number,
+  analyzed: AnalyzedMail | undefined,
+  rawBodyText: string,
+): ProposedToolStep | ProposedManualStep | null {
+  if (!raw || typeof raw !== "object") return null;
+  const step = raw as Record<string, unknown>;
+  if (step.kind === "manual") {
+    return {
+      id: typeof step.id === "string" ? step.id : `step-${index + 1}`,
+      label: typeof step.label === "string" ? step.label : "Manual step",
+      kind: "manual",
+      links: normalizeManualLinks(step.links, rawBodyText),
+    };
+  }
+  if (typeof step.tool !== "string" || !step.tool.startsWith("mcp__")) return null;
+  if (isAllowedReadTool(step.tool)) return null;
+  const input = normalizeToolInput(
+    step.tool,
+    step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input as Record<string, unknown> : {},
+    analyzed,
+  );
+  return {
+    id: typeof step.id === "string" ? step.id : `step-${index + 1}`,
+    label: typeof step.label === "string" ? step.label : step.tool,
+    kind: "tool",
+    tool: step.tool,
+    input,
+    writes: step.writes !== false,
+  };
+}
+
+function normalizeManualLinks(value: unknown, rawBodyText: string): { url: string; label?: string }[] {
+  if (!Array.isArray(value)) return [];
+  const out: { url: string; label?: string }[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const l = raw as Record<string, unknown>;
+    if (typeof l.url !== "string" || !l.url.trim()) continue;
+    const url = l.url.trim();
+    if (!rawBodyText.includes(url)) continue;
+    out.push(typeof l.label === "string" && l.label.trim() ? { url, label: l.label.trim() } : { url });
+  }
+  return out;
 }
 
 function normalizeToolInput(tool: string, input: Record<string, unknown>, analyzed?: AnalyzedMail): Record<string, unknown> {
