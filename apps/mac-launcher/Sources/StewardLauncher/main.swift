@@ -137,7 +137,13 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     private func makeStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.title = "LW"
+        if let icon = Self.loadStatusBarIcon() {
+            item.button?.image = icon
+        } else {
+            // Not running from a packaged .app bundle (e.g. `swift run` in dev) —
+            // Bundle.main has no Resources/Steward.icns to load.
+            item.button?.title = "LW"
+        }
         item.button?.toolTip = "Steward (\(defaultHotKey))"
 
         let menu = NSMenu()
@@ -148,6 +154,17 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         item.menu = menu
 
         statusItem = item
+    }
+
+    /// The same Steward.icns already bundled at Contents/Resources for the Dock/Finder
+    /// icon — reused here so the menu bar shows the real app icon instead of stale
+    /// placeholder text, with no separate asset to keep in sync.
+    private static func loadStatusBarIcon() -> NSImage? {
+        guard let path = Bundle.main.path(forResource: "Steward", ofType: "icns"),
+              let image = NSImage(contentsOfFile: path) else { return nil }
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = false
+        return image
     }
 
     private func menuItem(_ title: String, _ action: Selector, keyEquivalent: String = "") -> NSMenuItem {
