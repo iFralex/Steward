@@ -208,11 +208,11 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
             updateChat(msg.chatId ?? null, (prev) => appendAssistant(prev, msg.text));
             break;
           case "assistant_done":
-            updateChat(msg.chatId ?? null, (prev) => closeAssistant(prev));
+            updateChat(msg.chatId ?? null, (prev) => closeOpenAssistant(prev));
             break;
           case "tool_call":
             updateChat(msg.chatId ?? null, (prev) => [
-              ...prev,
+              ...closeOpenAssistant(prev),
               { id: uid(), role: "tool", text: msg.tool, toolInput: msg.input, toolCallId: msg.toolCallId, toolStatus: "running", ts: Date.now() },
             ]);
             break;
@@ -271,7 +271,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
             break;
           case "error":
             updateChat(msg.chatId ?? null, (prev) => [
-              ...prev,
+              ...closeOpenAssistant(prev),
               { id: uid(), role: "assistant", text: `⚠️ ${msg.message}` },
             ]);
             break;
@@ -475,10 +475,15 @@ function appendAssistant(prev: ChatMessage[], text: string): ChatMessage[] {
   return [...prev, { id: uid(), role: "assistant", text, ts: Date.now(), open: true }];
 }
 
-function closeAssistant(prev: ChatMessage[]): ChatMessage[] {
-  const last = prev[prev.length - 1];
-  if (last && last.role === "assistant" && last.open) {
-    return [...prev.slice(0, -1), { ...last, open: false }];
-  }
-  return prev;
+/**
+ * Closes every still-open assistant bubble, not just the last array element.
+ * A tool call (or an error) interrupting a streaming reply pushes something
+ * else after it, so the text bubble stops being "last" — without this, its
+ * `open` flag would never clear, and `chat_history`'s live-tail preservation
+ * (see the "chat_history" case below) would keep re-appending that stale
+ * bubble after every reload, out of order.
+ */
+function closeOpenAssistant(prev: ChatMessage[]): ChatMessage[] {
+  if (!prev.some((m) => m.role === "assistant" && m.open)) return prev;
+  return prev.map((m) => (m.role === "assistant" && m.open ? { ...m, open: false } : m));
 }
