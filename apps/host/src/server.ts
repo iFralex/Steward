@@ -21,6 +21,8 @@ import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
 import { PushRegistry, type PushSubscriptionJSON } from "./core/push.ts";
+import { getNotificationLang, setNotificationLang } from "./core/notification-lang.ts";
+import { notificationCopy } from "./core/notification-copy.ts";
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 
@@ -100,7 +102,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/push/", "/quick-send", "/transcribe"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/push/", "/quick-send", "/transcribe"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -319,7 +321,7 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     setTimeout(() => {
       void pushRegistry.sendAll({
         title: "Steward",
-        body: "Notifica di test — le push funzionano ✅",
+        body: notificationCopy(getNotificationLang()).testPush,
         tag: "push-test",
       }).catch(() => { /* best-effort */ });
     }, 15_000);
@@ -371,7 +373,7 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       if (!text) {
         void pushRegistry.sendAll({
           title: "Steward",
-          body: "Nuova chat pronta — tocca per scrivere ✍️",
+          body: notificationCopy(getNotificationLang()).newChatReady,
           tag: `chat-${chat.id}`,
           chatId: chat.id,
           type: "chat-open",
@@ -384,7 +386,7 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
           const reply = [...chatStore().getMessages(chat.id)].reverse().find((m) => m.role === "assistant")?.text ?? "";
           return pushRegistry.sendAll({
             title: "Steward",
-            body: reply ? reply.slice(0, 140) : "Risposta pronta",
+            body: reply ? reply.slice(0, 140) : notificationCopy(getNotificationLang()).replyReady,
             tag: `chat-${chat.id}`,
             chatId: chat.id,
             type: "chat-reply",
@@ -414,6 +416,26 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       const status = setAutostart(body.enabled === true);
       res.writeHead(status.detail && body.enabled === true && !status.enabled ? 400 : 200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(status));
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  // Syncs the language used for server-generated push copy (test/new-chat/reply
+  // notifications) with whichever device last changed it in the System page —
+  // one shared setting, since push goes to every registered device regardless.
+  if (req.method === "POST" && url.startsWith("/settings/notification-lang")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? JSON.parse(raw) as { lang?: unknown } : {};
+      if (body.lang !== "en" && body.lang !== "it") {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "lang must be \"en\" or \"it\"" }));
+        return;
+      }
+      setNotificationLang(body.lang);
+      res.writeHead(204, CORS);
+      res.end();
     }).catch((err) => {
       res.writeHead(400, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));

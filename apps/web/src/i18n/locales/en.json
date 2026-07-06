@@ -69,6 +69,12 @@
       "evening": "Good evening"
     },
     "emptyChatSubtitle": "Ask me something or hand me a task.",
+    "suggestions": {
+      "summarizeMail": { "label": "Summarize today's important emails", "draft": "Summarize today's important emails" },
+      "weekEvents": { "label": "What's on my schedule this week?", "draft": "What's on my schedule this week?" },
+      "replyLast": { "label": "Draft a reply to the last email from…", "draft": "Draft a reply to the last email from " },
+      "knowAbout": { "label": "What do you know about…?", "draft": "What do you know about " }
+    },
     "pendingActions_one": "⚡ {{count}} pending action",
     "pendingActions_other": "⚡ {{count}} pending actions",
     "kbdType": "type",
@@ -82,6 +88,7 @@
       "new": "+ New",
       "newTitle": "New chat",
       "empty": "No chats.",
+      "untitled": "New chat",
       "messageCount_one": "{{count}} message",
       "messageCount_other": "{{count}} messages",
       "saveTitle": "Save this chat (make it permanent)",

@@ -69,6 +69,12 @@
       "evening": "Buonasera"
     },
     "emptyChatSubtitle": "Chiedimi qualcosa o affidami un compito.",
+    "suggestions": {
+      "summarizeMail": { "label": "Riassumi le mail importanti di oggi", "draft": "Riassumi le mail importanti di oggi" },
+      "weekEvents": { "label": "Che impegni ho questa settimana?", "draft": "Che impegni ho questa settimana?" },
+      "replyLast": { "label": "Prepara una risposta all'ultima mail di…", "draft": "Prepara una bozza di risposta all'ultima mail di " },
+      "knowAbout": { "label": "Cosa sai di…?", "draft": "Cosa sai di " }
+    },
     "pendingActions_one": "⚡ {{count}} azione in attesa",
     "pendingActions_other": "⚡ {{count}} azioni in attesa",
     "kbdType": "scrivi",
@@ -82,6 +88,7 @@
       "new": "+ Nuova",
       "newTitle": "Nuova chat",
       "empty": "Nessuna chat.",
+      "untitled": "Nuova chat",
       "messageCount_one": "{{count}} messaggio",
       "messageCount_other": "{{count}} messaggi",
       "saveTitle": "Salva questa chat (rendila permanente)",

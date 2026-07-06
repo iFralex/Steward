@@ -143,6 +143,7 @@ function ChatList({
   onSave: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const titleOf = (c: ChatSummary) => c.title || t("sidebar.chatList.untitled");
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-end border-b p-2">
@@ -164,7 +165,7 @@ function ChatList({
               <button type="button" onClick={() => onSelect(c.id)} className="block w-full text-left">
                 <div className="flex items-center gap-1.5 pr-10">
                   {c.temporary && <span className="bg-primary/15 text-primary rounded px-1 py-px text-[10px] font-medium uppercase">temp</span>}
-                  <span className="truncate text-sm font-medium">{c.title}</span>
+                  <span className="truncate text-sm font-medium">{titleOf(c)}</span>
                 </div>
                 <div className="text-muted-foreground mt-0.5 text-xs">
                   {t("sidebar.chatList.messageCount", { count: c.messageCount })} · {formatWhen(Math.floor(c.updatedAt / 1000))}
@@ -176,7 +177,7 @@ function ChatList({
                   <button
                     type="button"
                     title={t("sidebar.chatList.saveTitle")}
-                    aria-label={t("sidebar.chatList.saveAria", { title: c.title })}
+                    aria-label={t("sidebar.chatList.saveAria", { title: titleOf(c) })}
                     className="hover:bg-background text-muted-foreground hover:text-primary rounded p-1.5 text-xs"
                     onClick={() => onSave(c.id)}
                   >
@@ -186,7 +187,7 @@ function ChatList({
                 <button
                   type="button"
                   title={t("sidebar.chatList.renameTitle")}
-                  aria-label={t("sidebar.chatList.renameAria", { title: c.title })}
+                  aria-label={t("sidebar.chatList.renameAria", { title: titleOf(c) })}
                   className="hover:bg-background text-muted-foreground rounded p-1.5 text-xs"
                   onClick={() => {
                     const title = window.prompt(t("sidebar.chatList.renamePrompt"), c.title);
@@ -198,10 +199,10 @@ function ChatList({
                 <button
                   type="button"
                   title={t("sidebar.chatList.deleteTitle")}
-                  aria-label={t("sidebar.chatList.deleteAria", { title: c.title })}
+                  aria-label={t("sidebar.chatList.deleteAria", { title: titleOf(c) })}
                   className="hover:bg-background text-muted-foreground hover:text-destructive rounded p-1.5 text-xs"
                   onClick={() => {
-                    if (window.confirm(t("sidebar.chatList.deleteConfirm", { title: c.title }))) onDelete(c.id);
+                    if (window.confirm(t("sidebar.chatList.deleteConfirm", { title: titleOf(c) }))) onDelete(c.id);
                   }}
                 >
                   <span aria-hidden>🗑</span>

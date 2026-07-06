@@ -170,7 +170,7 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
         />
       </div>
 
-      <LanguageCard />
+      <LanguageCard httpBase={httpBase} token={token} onUnauthorized={onUnauthorized} />
 
       {pairToken && <PairingPanel token={pairToken} />}
 
@@ -236,10 +236,20 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   );
 }
 
-function LanguageCard() {
+/** Also pushes the choice to the host so server-generated push-notification
+ *  copy (test/new-chat/reply) follows it — best-effort, the UI language switch
+ *  itself doesn't depend on the host being reachable. */
+function LanguageCard({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const { t, i18n: i18nInstance } = useTranslation();
   const current = i18nInstance.language === "it" ? "it" : "en";
-  const setLang = (lang: Lang) => void i18n.changeLanguage(lang);
+  const setLang = (lang: Lang) => {
+    void i18n.changeLanguage(lang);
+    void authFetch(`${httpBase}/settings/notification-lang`, token, onUnauthorized, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lang }),
+    }).catch(() => { /* best-effort — UI language switch doesn't depend on the host */ });
+  };
   return (
     <Card size="sm">
       <CardHeader>

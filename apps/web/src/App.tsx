@@ -690,7 +690,7 @@ function App() {
               <button type="button" aria-label={t("app.back")} className="text-muted-foreground text-sm" onClick={() => setMobileDrill(false)}>←</button>
             )}
             <span className="truncate text-sm font-medium">
-              {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title ?? t("app.mobileHeader.chatFallback"))
+              {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title || t("app.mobileHeader.chatFallback"))
                 : tab === "actions" ? (selectedAction?.title ?? t("app.mobileHeader.actionsFallback"))
                 : tab === "usage" ? t("app.mobileHeader.usage") : t("app.mobileHeader.system")}
             </span>
@@ -958,11 +958,13 @@ function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) 
 
 /** Suggestion chips for the empty chat: label is what you see, draft is what
  *  lands in the composer (open-ended ones leave a trailing space to finish). */
-const SUGGESTIONS: { icon: string; tint: string; label: string; draft: string }[] = [
-  { icon: "✉️", tint: "border-indigo-500/25 bg-indigo-500/10", label: "Riassumi le mail importanti di oggi", draft: "Riassumi le mail importanti di oggi" },
-  { icon: "📅", tint: "border-violet-500/25 bg-violet-500/10", label: "Che impegni ho questa settimana?", draft: "Che impegni ho questa settimana?" },
-  { icon: "↩️", tint: "border-amber-500/25 bg-amber-500/10", label: "Prepara una risposta all'ultima mail di…", draft: "Prepara una bozza di risposta all'ultima mail di " },
-  { icon: "📚", tint: "border-pink-500/25 bg-pink-500/10", label: "Cosa sai di…?", draft: "Cosa sai di " },
+/** Suggestion chip content lives in app.suggestions.<key>.{label,draft} so it
+ *  follows the selected UI language like the rest of the empty-chat copy. */
+const SUGGESTIONS: { icon: string; tint: string; key: string }[] = [
+  { icon: "✉️", tint: "border-indigo-500/25 bg-indigo-500/10", key: "summarizeMail" },
+  { icon: "📅", tint: "border-violet-500/25 bg-violet-500/10", key: "weekEvents" },
+  { icon: "↩️", tint: "border-amber-500/25 bg-amber-500/10", key: "replyLast" },
+  { icon: "📚", tint: "border-pink-500/25 bg-pink-500/10", key: "knowAbout" },
 ];
 
 function greetingKey(): "night" | "morning" | "afternoon" | "evening" {
@@ -1001,16 +1003,16 @@ function EmptyChat({
       <div className="relative grid w-full max-w-md gap-2 sm:grid-cols-2">
         {SUGGESTIONS.map((s, i) => (
           <button
-            key={s.label}
+            key={s.key}
             type="button"
-            onClick={() => onSuggestion(s.draft)}
+            onClick={() => onSuggestion(t(`app.suggestions.${s.key}.draft`))}
             className="bg-card hover:border-violet-500/40 group flex items-center gap-3 rounded-xl border p-3 text-left text-sm transition hover:-translate-y-0.5 hover:shadow-md motion-reduce:animate-none"
             style={{ animation: "steward-rise 0.5s ease-out both", animationDelay: `${120 + i * 70}ms` }}
           >
             <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border text-base", s.tint)}>
               {s.icon}
             </span>
-            <span className="text-foreground/90">{s.label}</span>
+            <span className="text-foreground/90">{t(`app.suggestions.${s.key}.label`)}</span>
           </button>
         ))}
       </div>

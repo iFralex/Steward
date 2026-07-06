@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, seq);
 `;
 
-export const DEFAULT_CHAT_TITLE = "Nuova chat";
+/** Sentinel for "no title set yet" — stored as-is (schema is NOT NULL, "" satisfies
+ *  it) and never shown to the user; the frontend renders its own localized
+ *  placeholder whenever a chat's title is empty. */
+export const DEFAULT_CHAT_TITLE = "";
 
 export class ChatStore {
   readonly raw: Database.Database;

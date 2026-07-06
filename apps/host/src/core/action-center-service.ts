@@ -17,6 +17,8 @@ import { decideTool } from "./tool-policy.ts";
 import { extractToolOutput, sharedMcpBridge } from "./agent-runner.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import type { PushRegistry } from "./push.ts";
+import { getNotificationLang } from "./notification-lang.ts";
+import { notificationCopy } from "./notification-copy.ts";
 
 /**
  * Push registry for the action-center → phone hook (mobile-access M2/M3), set
@@ -59,7 +61,7 @@ function notifyNewProposals(store: ActionStore, items: ActionCenterItem[]): void
       changed = true;
       void pushRegistry.sendAll({
         title: "Steward",
-        body: item.title || item.summary || "Nuova proposta da approvare",
+        body: item.title || item.summary || notificationCopy(getNotificationLang()).newProposal,
         tag: `action-${item.id}`,
         actionId: item.id,
         type: "approval",
