@@ -12,6 +12,7 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
+    "@steward/audit-log": "*",
     "@steward/mcp-bridge": "*",
     "@steward/protocol": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",

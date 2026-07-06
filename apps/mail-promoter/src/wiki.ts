@@ -1,6 +1,7 @@
 // apps/mail-promoter/src/wiki.ts
 import { writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { recordAudit } from "@steward/audit-log";
 
 export interface WikiPromoter {
   addSources(projectId: string, sources: { filename: string; content: string }[], rescan?: boolean): Promise<unknown>;
@@ -49,8 +50,32 @@ export async function promote(
   rescan = true,
   previousFilename?: string | null,
 ): Promise<void> {
-  await client.addSources(projectId, [note], rescan);
-  if (previousFilename && previousFilename !== note.filename) {
-    await client.removeSource?.(projectId, previousFilename);
+  const startedAt = Date.now();
+  try {
+    await client.addSources(projectId, [note], rescan);
+    if (previousFilename && previousFilename !== note.filename) {
+      await client.removeSource?.(projectId, previousFilename);
+    }
+    recordAudit({
+      actor: "scheduler",
+      eventType: "wiki.promoted",
+      risk: "low",
+      summary: `Promoted mail note to wiki: ${note.filename}`,
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      payload: { projectId, filename: note.filename, content: note.content, rescan, replacedFilename: previousFilename ?? null },
+      sourceRefs: [{ type: "wiki", label: note.filename }],
+    });
+  } catch (err) {
+    recordAudit({
+      actor: "scheduler",
+      eventType: "wiki.promote_failed",
+      risk: "medium",
+      summary: err instanceof Error ? err.message : String(err),
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      payload: { projectId, filename: note.filename, rescan },
+    });
+    throw err;
   }
 }

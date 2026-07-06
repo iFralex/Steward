@@ -32,13 +32,16 @@
       "chatFallback": "Chat",
       "actionsFallback": "Actions",
       "usage": "Usage",
+      "audit": "Audit",
       "system": "System"
     },
     "bottomNav": {
       "chat": "💬 Chat",
       "actions": "⚡ Actions",
       "usage": "Usage",
-      "system": "System"
+      "audit": "Audit",
+      "system": "System",
+      "more": "More"
     },
     "back": "Back",
     "audioNotSupported": "Audio recording isn't supported by this browser.",
@@ -84,7 +87,7 @@
   },
   "sidebar": {
     "tabs": { "chat": "Chat", "actions": "Actions" },
-    "footer": { "usage": "Usage", "system": "System" },
+    "footer": { "usage": "Usage", "audit": "Audit", "system": "System" },
     "chatList": {
       "new": "+ New",
       "newTitle": "New chat",
@@ -198,6 +201,25 @@
       "error": "error",
       "headers": { "when": "When", "service": "Service", "action": "Action", "model": "Model", "in": "In", "out": "Out", "duration": "Duration", "cost": "Cost" }
     }
+  },
+  "audit": {
+    "title": "Audit",
+    "subtitle": "Every message, tool call, approval, and write across the app.",
+    "refresh": "Refresh",
+    "refreshTitle": "Refresh audit log",
+    "loadError": "Couldn't load the audit log: {{error}}",
+    "search": "Search summary, event type, tool, payload…",
+    "stats": { "events": "Events", "highRisk": "High risk", "failed": "Failed" },
+    "actors": { "all": "All", "user": "User", "assistant": "Assistant", "host": "Host", "tool": "Tool", "system": "System", "scheduler": "Scheduler" },
+    "risks": { "all": "All", "high": "High", "medium": "Medium", "low": "Low" },
+    "timeline": "Timeline",
+    "loading": "Loading…",
+    "empty": "No events match these filters.",
+    "failed": "failed",
+    "detail": "Detail",
+    "sources": "Sources",
+    "payload": "Payload (redacted)",
+    "noSelection": "Select an event to see its detail."
   },
   "actionDetail": {
     "closePanel": "Close action panel",

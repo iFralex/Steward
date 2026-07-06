@@ -13,6 +13,7 @@ import { extname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ClientEvent } from "@steward/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
+import { auditLog, recordAudit, type AuditActor, type AuditRisk } from "@steward/audit-log";
 import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setPushRegistry } from "./core/action-center-service.ts";
 import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
@@ -102,7 +103,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/push/", "/quick-send", "/transcribe"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/push/", "/quick-send", "/transcribe"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -305,6 +306,13 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
         return;
       }
       pushRegistry.subscribe(sub);
+      recordAudit({
+        actor: "system",
+        eventType: "push.subscribe",
+        risk: "low",
+        summary: "Push subscription registered",
+        payload: { endpoint: sub.endpoint },
+      });
       res.writeHead(204, CORS);
       res.end();
     }).catch((err) => {
@@ -316,6 +324,7 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
   // Delayed test push: fire-and-forget so the user can background/close the
   // app and verify real delivery (not just the in-page permission state).
   if (req.method === "POST" && url.startsWith("/push/test")) {
+    recordAudit({ actor: "user", eventType: "push.test", risk: "low", summary: "Push test requested" });
     res.writeHead(202, CORS);
     res.end();
     setTimeout(() => {
@@ -331,6 +340,13 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     void readRequestBody(req).then((raw) => {
       const body = raw ? (JSON.parse(raw) as { endpoint?: string }) : {};
       if (body.endpoint) pushRegistry.unsubscribe(body.endpoint);
+      recordAudit({
+        actor: "system",
+        eventType: "push.unsubscribe",
+        risk: "low",
+        summary: "Push subscription removed",
+        payload: { endpoint: body.endpoint },
+      });
       res.writeHead(204, CORS);
       res.end();
     }).catch((err) => {
@@ -348,11 +364,26 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
         return;
       }
       const text = await transcribeAudioPayload(config, body.audio);
+      recordAudit({
+        actor: "host",
+        eventType: "speech.transcribed",
+        risk: "low",
+        summary: "Audio transcribed",
+        ok: true,
+        payload: { text, mimeType: body.audio.mimeType, filename: body.audio.filename },
+      });
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ text }));
     }).catch((err) => {
       console.error(`[quick-send] ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
       const status = err instanceof SpeechUnavailableError ? 503 : 400;
+      recordAudit({
+        actor: "host",
+        eventType: "speech.failed",
+        risk: "medium",
+        summary: err instanceof Error ? err.message : String(err),
+        ok: false,
+      });
       res.writeHead(status, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
     });
@@ -366,6 +397,14 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       const body = raw ? (JSON.parse(raw) as QuickSendBody) : {};
       const text = await textFromQuickSendBody(config, body);
       const chat = chatStore().createChat();
+      recordAudit({
+        actor: "user",
+        eventType: "quick_send.created",
+        risk: "low",
+        summary: text ? text.slice(0, 180) : "Quick-send created an empty chat",
+        chatId: chat.id,
+        payload: { text },
+      });
       res.writeHead(202, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ chatId: chat.id }));
       // No text (e.g. the Shortcut prompt was left empty): just hand back a
@@ -414,6 +453,14 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     void readRequestBody(req).then((raw) => {
       const body = raw ? JSON.parse(raw) as { enabled?: unknown } : {};
       const status = setAutostart(body.enabled === true);
+      recordAudit({
+        actor: "user",
+        eventType: "system.autostart",
+        risk: "medium",
+        summary: `${body.enabled === true ? "Enabled" : "Disabled"} launch at login`,
+        ok: !status.detail || status.enabled === (body.enabled === true),
+        payload: status,
+      });
       res.writeHead(status.detail && body.enabled === true && !status.enabled ? 400 : 200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(status));
     }).catch((err) => {
@@ -434,6 +481,13 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
         return;
       }
       setNotificationLang(body.lang);
+      recordAudit({
+        actor: "user",
+        eventType: "settings.notification_lang",
+        risk: "low",
+        summary: `Notification language set to ${body.lang}`,
+        payload: { lang: body.lang },
+      });
       res.writeHead(204, CORS);
       res.end();
     }).catch((err) => {
@@ -453,9 +507,49 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       if (tooBig) { res.writeHead(413, CORS); res.end("file too large"); return; }
       const ref = saveUpload(name, Buffer.concat(chunks));
       if (!ref) { res.writeHead(500, CORS); res.end("upload failed"); return; }
+      recordAudit({
+        actor: "user",
+        eventType: "file.uploaded",
+        risk: "medium",
+        summary: `Uploaded ${ref.name}`,
+        ok: true,
+        payload: ref,
+        sourceRefs: [{ type: "file", id: ref.token, path: ref.path, label: ref.name }],
+      });
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(ref));
     });
+    return;
+  }
+  if (url.startsWith("/audit") && req.method === "GET") {
+    try {
+      const parsed = new URL(url, "http://x");
+      const limit = parsed.searchParams.get("limit");
+      const cursor = parsed.searchParams.get("cursor");
+      const since = parsed.searchParams.get("since");
+      const until = parsed.searchParams.get("until");
+      const actionId = parsed.searchParams.get("actionId");
+      const actor = parsed.searchParams.get("actor");
+      const risk = parsed.searchParams.get("risk");
+      const page = auditLog().query({
+        limit: limit ? Number(limit) : undefined,
+        cursor: cursor ? Number(cursor) : undefined,
+        since: since ? Number(since) : undefined,
+        until: until ? Number(until) : undefined,
+        actionId: actionId ? Number(actionId) : undefined,
+        actor: isAuditActor(actor) ? actor : undefined,
+        risk: isAuditRisk(risk) ? risk : undefined,
+        eventType: parsed.searchParams.get("eventType") ?? undefined,
+        chatId: parsed.searchParams.get("chatId") ?? undefined,
+        toolName: parsed.searchParams.get("toolName") ?? undefined,
+        q: parsed.searchParams.get("q") ?? undefined,
+      });
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(page));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    }
     return;
   }
   if (url.startsWith("/usage") && req.method === "GET") {
@@ -477,6 +571,15 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     const path = new URL(url, "http://x").searchParams.get("path") ?? "";
     const ref = registerUserPath(path);
     if (!ref) { res.writeHead(404, CORS); res.end("not found or blocked"); return; }
+    recordAudit({
+      actor: "user",
+      eventType: "file.registered",
+      risk: "medium",
+      summary: `Registered file ${ref.name}`,
+      ok: true,
+      payload: { path, ref },
+      sourceRefs: [{ type: "file", id: ref.token, path: ref.path, label: ref.name }],
+    });
     res.writeHead(200, { "Content-Type": "application/json", ...CORS });
     res.end(JSON.stringify(ref));
     return;
@@ -487,6 +590,15 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
     let stat: Stats | undefined;
     try { stat = entry ? statSync(entry.path) : undefined; } catch { /* gone */ }
     if (!entry || !stat?.isFile()) { res.writeHead(404, CORS); res.end("not found"); return; }
+    recordAudit({
+      actor: "user",
+      eventType: "file.served",
+      risk: "medium",
+      summary: `Served file ${entry.ref.name}`,
+      ok: true,
+      payload: entry.ref,
+      sourceRefs: [{ type: "file", id: entry.ref.token, path: entry.path, label: entry.ref.name }],
+    });
     res.writeHead(200, {
       "Content-Type": entry.ref.mime,
       "Content-Length": stat.size,
@@ -499,6 +611,14 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
   if (tryServeWebAsset(config, req, res, CORS)) return;
   res.writeHead(404, CORS);
   res.end("not found");
+}
+
+function isAuditActor(value: string | null): value is AuditActor {
+  return value === "user" || value === "assistant" || value === "host" || value === "scheduler" || value === "tool" || value === "system";
+}
+
+function isAuditRisk(value: string | null): value is AuditRisk {
+  return value === "low" || value === "medium" || value === "high";
 }
 
 export function startServer(config: HostConfig): WebSocketServer {
@@ -533,6 +653,13 @@ export function startServer(config: HostConfig): WebSocketServer {
     const session = new Session(emit, config.approvalTimeoutMs);
     const chats = new ChatManager(config, session, emit);
     const store = chatStore();
+    recordAudit({
+      actor: "system",
+      eventType: "session.connected",
+      risk: "low",
+      summary: "Client connected",
+      sessionId: session.id,
+    });
 
     const sendChatList = () => {
       emit({ type: "chat_list", chats: store.listChats(), activeChatId: session.activeChatId });
@@ -542,6 +669,14 @@ export function startServer(config: HostConfig): WebSocketServer {
       session.activeChatId = chatId;
       emit({ type: "chat_history", chatId, messages: store.getMessages(chatId) });
       sendChatList();
+      recordAudit({
+        actor: "user",
+        eventType: "chat.selected",
+        risk: "low",
+        summary: `Selected chat ${chatId}`,
+        sessionId: session.id,
+        chatId,
+      });
     };
 
     // Per-action temporary "scratch" chats (open-in-chat / execute go here).
@@ -565,6 +700,14 @@ export function startServer(config: HostConfig): WebSocketServer {
 
     ws.on("close", () => {
       session.closed = true;
+      recordAudit({
+        actor: "system",
+        eventType: "session.disconnected",
+        risk: "low",
+        summary: "Client disconnected",
+        sessionId: session.id,
+        chatId: session.activeChatId,
+      });
       void chats.close();
     });
 
@@ -592,11 +735,28 @@ export function startServer(config: HostConfig): WebSocketServer {
           break;
         case "chat_create": {
           const chat = store.createChat(msg.title, { temporary: msg.temporary });
+          recordAudit({
+            actor: "user",
+            eventType: "chat.created",
+            risk: "low",
+            summary: `Created chat ${chat.title}`,
+            sessionId: session.id,
+            chatId: chat.id,
+            payload: { title: msg.title, temporary: msg.temporary },
+          });
           selectChat(chat.id);
           break;
         }
         case "chat_save":
           store.setTemporary(msg.chatId, false);
+          recordAudit({
+            actor: "user",
+            eventType: "chat.saved",
+            risk: "low",
+            summary: `Saved chat ${msg.chatId}`,
+            sessionId: session.id,
+            chatId: msg.chatId,
+          });
           sendChatList();
           break;
         case "chat_select":
@@ -604,11 +764,28 @@ export function startServer(config: HostConfig): WebSocketServer {
           break;
         case "chat_rename":
           store.rename(msg.chatId, msg.title);
+          recordAudit({
+            actor: "user",
+            eventType: "chat.renamed",
+            risk: "low",
+            summary: `Renamed chat to ${msg.title}`,
+            sessionId: session.id,
+            chatId: msg.chatId,
+            payload: { title: msg.title },
+          });
           sendChatList();
           break;
         case "chat_delete": {
           chats.dispose(msg.chatId);
           store.deleteChat(msg.chatId);
+          recordAudit({
+            actor: "user",
+            eventType: "chat.deleted",
+            risk: "medium",
+            summary: `Deleted chat ${msg.chatId}`,
+            sessionId: session.id,
+            chatId: msg.chatId,
+          });
           if (session.activeChatId === msg.chatId) {
             const remaining = store.listChats();
             const next = remaining[0] ?? store.createChat();
@@ -630,12 +807,36 @@ export function startServer(config: HostConfig): WebSocketServer {
           break;
         case "open_file": {
           const entry = resolveToken(msg.token);
-          if (entry) execFile("/usr/bin/open", [entry.path], () => {});
+          if (entry) {
+            recordAudit({
+              actor: "user",
+              eventType: "file.opened",
+              risk: "medium",
+              summary: `Opened file ${entry.ref.name}`,
+              sessionId: session.id,
+              chatId: session.activeChatId,
+              payload: entry.ref,
+              sourceRefs: [{ type: "file", id: entry.ref.token, path: entry.path, label: entry.ref.name }],
+            });
+            execFile("/usr/bin/open", [entry.path], () => {});
+          }
           break;
         }
         case "reveal_file": {
           const entry = resolveToken(msg.token);
-          if (entry) execFile("/usr/bin/open", ["-R", entry.path], () => {});
+          if (entry) {
+            recordAudit({
+              actor: "user",
+              eventType: "file.revealed",
+              risk: "medium",
+              summary: `Revealed file ${entry.ref.name}`,
+              sessionId: session.id,
+              chatId: session.activeChatId,
+              payload: entry.ref,
+              sourceRefs: [{ type: "file", id: entry.ref.token, path: entry.path, label: entry.ref.name }],
+            });
+            execFile("/usr/bin/open", ["-R", entry.path], () => {});
+          }
           break;
         }
         case "action_center_refresh":
@@ -646,11 +847,29 @@ export function startServer(config: HostConfig): WebSocketServer {
           });
           break;
         case "action_center_mark":
+          recordAudit({
+            actor: "user",
+            eventType: "action.marked",
+            risk: "low",
+            summary: `Action ${msg.id} marked ${msg.status}`,
+            sessionId: session.id,
+            actionId: msg.id,
+            payload: { status: msg.status },
+          });
           emit({ type: "action_center_state", sessionId: session.id, state: markAction(msg.id, msg.status) });
           break;
         case "action_open_in_chat": {
           const action = getActionItem(msg.id);
           if (!action) { emit({ type: "error", sessionId: session.id, message: `Action not found: ${msg.id}` }); break; }
+          recordAudit({
+            actor: "user",
+            eventType: "action.opened_in_chat",
+            risk: "low",
+            summary: action.title,
+            sessionId: session.id,
+            actionId: action.id,
+            payload: action,
+          });
           const chatId = ensureActionChat(action);
           selectChat(chatId);
           const prompt = `Apri l'action-center item ${action.id} "${action.title}". Leggilo con read_action, riassumimi il contesto e aiutami a decidere cosa fare.`;
@@ -663,6 +882,15 @@ export function startServer(config: HostConfig): WebSocketServer {
             break;
           }
           executingActions.add(msg.id);
+          recordAudit({
+            actor: "user",
+            eventType: "action.execute_requested",
+            risk: "high",
+            summary: `Execute action ${msg.id}`,
+            sessionId: session.id,
+            actionId: msg.id,
+            payload: { proposalId: msg.proposalId },
+          });
           void (async () => {
             const action = getActionItem(msg.id);
             const chatId = action ? ensureActionChat(action) : session.activeChatId ?? undefined;
@@ -677,11 +905,43 @@ export function startServer(config: HostConfig): WebSocketServer {
                 proposalId: msg.proposalId,
                 chatId,
               });
+              recordAudit({
+                actor: "host",
+                eventType: "action.executed",
+                risk: "high",
+                summary: `Executed action ${msg.id}`,
+                sessionId: session.id,
+                chatId,
+                actionId: msg.id,
+                ok: true,
+                payload: { proposalId: msg.proposalId },
+              });
               emit({ type: "action_center_state", sessionId: session.id, state });
             } catch (err) {
               if (err instanceof ActionRevisionRequestedError) {
+                recordAudit({
+                  actor: "user",
+                  eventType: "action.revision_requested",
+                  risk: "medium",
+                  summary: `Revision requested for action ${msg.id}`,
+                  sessionId: session.id,
+                  chatId,
+                  actionId: msg.id,
+                  payload: { proposalId: msg.proposalId },
+                });
                 if (chatId) await chats.runTurn(chatId, err.prompt);
               } else {
+                recordAudit({
+                  actor: "host",
+                  eventType: "action.execute_failed",
+                  risk: "high",
+                  summary: err instanceof Error ? err.message : String(err),
+                  sessionId: session.id,
+                  chatId,
+                  actionId: msg.id,
+                  ok: false,
+                  payload: { proposalId: msg.proposalId },
+                });
                 emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
               }
             } finally {
@@ -692,6 +952,15 @@ export function startServer(config: HostConfig): WebSocketServer {
           })();
           break;
         case "action_center_revise":
+          recordAudit({
+            actor: "user",
+            eventType: "action.revise_requested",
+            risk: "medium",
+            summary: msg.instruction.slice(0, 180),
+            sessionId: session.id,
+            actionId: msg.id,
+            payload: { proposalId: msg.proposalId, instruction: msg.instruction },
+          });
           void (async () => {
             emit({ type: "status", sessionId: session.id, state: "running" });
             try {
@@ -701,8 +970,28 @@ export function startServer(config: HostConfig): WebSocketServer {
                 proposalId: msg.proposalId,
                 instruction: msg.instruction,
               });
+              recordAudit({
+                actor: "assistant",
+                eventType: "action.revised",
+                risk: "medium",
+                summary: `Revised action ${msg.id}`,
+                sessionId: session.id,
+                actionId: msg.id,
+                ok: true,
+                payload: { proposalId: msg.proposalId },
+              });
               emit({ type: "action_center_state", sessionId: session.id, state });
             } catch (err) {
+              recordAudit({
+                actor: "host",
+                eventType: "action.revise_failed",
+                risk: "medium",
+                summary: err instanceof Error ? err.message : String(err),
+                sessionId: session.id,
+                actionId: msg.id,
+                ok: false,
+                payload: { proposalId: msg.proposalId },
+              });
               emit({ type: "error", sessionId: session.id, message: err instanceof Error ? err.message : String(err) });
             } finally {
               emit({ type: "status", sessionId: session.id, state: "idle" });

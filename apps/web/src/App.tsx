@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type ReactNode } from "react";
 import { flushSync } from "react-dom";
-import { Mic, Square } from "lucide-react";
+import { BarChart3, ListChecks, Mic, Settings, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
@@ -18,11 +18,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn, safeHref } from "@/lib/utils";
 import { ToolCard } from "@/components/tool-card";
 import { CardView, type FileApi } from "@/components/cards";
 import { FileChip } from "@/components/file-chip";
 import { UsagePage } from "@/components/usage-page";
+import { AuditPage } from "@/components/audit-page";
 import { SystemPage } from "@/components/system-page";
 import { ActionDetail } from "@/components/action-detail";
 import { UnifiedSidebar } from "@/components/sidebar";
@@ -33,8 +35,8 @@ import type { ActionCenterItem, ChannelFile } from "@steward/protocol";
 const HOST_URL = hostWsUrl();
 const HTTP_BASE = hostHttpBase();
 
-type Tab = "chat" | "actions" | "usage" | "system";
-type Pane = "chat" | "action" | "usage" | "system";
+type Tab = "chat" | "actions" | "usage" | "audit" | "system";
+type Pane = "chat" | "action" | "usage" | "audit" | "system";
 
 function AppMark({ className }: { className?: string }) {
   return (
@@ -103,6 +105,7 @@ function App() {
   const [transcribing, setTranscribing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false); // mobile bottom-nav "Altro" overflow sheet
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
@@ -160,11 +163,18 @@ function App() {
     setMobileDrill(true);
   };
   const openUsage = () => { setPane("usage"); if (!isDesktop) setTab("usage"); setMobileDrill(true); };
+  const openAudit = () => { setPane("audit"); if (!isDesktop) setTab("audit"); setMobileDrill(true); };
   const openSystem = () => { setPane("system"); if (!isDesktop) setTab("system"); setMobileDrill(true); };
   const openMobileTab = (nextTab: Tab) => {
+    setMoreOpen(false); // any nav destination change dismisses the "Altro" overflow sheet
     setTab(nextTab);
     if (nextTab === "usage") {
       setPane("usage");
+      setMobileDrill(true);
+      return;
+    }
+    if (nextTab === "audit") {
+      setPane("audit");
       setMobileDrill(true);
       return;
     }
@@ -656,7 +666,7 @@ function App() {
         </div>
       </header>
 
-      {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
+      <ShortcutsDialog open={showShortcuts} onOpenChange={setShowShortcuts} />
 
       <div className="relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[300px_minmax(0,1fr)]">
         {/* List layer. On mobile it stays
@@ -681,6 +691,7 @@ function App() {
             onRefreshActions={() => host.refreshActions(showDone)}
             pane={pane}
             onOpenUsage={openUsage}
+            onOpenAudit={openAudit}
             onOpenSystem={openSystem}
           />
         </aside>
@@ -702,12 +713,17 @@ function App() {
             <span className="truncate text-sm font-medium">
               {tab === "chat" ? (host.chats.find((c) => c.id === host.activeChatId)?.title || t("app.mobileHeader.chatFallback"))
                 : tab === "actions" ? (selectedAction?.title ?? t("app.mobileHeader.actionsFallback"))
-                : tab === "usage" ? t("app.mobileHeader.usage") : t("app.mobileHeader.system")}
+                : tab === "usage" ? t("app.mobileHeader.usage")
+                : tab === "audit" ? t("app.mobileHeader.audit") : t("app.mobileHeader.system")}
             </span>
           </div>
           {shown === "usage" ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
               <UsagePage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
+            </div>
+          ) : shown === "audit" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <AuditPage httpBase={HTTP_BASE} token={authToken} onUnauthorized={onUnauthorized} />
             </div>
           ) : shown === "system" ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -757,38 +773,99 @@ function App() {
       </div>
 
       {/* Bottom nav (mobile only) */}
-      <nav className="flex border-t pb-[env(safe-area-inset-bottom)] lg:hidden">
-        {([
-          ["chat", t("app.bottomNav.chat"), "flex-[2]"],
-          ["actions", t("app.bottomNav.actions"), "flex-[2]"],
-          ["usage", t("app.bottomNav.usage"), "flex-1"],
-          ["system", t("app.bottomNav.system"), "flex-1"],
-        ] as const).map(([tabKey, label, widthClass]) => (
+      <div className="relative lg:hidden">
+        {moreOpen && (
+          <MoreNavSheet
+            activeTab={tab}
+            onSelect={openMobileTab}
+            onClose={() => setMoreOpen(false)}
+          />
+        )}
+        <nav className="bg-background relative z-50 flex border-t pb-[env(safe-area-inset-bottom)]">
+          {([
+            ["chat", t("app.bottomNav.chat"), "flex-1"],
+            ["actions", t("app.bottomNav.actions"), "flex-1"],
+          ] as const).map(([tabKey, label, widthClass]) => (
+            <button
+              key={tabKey}
+              type="button"
+              onClick={() => openMobileTab(tabKey)}
+              aria-current={tab === tabKey ? "page" : undefined}
+              className={cn(
+                "relative py-4 text-center text-xs transition",
+                widthClass,
+                tab === tabKey ? "text-foreground font-medium" : "text-muted-foreground",
+              )}
+            >
+              {label}
+              {tabKey === "actions" && newActionCount > 0 && (
+                <span className="bg-primary text-primary-foreground absolute -mt-1 ml-0.5 rounded-full px-1 text-[9px] font-semibold tabular-nums">
+                  {newActionCount}
+                </span>
+              )}
+            </button>
+          ))}
           <button
-            key={tabKey}
             type="button"
-            onClick={() => openMobileTab(tabKey)}
-            aria-current={tab === tabKey ? "page" : undefined}
+            onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={moreOpen}
+            aria-current={MORE_TABS.includes(tab) ? "page" : undefined}
             className={cn(
-              "relative py-4 text-center text-xs transition",
-              widthClass,
-              tab === tabKey ? "text-foreground font-medium" : "text-muted-foreground",
+              "flex-1 py-4 text-center text-xs transition",
+              MORE_TABS.includes(tab) ? "text-foreground font-medium" : "text-muted-foreground",
             )}
           >
-            {label}
-            {tabKey === "actions" && newActionCount > 0 && (
-              <span className="bg-primary text-primary-foreground absolute -mt-1 ml-0.5 rounded-full px-1 text-[9px] font-semibold tabular-nums">
-                {newActionCount}
-              </span>
-            )}
+            {t("app.bottomNav.more")}
           </button>
-        ))}
-      </nav>
+        </nav>
+      </div>
     </div>
   );
 }
 
 export default App;
+
+/** Tabs collapsed under the mobile bottom-nav's "Altro" overflow button. */
+const MORE_TABS: readonly Tab[] = ["usage", "audit", "system"];
+
+function MoreNavSheet({
+  activeTab,
+  onSelect,
+  onClose,
+}: {
+  activeTab: Tab;
+  onSelect: (tab: Tab) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const items: { tab: Tab; label: string; icon: ReactNode }[] = [
+    { tab: "usage", label: t("app.bottomNav.usage"), icon: <BarChart3 className="size-4" /> },
+    { tab: "audit", label: t("app.bottomNav.audit"), icon: <ListChecks className="size-4" /> },
+    { tab: "system", label: t("app.bottomNav.system"), icon: <Settings className="size-4" /> },
+  ];
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+      <div role="menu" className="bg-background absolute inset-x-0 bottom-full z-50 border-t shadow-lg">
+        {items.map((item) => (
+          <button
+            key={item.tab}
+            type="button"
+            role="menuitem"
+            onClick={() => onSelect(item.tab)}
+            className={cn(
+              "flex w-full items-center gap-2 border-b px-4 py-3 text-left text-sm transition last:border-b-0",
+              activeTab === item.tab ? "text-foreground font-medium" : "text-muted-foreground",
+            )}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
 
 /**
  * Shown instead of the app when no auth token is known yet — a phone landing
@@ -884,15 +961,14 @@ const SHORTCUT_ROWS: [string, string][] = [
   ["?", "question"],
 ];
 
-function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
+function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-background w-full max-w-sm rounded-lg border p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">{t("app.shortcuts.title")}</h2>
-          <button type="button" className="text-muted-foreground hover:text-foreground text-sm" onClick={onClose}>✕</button>
-        </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{t("app.shortcuts.title")}</DialogTitle>
+        </DialogHeader>
         <dl className="space-y-1.5">
           {SHORTCUT_ROWS.map(([keys, descKey]) => (
             <div key={descKey} className="flex items-center justify-between gap-4 text-sm">
@@ -903,9 +979,9 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </dl>
-        <p className="text-muted-foreground mt-3 text-[11px]">{t("app.shortcuts.footer")}</p>
-      </div>
-    </div>
+        <p className="text-muted-foreground text-[11px]">{t("app.shortcuts.footer")}</p>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -20,6 +20,7 @@ import { filesFromOutput } from "./file-registry.ts";
 import type { PushRegistry } from "./push.ts";
 import { getNotificationLang } from "./notification-lang.ts";
 import { notificationCopy } from "./notification-copy.ts";
+import { recordAudit } from "@steward/audit-log";
 
 /**
  * Push registry for the action-center → phone hook (mobile-access M2/M3), set
@@ -170,6 +171,17 @@ export async function executeActionProposal(args: {
 
   for (const step of executableSteps(proposal.steps)) {
     const decision = decideTool(args.config.policy, step.tool);
+    recordAudit({
+      actor: "host",
+      eventType: `tool.policy.${decision}`,
+      risk: decision === "allow" ? "low" : "high",
+      summary: `Action ${args.actionId} step ${step.label}: ${decision}`,
+      sessionId: args.session.id,
+      chatId: args.chatId,
+      actionId: args.actionId,
+      toolName: step.tool,
+      payload: { input: step.input, decision, proposalId: args.proposalId, stepId: step.id },
+    });
     if (decision === "deny") throw new Error(`Tool denied by policy: ${step.tool}`);
 
     let input = step.input ?? {};
@@ -185,6 +197,18 @@ export async function executeActionProposal(args: {
     }
 
     const toolCallId = randomUUID();
+    recordAudit({
+      actor: "assistant",
+      eventType: "tool.requested",
+      risk: step.writes ? "high" : "medium",
+      summary: `Action ${args.actionId} requested ${step.tool}`,
+      sessionId: args.session.id,
+      chatId: args.chatId,
+      actionId: args.actionId,
+      toolName: step.tool,
+      toolCallId,
+      payload: { input, proposalId: args.proposalId, stepId: step.id },
+    });
     args.emit({ type: "tool_call", sessionId: args.session.id, toolCallId, tool: step.tool, input, ...(args.chatId ? { chatId: args.chatId } : {}) });
     const startedAt = Date.now();
     try {
@@ -192,6 +216,21 @@ export async function executeActionProposal(args: {
       const output = extractToolOutput(result);
       const files = filesFromOutput(output);
       const durationMs = Date.now() - startedAt;
+      recordAudit({
+        actor: "tool",
+        eventType: "tool.completed",
+        risk: step.writes ? "high" : "low",
+        summary: `Action ${args.actionId} completed ${step.tool}`,
+        sessionId: args.session.id,
+        chatId: args.chatId,
+        actionId: args.actionId,
+        toolName: step.tool,
+        toolCallId,
+        ok: true,
+        durationMs,
+        payload: { input, output, proposalId: args.proposalId, stepId: step.id },
+        sourceRefs: files.map((file) => ({ type: "file", id: file.token, path: file.path, label: file.name })),
+      });
       args.emit({
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
         ok: true, output, durationMs,
@@ -202,6 +241,20 @@ export async function executeActionProposal(args: {
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const error = err instanceof Error ? err.message : String(err);
+      recordAudit({
+        actor: "tool",
+        eventType: "tool.failed",
+        risk: "high",
+        summary: `Action ${args.actionId} failed ${step.tool}: ${error}`,
+        sessionId: args.session.id,
+        chatId: args.chatId,
+        actionId: args.actionId,
+        toolName: step.tool,
+        toolCallId,
+        ok: false,
+        durationMs,
+        payload: { input, error, proposalId: args.proposalId, stepId: step.id },
+      });
       args.emit({
         type: "tool_result", sessionId: args.session.id, toolCallId, tool: step.tool,
         ok: false, output: null, durationMs, error,

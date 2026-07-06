@@ -5,6 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { ServerEvent } from "@steward/protocol";
+import { recordAudit } from "@steward/audit-log";
 import type { ApprovalOutcome, ApprovalRequest, RequestApproval } from "./permission-gate.ts";
 
 export type Emit = (event: ServerEvent) => void;
@@ -33,6 +34,18 @@ export class Session {
     return new Promise<ApprovalOutcome>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(requestId)) {
+          recordAudit({
+            actor: "host",
+            eventType: "approval.timeout",
+            risk: "high",
+            summary: `Approval timed out for ${req.tool}`,
+            sessionId: this.id,
+            chatId: req.chatId,
+            toolName: req.tool,
+            correlationId: requestId,
+            ok: false,
+            payload: { input: req.input },
+          });
           resolve({ decision: "deny", note: "Approval timed out" });
         }
       }, this.approvalTimeoutMs);
@@ -50,6 +63,17 @@ export class Session {
         tool: req.tool,
         input: req.input,
       });
+      recordAudit({
+        actor: "host",
+        eventType: "approval.created",
+        risk: "high",
+        summary: `Approval requested for ${req.tool}`,
+        sessionId: this.id,
+        chatId: req.chatId,
+        toolName: req.tool,
+        correlationId: requestId,
+        payload: { input: req.input },
+      });
     });
   };
 
@@ -58,6 +82,16 @@ export class Session {
     const resolver = this.pending.get(requestId);
     if (!resolver) return false;
     this.pending.delete(requestId);
+    recordAudit({
+      actor: "user",
+      eventType: `approval.response.${outcome.decision}`,
+      risk: "high",
+      summary: `Approval response: ${outcome.decision}`,
+      sessionId: this.id,
+      correlationId: requestId,
+      ok: outcome.decision === "allow",
+      payload: outcome,
+    });
     resolver(outcome);
     return true;
   }
@@ -74,7 +108,20 @@ export class Session {
     const requestId = randomUUID();
     return new Promise<string[]>((resolve) => {
       const timer = setTimeout(() => {
-        if (this.pendingQuestions.delete(requestId)) resolve([]);
+        if (this.pendingQuestions.delete(requestId)) {
+          recordAudit({
+            actor: "host",
+            eventType: "question.timeout",
+            risk: "low",
+            summary: q.question.slice(0, 180),
+            sessionId: this.id,
+            chatId,
+            correlationId: requestId,
+            ok: false,
+            payload: q,
+          });
+          resolve([]);
+        }
       }, this.approvalTimeoutMs);
 
       this.pendingQuestions.set(requestId, (selected) => {
@@ -91,6 +138,16 @@ export class Session {
         options: q.options,
         multiSelect: q.multiSelect,
       });
+      recordAudit({
+        actor: "assistant",
+        eventType: "question.created",
+        risk: "low",
+        summary: q.question.slice(0, 180),
+        sessionId: this.id,
+        chatId,
+        correlationId: requestId,
+        payload: q,
+      });
     });
   };
 
@@ -99,6 +156,16 @@ export class Session {
     const resolver = this.pendingQuestions.get(requestId);
     if (!resolver) return false;
     this.pendingQuestions.delete(requestId);
+    recordAudit({
+      actor: "user",
+      eventType: "question.response",
+      risk: "low",
+      summary: `Question answered with ${selected.length} selection(s)`,
+      sessionId: this.id,
+      correlationId: requestId,
+      ok: true,
+      payload: { selected },
+    });
     resolver(selected);
     return true;
   }

@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { buildMcpBridge, type McpBridge } from "@steward/mcp-bridge";
+import { recordAudit } from "@steward/audit-log";
 import { gateToolDefinition } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
 import { buildClipboardTool } from "./clipboard-tool.ts";
@@ -83,9 +84,21 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
   let piSession: AgentSession;
   const tools = [
     ...bridge.tools.map((def) =>
-      gateToolDefinition(def, config.policy, hostSession.requestApproval, () => ({ followUp: (t: string) => piSession.followUp(t) })),
+      gateToolDefinition(
+        def,
+        config.policy,
+        hostSession.requestApproval,
+        () => ({ followUp: (t: string) => piSession.followUp(t) }),
+        () => ({ sessionId: hostSession.id }),
+      ),
     ),
-    gateToolDefinition(buildClipboardTool(), config.policy, hostSession.requestApproval, () => ({ followUp: (t: string) => piSession.followUp(t) })),
+    gateToolDefinition(
+      buildClipboardTool(),
+      config.policy,
+      hostSession.requestApproval,
+      () => ({ followUp: (t: string) => piSession.followUp(t) }),
+      () => ({ sessionId: hostSession.id }),
+    ),
     buildAskUserTool(hostSession.askQuestion),
   ];
   const resourceLoader = new DefaultResourceLoader({
@@ -190,6 +203,7 @@ export class ChatManager {
           this.config.policy,
           (req) => this.session.requestApproval({ ...req, chatId }),
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
+          () => ({ sessionId: this.session.id, chatId }),
         ),
       ),
       gateToolDefinition(
@@ -197,6 +211,7 @@ export class ChatManager {
         this.config.policy,
         (req) => this.session.requestApproval({ ...req, chatId }),
         () => ({ followUp: (t: string) => piSession.followUp(t) }),
+        () => ({ sessionId: this.session.id, chatId }),
       ),
       buildAskUserTool((q) => this.session.askQuestion(q, chatId)),
     ];
@@ -229,6 +244,17 @@ export class ChatManager {
     }
     if (e.type === "tool_execution_start") {
       if (e.toolCallId) { runtime.starts.set(e.toolCallId, Date.now()); runtime.toolInputs.set(e.toolCallId, e.args ?? {}); }
+      recordAudit({
+        actor: "assistant",
+        eventType: "tool.requested",
+        risk: "medium",
+        summary: `Assistant requested ${e.toolName}`,
+        sessionId: this.session.id,
+        chatId: runtime.chatId,
+        toolName: e.toolName,
+        toolCallId: e.toolCallId ?? "",
+        payload: { input: e.args ?? {} },
+      });
       this.emit({ type: "tool_call", sessionId: this.session.id, chatId: runtime.chatId, toolCallId: e.toolCallId ?? "", tool: e.toolName, input: e.args ?? {} });
       return;
     }
@@ -242,6 +268,20 @@ export class ChatManager {
       const files = filesFromOutput(output);
       const error = ok ? undefined : (typeof output === "string" ? output : JSON.stringify(output));
       try { usageLedger().recordTool({ ts: Date.now(), sessionId: runtime.chatId, tool: e.toolName, durationMs, ok }); } catch { /* ledger optional */ }
+      recordAudit({
+        actor: "tool",
+        eventType: ok ? "tool.completed" : "tool.failed",
+        risk: ok ? "low" : "medium",
+        summary: `Tool ${e.toolName} ${ok ? "completed" : "failed"}`,
+        sessionId: this.session.id,
+        chatId: runtime.chatId,
+        toolName: e.toolName,
+        toolCallId: e.toolCallId ?? "",
+        ok,
+        durationMs,
+        payload: { input, output, error },
+        sourceRefs: files.map((file) => ({ type: "file", path: file.path, id: file.token, label: file.name })),
+      });
       try {
         store.addMessage(runtime.chatId, toolMessage({
           tool: e.toolName, input, toolCallId: e.toolCallId ?? "", ok, output, durationMs, error, files,
@@ -267,6 +307,16 @@ export class ChatManager {
     const attached = (attachments ?? []).filter((a) => a.path);
     store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
     store.maybeAutoTitle(chatId, prompt);
+    recordAudit({
+      actor: "user",
+      eventType: "chat.user_message",
+      risk: "low",
+      summary: prompt.trim().slice(0, 180) || "User sent attachments",
+      sessionId: this.session.id,
+      chatId,
+      payload: { text: prompt, attachments: attached },
+      sourceRefs: attached.map((file) => ({ type: "file", path: file.path, id: file.token, label: file.name })),
+    });
 
     const runtime = await this.ensureChat(chatId);
     if (this.session.closed) return;
@@ -283,15 +333,56 @@ export class ChatManager {
     try {
       await runtime.session.prompt(piPrompt);
       const text = runtime.assistantBuffer.trim();
-      if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
+      if (text) {
+        store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
+        recordAudit({
+          actor: "assistant",
+          eventType: "chat.assistant_message",
+          risk: "low",
+          summary: text.slice(0, 180),
+          sessionId: this.session.id,
+          chatId,
+          payload: { text },
+        });
+      }
       this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
     } catch (err) {
       // A user-requested stop surfaces as an abort here — not a real error.
       if (runtime.aborted) {
         const text = runtime.assistantBuffer.trim();
-        if (text) store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
+        if (text) {
+          store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
+          recordAudit({
+            actor: "assistant",
+            eventType: "chat.assistant_message",
+            risk: "low",
+            summary: text.slice(0, 180),
+            sessionId: this.session.id,
+            chatId,
+            payload: { text, aborted: true },
+          });
+        }
+        recordAudit({
+          actor: "user",
+          eventType: "chat.stop",
+          risk: "low",
+          summary: "User stopped generation",
+          sessionId: this.session.id,
+          chatId,
+          ok: true,
+        });
         this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
       } else {
+        recordAudit({
+          actor: "host",
+          eventType: "chat.error",
+          risk: "medium",
+          summary: err instanceof Error ? err.message : String(err),
+          sessionId: this.session.id,
+          chatId,
+          ok: false,
+          payload: { error: err instanceof Error ? err.stack ?? err.message : String(err) },
+        });
         this.emit({ type: "error", sessionId: this.session.id, chatId, message: err instanceof Error ? err.message : String(err) });
       }
     } finally {
@@ -319,6 +410,14 @@ export class ChatManager {
     const runtime = id ? this.chats.get(id) : undefined;
     if (!runtime) return;
     runtime.aborted = true;
+    recordAudit({
+      actor: "user",
+      eventType: "chat.stop_requested",
+      risk: "low",
+      summary: "Stop requested",
+      sessionId: this.session.id,
+      chatId: id,
+    });
     try { await runtime.session.abort(); } catch { /* already idle */ }
   }
 

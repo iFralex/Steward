@@ -37,7 +37,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === "status") {
-    const store = WriteOpsStore.open();
+    const store = WriteOpsStore.open(undefined, "scheduler");
     const rows = store.raw.prepare("SELECT status, count(*) c FROM write_ops GROUP BY status ORDER BY status").all();
     console.log(JSON.stringify(rows, null, 2));
     store.close();
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
 
 /** Fire scheduled sends/replies whose time has come, then let reconcile confirm them. */
 export async function sendDueWrites(): Promise<{ fired: number; failed: number }> {
-  const ops = WriteOpsStore.open();
+  const ops = WriteOpsStore.open(undefined, "scheduler");
   const now = Math.floor(Date.now() / 1000);
   let fired = 0;
   let failed = 0;
@@ -80,7 +80,7 @@ export async function sendDueWrites(): Promise<{ fired: number; failed: number }
 }
 
 export async function reconcileCalendarWrites(): Promise<{ confirmed: number; pending: number }> {
-  const ops = WriteOpsStore.open();
+  const ops = WriteOpsStore.open(undefined, "scheduler");
   const index = IndexDb.open(calendarIndexDbPath());
   let confirmed = 0;
   let pending = 0;
@@ -136,7 +136,7 @@ function calendarFieldsMatch(ev: Record<string, unknown>, expected: Record<strin
 }
 
 export async function reconcileMailWrites(): Promise<{ confirmed: number; pending: number; retried: number; exhausted: number }> {
-  const ops = WriteOpsStore.open();
+  const ops = WriteOpsStore.open(undefined, "scheduler");
   const mail = Store.openReadonly(mailDbPath());
   let confirmed = 0;
   let pending = 0;

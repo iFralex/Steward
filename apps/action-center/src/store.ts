@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { recordAudit } from "@steward/audit-log";
 import type { ActionItem, ActionStatus, UpsertAction } from "./types.ts";
 
 const SCHEMA = `
@@ -60,14 +61,24 @@ export class ActionStore {
         payload,
         now,
       });
-      return { id: Number(info.lastInsertRowid), inserted: true, updated: false };
+      const id = Number(info.lastInsertRowid);
+      recordAudit({
+        actor: "scheduler",
+        eventType: "action.created",
+        risk: input.priority === "high" ? "medium" : "low",
+        summary: input.title,
+        actionId: id,
+        payload: { sourceKey: input.sourceKey, sourceKind: input.sourceKind, kind: input.kind, priority: input.priority, summary: input.summary, dueAt: input.dueAt },
+      });
+      return { id, inserted: true, updated: false };
     }
 
     // Completed/dismissed actions are intentionally sticky: future scans should
     // not resurrect something the user already handled unless its source key
     // changes (e.g. a newer message id). For mail threads, however, a newer
     // message in the same thread is a new user-visible event, so reopen it.
-    if (existing.status === "done" || existing.status === "dismissed") {
+    const reopening = existing.status === "done" || existing.status === "dismissed";
+    if (reopening) {
       if (!shouldReopenHandledMail(existing.payload, input.payload)) {
         return { id: existing.id, inserted: false, updated: false };
       }
@@ -84,7 +95,7 @@ export class ActionStore {
       source_key: input.sourceKey,
       source_kind: input.sourceKind,
       kind: input.kind,
-      status: existing.status === "done" || existing.status === "dismissed" ? "new" : existing.status,
+      status: reopening ? "new" : existing.status,
       priority: input.priority ?? "normal",
       title: input.title,
       summary: input.summary,
@@ -92,6 +103,16 @@ export class ActionStore {
       payload,
       now,
     });
+    if (reopening) {
+      recordAudit({
+        actor: "scheduler",
+        eventType: "action.reopened",
+        risk: "low",
+        summary: input.title,
+        actionId: existing.id,
+        payload: { sourceKey: input.sourceKey, sourceKind: input.sourceKind, kind: input.kind, reason: "new activity on a previously handled thread" },
+      });
+    }
     return { id: existing.id, inserted: false, updated: true };
   }
 

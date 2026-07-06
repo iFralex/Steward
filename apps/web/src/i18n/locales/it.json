@@ -32,13 +32,16 @@
       "chatFallback": "Chat",
       "actionsFallback": "Azioni",
       "usage": "Utilizzo",
+      "audit": "Audit",
       "system": "Sistema"
     },
     "bottomNav": {
       "chat": "💬 Chat",
       "actions": "⚡ Azioni",
       "usage": "Utilizzo",
-      "system": "Sistema"
+      "audit": "Audit",
+      "system": "Sistema",
+      "more": "Altro"
     },
     "back": "Indietro",
     "audioNotSupported": "La registrazione audio non è supportata da questo browser.",
@@ -84,7 +87,7 @@
   },
   "sidebar": {
     "tabs": { "chat": "Chat", "actions": "Azioni" },
-    "footer": { "usage": "Utilizzo", "system": "Sistema" },
+    "footer": { "usage": "Utilizzo", "audit": "Audit", "system": "Sistema" },
     "chatList": {
       "new": "+ Nuova",
       "newTitle": "Nuova chat",
@@ -198,6 +201,25 @@
       "error": "errore",
       "headers": { "when": "Quando", "service": "Servizio", "action": "Azione", "model": "Modello", "in": "In", "out": "Out", "duration": "Durata", "cost": "Costo" }
     }
+  },
+  "audit": {
+    "title": "Audit",
+    "subtitle": "Ogni messaggio, chiamata a tool, approvazione e scrittura dell'app.",
+    "refresh": "Aggiorna",
+    "refreshTitle": "Aggiorna il registro di audit",
+    "loadError": "Impossibile caricare il registro di audit: {{error}}",
+    "search": "Cerca in riepilogo, tipo evento, tool, payload…",
+    "stats": { "events": "Eventi", "highRisk": "Rischio alto", "failed": "Falliti" },
+    "actors": { "all": "Tutti", "user": "Utente", "assistant": "Assistente", "host": "Host", "tool": "Tool", "system": "Sistema", "scheduler": "Scheduler" },
+    "risks": { "all": "Tutti", "high": "Alto", "medium": "Medio", "low": "Basso" },
+    "timeline": "Cronologia",
+    "loading": "Caricamento…",
+    "empty": "Nessun evento corrisponde ai filtri.",
+    "failed": "fallito",
+    "detail": "Dettaglio",
+    "sources": "Fonti",
+    "payload": "Payload (redatto)",
+    "noSelection": "Seleziona un evento per vederne il dettaglio."
   },
   "actionDetail": {
     "closePanel": "Chiudi pannello azione",

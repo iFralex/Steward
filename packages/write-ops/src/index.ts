@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { recordAudit, type AuditActor } from "@steward/audit-log";
 
 export type WriteOpStatus =
   | "scheduled"
@@ -84,9 +85,18 @@ export function bodySnippet(text: string): string {
 
 export class WriteOpsStore {
   readonly raw: Database.Database;
+  /**
+   * Who this instance's state transitions get attributed to in the audit log.
+   * mail-mcp/calendar-mcp open a store within a live chat turn ("host", the
+   * default); apps/scheduler opens its own instance to fire due sends and
+   * reconcile confirmations with no session attached — pass "scheduler" there
+   * so the Audit page doesn't misattribute unattended retries to a live user.
+   */
+  private readonly actor: AuditActor;
 
-  constructor(db: Database.Database) {
+  constructor(db: Database.Database, actor: AuditActor = "host") {
     this.raw = db;
+    this.actor = actor;
     this.raw.pragma("journal_mode = WAL");
     this.raw.exec(SCHEMA);
     // Migrate older DBs that predate scheduled sends (add the column BEFORE its
@@ -96,8 +106,8 @@ export class WriteOpsStore {
     this.raw.exec("CREATE INDEX IF NOT EXISTS idx_write_ops_scheduled ON write_ops(status, scheduled_for)");
   }
 
-  static open(path = writeOpsDbPath()): WriteOpsStore {
-    return new WriteOpsStore(new Database(path));
+  static open(path = writeOpsDbPath(), actor: AuditActor = "host"): WriteOpsStore {
+    return new WriteOpsStore(new Database(path), actor);
   }
 
   close(): void {
@@ -112,6 +122,7 @@ export class WriteOpsStore {
        (id, kind, status, attempts, confirm_attempts, started_at, updated_at, input_json, expected_json)
        VALUES (?, ?, 'started', 1, 0, ?, ?, ?, ?)`,
     ).run(id, op.kind, now, now, JSON.stringify(op.input), JSON.stringify(op.expected));
+    auditWriteOp(this.actor, "write.started", id, op.kind, "high", true, { input: op.input, expected: op.expected });
     return id;
   }
 
@@ -124,6 +135,7 @@ export class WriteOpsStore {
        (id, kind, status, attempts, confirm_attempts, started_at, updated_at, scheduled_for, input_json, expected_json)
        VALUES (?, ?, 'scheduled', 0, 0, ?, ?, ?, ?, ?)`,
     ).run(id, op.kind, now, now, scheduledFor, JSON.stringify(op.input), JSON.stringify(op.expected));
+    auditWriteOp(this.actor, "write.scheduled", id, op.kind, "high", true, { input: op.input, expected: op.expected, scheduledFor });
     return id;
   }
 
@@ -145,7 +157,10 @@ export class WriteOpsStore {
 
   /** Cancel a still-pending scheduled op. Returns false if it isn't scheduled (e.g. already fired). */
   cancelScheduled(id: string): boolean {
-    return this.raw.prepare("DELETE FROM write_ops WHERE id=? AND status='scheduled'").run(id).changes > 0;
+    const row = this.get(id);
+    const changed = this.raw.prepare("DELETE FROM write_ops WHERE id=? AND status='scheduled'").run(id).changes > 0;
+    if (changed) auditWriteOp(this.actor, "write.cancelled", id, row?.kind ?? "mail.send", "high", true, { row });
+    return changed;
   }
 
   scriptReturned(id: string, result: Record<string, unknown> = {}): void {
@@ -155,6 +170,8 @@ export class WriteOpsStore {
        SET status='script_returned', script_finished_at=?, updated_at=?, result_json=?, last_error=NULL
        WHERE id=?`,
     ).run(now, now, JSON.stringify(result), id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, "write.script_returned", id, row?.kind ?? "mail.send", "high", true, { result, row });
   }
 
   failed(id: string, err: unknown): void {
@@ -166,6 +183,8 @@ export class WriteOpsStore {
        SET status=?, script_finished_at=?, updated_at=?, last_error=?
        WHERE id=?`,
     ).run(status, now, now, message, id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, `write.${status}`, id, row?.kind ?? "mail.send", "high", false, { error: message, row });
   }
 
   markConfirmed(id: string, result: Record<string, unknown> = {}): void {
@@ -175,26 +194,41 @@ export class WriteOpsStore {
        SET status='confirmed', confirmed_at=?, updated_at=?, result_json=?
        WHERE id=?`,
     ).run(now, now, JSON.stringify(result), id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, "write.confirmed", id, row?.kind ?? "mail.send", "high", true, { result, row });
   }
 
   incrementConfirmAttempt(id: string): void {
     const now = Math.floor(Date.now() / 1000);
     this.raw.prepare("UPDATE write_ops SET confirm_attempts=confirm_attempts+1, updated_at=? WHERE id=?").run(now, id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, "write.confirm_attempt", id, row?.kind ?? "mail.send", "medium", true, { row });
   }
 
   markRetrying(id: string): void {
     const now = Math.floor(Date.now() / 1000);
     this.raw.prepare("UPDATE write_ops SET status='retrying', attempts=attempts+1, updated_at=? WHERE id=?").run(now, id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, "write.retrying", id, row?.kind ?? "mail.send", "high", true, { row });
   }
 
   markRestartPrepared(id: string): void {
     const now = Math.floor(Date.now() / 1000);
     this.raw.prepare("UPDATE write_ops SET status='restart_prepared', updated_at=? WHERE id=?").run(now, id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, "write.restart_prepared", id, row?.kind ?? "mail.send", "high", true, { row });
   }
 
   markRetryExhausted(id: string, error: string): void {
     const now = Math.floor(Date.now() / 1000);
     this.raw.prepare("UPDATE write_ops SET status='retry_exhausted', updated_at=?, last_error=? WHERE id=?").run(now, error, id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, "write.retry_exhausted", id, row?.kind ?? "mail.send", "high", false, { error, row });
+  }
+
+  get(id: string): WriteOpRow | null {
+    const row = this.raw.prepare("SELECT * FROM write_ops WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    return row ? rowToWriteOp(row) : null;
   }
 
   pendingForConfirmation(kinds: WriteOpKind[], limit = 100): WriteOpRow[] {
@@ -208,6 +242,26 @@ export class WriteOpsStore {
     ).all(...kinds, limit) as Record<string, unknown>[];
     return rows.map(rowToWriteOp);
   }
+}
+
+function auditWriteOp(
+  actor: AuditActor,
+  eventType: string,
+  id: string,
+  kind: WriteOpKind,
+  risk: "medium" | "high",
+  ok: boolean,
+  payload: Record<string, unknown>,
+): void {
+  recordAudit({
+    actor,
+    eventType,
+    risk,
+    summary: `${kind} ${id}: ${eventType.replace(/^write\./, "")}`,
+    ok,
+    correlationId: id,
+    payload: { id, kind, ...payload },
+  });
 }
 
 function rowToWriteOp(row: Record<string, unknown>): WriteOpRow {

@@ -13,6 +13,7 @@
     "@earendil-works/pi-coding-agent": "^0.80.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@steward/action-center": "*",
+    "@steward/audit-log": "*",
     "@steward/mcp-bridge": "*",
     "@steward/protocol": "*",
     "@steward/sensitive-path": "*",

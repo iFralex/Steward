@@ -4,7 +4,7 @@
  * of the inbox-layout plan collapses the old two standalone sidebar panels
  * (ChatSidebar, ActionCenterPanel) into this.
  */
-import { BarChart3, Filter, RefreshCw, Settings } from "lucide-react";
+import { BarChart3, Filter, ListChecks, RefreshCw, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ export function UnifiedSidebar({
   tab, onTab,
   chats, activeChatId, onSelectChat, onCreateChat, onRenameChat, onDeleteChat, onSaveChat,
   actions, diagnostics, selectedActionId, onSelectAction, showDone, onShowDone, onRefreshActions,
-  pane, onOpenUsage, onOpenSystem,
+  pane, onOpenUsage, onOpenAudit, onOpenSystem,
 }: {
   tab: SidebarTab;
   onTab: (tab: SidebarTab) => void;
@@ -44,8 +44,9 @@ export function UnifiedSidebar({
   showDone: boolean;
   onShowDone: (value: boolean) => void;
   onRefreshActions: () => void;
-  pane: "chat" | "action" | "usage" | "system";
+  pane: "chat" | "action" | "usage" | "audit" | "system";
   onOpenUsage: () => void;
+  onOpenAudit: () => void;
   onOpenSystem: () => void;
 }) {
   const { t } = useTranslation();
@@ -88,6 +89,7 @@ export function UnifiedSidebar({
       {/* Footer nav: desktop only — on mobile Usage/System live under the "Altro" tab. */}
       <div className="hidden gap-1 border-t p-2 lg:flex lg:flex-col">
         <FooterButton icon={<BarChart3 className="size-4" />} label={t("sidebar.footer.usage")} active={pane === "usage"} onClick={onOpenUsage} />
+        <FooterButton icon={<ListChecks className="size-4" />} label={t("sidebar.footer.audit")} active={pane === "audit"} onClick={onOpenAudit} />
         <FooterButton icon={<Settings className="size-4" />} label={t("sidebar.footer.system")} active={pane === "system"} onClick={onOpenSystem} />
       </div>
     </div>

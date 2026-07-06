@@ -6,6 +6,7 @@
  */
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ApprovalDecision } from "@steward/protocol";
+import { recordAudit } from "@steward/audit-log";
 import { decideTool, type ToolPolicy } from "./tool-policy.ts";
 
 export interface ApprovalRequest {
@@ -30,16 +31,35 @@ export interface FollowUpSink {
   followUp(text: string): Promise<void>;
 }
 
+export interface ToolAuditContext {
+  sessionId?: string;
+  chatId?: string;
+}
+
 export function gateToolDefinition(
   def: ToolDefinition,
   policy: ToolPolicy,
   requestApproval: RequestApproval,
   getSession: () => FollowUpSink,
+  getAuditContext?: () => ToolAuditContext,
 ): ToolDefinition {
   return {
     ...def,
     execute: async (id: string, params: unknown, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => {
       const decision = decideTool(policy, def.name);
+      const audit = getAuditContext?.() ?? {};
+      recordAudit({
+        actor: "host",
+        eventType: `tool.policy.${decision}`,
+        risk: decision === "allow" ? "low" : "high",
+        summary: `Tool ${def.name} policy decision: ${decision}`,
+        sessionId: audit.sessionId,
+        chatId: audit.chatId,
+        toolName: def.name,
+        toolCallId: id,
+        ok: decision !== "deny",
+        payload: { input: toRecord(params), decision },
+      });
       if (decision === "deny") {
         return blocked(`Tool ${def.name} is disabled by policy.`);
       }
@@ -48,6 +68,23 @@ export function gateToolDefinition(
       }
       // gate → ask the user
       const outcome = await requestApproval({ tool: def.name, input: toRecord(params) });
+      recordAudit({
+        actor: "user",
+        eventType: `approval.${outcome.decision}`,
+        risk: "high",
+        summary: `Approval ${outcome.decision} for ${def.name}`,
+        sessionId: audit.sessionId,
+        chatId: audit.chatId,
+        toolName: def.name,
+        toolCallId: id,
+        ok: outcome.decision === "allow",
+        payload: {
+          decision: outcome.decision,
+          note: outcome.note,
+          originalInput: toRecord(params),
+          editedInput: outcome.editedInput,
+        },
+      });
       if (outcome.decision === "revise") {
         const how = outcome.note?.trim() ? `: ${outcome.note.trim()}` : "";
         return blocked(`NOT DONE — user requested a revision${how}. Revise the tool input/action accordingly and try again only when the revised plan is ready.`);
