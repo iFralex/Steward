@@ -6,8 +6,9 @@ Developer account. The agent stays on the Mac; the phone is a client.
 
 ## How it fits together
 
-- **Transport = Tailscale**: a private WireGuard network between your Mac and
-  phone. The phone reaches the Mac's host at its tailnet address, from anywhere.
+- **Transport = Tailscale + HTTPS**: a private WireGuard network between your
+  Mac and phone. The phone reaches the Mac's HTTPS host listener at its tailnet
+  address, from anywhere.
 - **Client = the web UI as an installable PWA**: add it to the Home screen; it
   renders the mobile-adapted UI and receives Web Push.
 - **Auth = a shared token**: the WS + data routes require it. The Mac's own
@@ -24,20 +25,30 @@ Developer account. The agent stays on the Mac; the phone is a client.
    admin console, **disable key expiry** for both devices so the connection
    survives without periodic re-login.
 
-2. **Let the host listen on the tailnet**, not just localhost. Start it with:
+2. **Create a Tailscale certificate** for the Mac's tailnet name, then let the
+   host start its optional HTTPS listener. Plain HTTP stays localhost-only; the
+   HTTPS listener binds to all interfaces so the phone can reach it over
+   Tailscale, and the secure context enables service workers and Web Push.
+
+   For example:
    ```
-   STEWARD_BIND_HOST=0.0.0.0 npm run dev -w @steward/host
+   tailscale cert <mac-tailnet-name>
+   STEWARD_TLS_CERT=/path/to/<mac-tailnet-name>.crt \
+   STEWARD_TLS_KEY=/path/to/<mac-tailnet-name>.key \
+   npm run dev -w @steward/host
    ```
-   (Or set `STEWARD_BIND_HOST=0.0.0.0` in the launcher's
+   (Or set `STEWARD_TLS_CERT`, `STEWARD_TLS_KEY`, and optionally
+   `STEWARD_TLS_PORT` in the launcher's
    `~/Library/Application Support/Steward/config.env`.) The default stays
-   `127.0.0.1` — nothing is exposed unless you set this.
+   `127.0.0.1` on HTTP — nothing is exposed unless TLS is configured.
 
    Same-origin requests are accepted automatically, so you do **not** need to
    list the tailnet address anywhere. (To pin it further you still can, via
    `HOST_ALLOWED_ORIGINS`.)
 
-3. **On the phone**, open `http://<mac-tailnet-name>:4317` in Safari/Chrome.
-   The app loads and shows a pairing screen.
+3. **On the phone**, open `https://<mac-tailnet-name>:4318` in Safari/Chrome
+   unless you set a custom `STEWARD_TLS_PORT`. The app loads and shows a
+   pairing screen.
 
 4. **Pair**: on the Mac, open Steward → **System** page → "Connetti il telefono".
    Scan the QR with the phone (it carries the token). The phone stores it and
