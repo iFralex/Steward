@@ -249,6 +249,7 @@
   "approval": {
     "fields": {
       "from": "Da", "to": "A", "cc": "Cc", "bcc": "Ccn", "subject": "Oggetto", "body": "Corpo",
+      "label": "Etichetta", "text": "Testo",
       "attachments": "Allegati", "scheduledSend": "Invio posticipato", "replyAll": "Rispondi a tutti",
       "calendar": "Calendario", "title": "Titolo", "start": "Inizio", "end": "Fine", "location": "Luogo",
       "description": "Descrizione", "url": "URL", "allDay": "Tutto il giorno", "recurrence": "Ricorrenza",
@@ -263,7 +264,15 @@
     "approve": "Approva",
     "reject": "Rifiuta",
     "editDialogTitle": "Modifica · {{name}}",
-    "confirmDone": "Fatto"
+    "confirmDone": "Fatto",
+    "clipboard": {
+      "approve": "Approva e copia",
+      "chars_one": "{{count}} carattere",
+      "chars_other": "{{count}} caratteri",
+      "defaultLabel": "Testo per gli appunti",
+      "empty": "Non c'è testo da copiare.",
+      "failed": "Impossibile copiare negli appunti."
+    }
   },
   "question": { "skip": "Salta", "send": "Invia" },
   "toolCard": {

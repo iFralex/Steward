@@ -24,6 +24,10 @@ type Kind = "text" | "textarea" | "csv" | "bool" | "numbers" | "datetime" | "fil
 interface Field { key: string; labelKey: string; kind: Kind }
 
 const FORMS: Record<string, Field[]> = {
+  copy_to_clipboard: [
+    { key: "label", labelKey: "label", kind: "text" },
+    { key: "text", labelKey: "text", kind: "textarea" },
+  ],
   send_email: [
     { key: "from", labelKey: "from", kind: "text" },
     { key: "to", labelKey: "to", kind: "csv" },
@@ -94,6 +98,45 @@ function buildEdited(input: Record<string, unknown>, fields: Field[], vals: Reco
   return out;
 }
 
+function clipboardText(input: Record<string, unknown>): string {
+  return typeof input.text === "string" ? input.text : "";
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.setAttribute("readonly", "true");
+  el.style.position = "fixed";
+  el.style.left = "-9999px";
+  el.style.top = "0";
+  document.body.appendChild(el);
+  el.focus();
+  el.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(el);
+  if (!ok) throw new Error("Clipboard write was blocked");
+}
+
+function ClipboardApprovalPreview({ input }: { input: Record<string, unknown> }) {
+  const { t } = useTranslation();
+  const text = clipboardText(input);
+  const label = typeof input.label === "string" && input.label.trim() ? input.label.trim() : t("approval.clipboard.defaultLabel");
+  return (
+    <div className="bg-muted/40 rounded-md border">
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
+        <span className="font-medium">{label}</span>
+        <span className="text-muted-foreground tabular-nums">{t("approval.clipboard.chars", { count: text.length })}</span>
+      </div>
+      <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-xs">{text}</pre>
+    </div>
+  );
+}
+
 function FilesField({ value, onChange, fileApi }: { value: string; onChange: (v: string) => void; fileApi: FileApi }) {
   const { t } = useTranslation();
   const paths = value.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -139,8 +182,11 @@ export function ApprovalCard({
   const { t } = useTranslation();
   const input = (approval.input ?? {}) as Record<string, unknown>;
   const fields = FORMS[bareName(approval.tool)];
+  const isClipboardApproval = bareName(approval.tool) === "copy_to_clipboard";
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
   const [vals, setVals] = useState<Record<string, string | boolean>>(
     () => Object.fromEntries((fields ?? []).map((f) => [f.key, toEditable(f.kind, input[f.key])])),
   );
@@ -162,9 +208,26 @@ export function ApprovalCard({
   const card = fields ? cardForApproval(approval.tool, edited) : null;
   const set = (key: string, value: string | boolean) => setVals((p) => ({ ...p, [key]: value }));
 
-  const approve = () => {
+  const approve = async () => {
+    setLocalError(null);
     if (fields) {
       const changed = JSON.stringify(edited) !== JSON.stringify(input);
+      if (isClipboardApproval) {
+        const text = clipboardText(edited);
+        if (!text) {
+          setLocalError(t("approval.clipboard.empty"));
+          return;
+        }
+        setApproving(true);
+        try {
+          await writeClipboardText(text);
+        } catch (err) {
+          setApproving(false);
+          setLocalError(err instanceof Error ? err.message : t("approval.clipboard.failed"));
+          return;
+        }
+        setApproving(false);
+      }
       onDecision(approval.requestId, "allow", note || undefined, changed ? edited : undefined);
     } else {
       const changed = jsonDraft.trim() !== original.trim();
@@ -186,7 +249,9 @@ export function ApprovalCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {card ? (
+        {isClipboardApproval ? (
+          <ClipboardApprovalPreview input={edited} />
+        ) : card ? (
           <CardView type={card.type} data={card.data} fileApi={fileApi} />
         ) : (
           <textarea
@@ -197,10 +262,13 @@ export function ApprovalCard({
           />
         )}
         {jsonError && <p className="text-xs text-red-500">{jsonError}</p>}
+        {localError && <p className="text-xs text-red-500">{localError}</p>}
         <Input placeholder={t("approval.notePlaceholder")} value={note} onChange={(e) => setNote(e.target.value)} />
       </CardContent>
       <CardFooter className="gap-2">
-        <Button size="sm" onClick={approve} disabled={!fields && jsonError !== undefined}>{t("approval.approve")}</Button>
+        <Button size="sm" onClick={approve} disabled={approving || (!fields && jsonError !== undefined)}>
+          {isClipboardApproval ? t("approval.clipboard.approve") : t("approval.approve")}
+        </Button>
         <Button size="sm" variant="destructive" onClick={() => onDecision(approval.requestId, "deny", note || undefined)}>{t("approval.reject")}</Button>
       </CardFooter>
 

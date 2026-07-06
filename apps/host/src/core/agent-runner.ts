@@ -13,6 +13,7 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSe
 import { buildMcpBridge, type McpBridge } from "@steward/mcp-bridge";
 import { gateToolDefinition } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
+import { buildClipboardTool } from "./clipboard-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
 import { chatStore, toolMessage } from "./chat-store.ts";
@@ -84,6 +85,7 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
     ...bridge.tools.map((def) =>
       gateToolDefinition(def, config.policy, hostSession.requestApproval, () => ({ followUp: (t: string) => piSession.followUp(t) })),
     ),
+    gateToolDefinition(buildClipboardTool(), config.policy, hostSession.requestApproval, () => ({ followUp: (t: string) => piSession.followUp(t) })),
     buildAskUserTool(hostSession.askQuestion),
   ];
   const resourceLoader = new DefaultResourceLoader({
@@ -189,6 +191,12 @@ export class ChatManager {
           (req) => this.session.requestApproval({ ...req, chatId }),
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
         ),
+      ),
+      gateToolDefinition(
+        buildClipboardTool(),
+        this.config.policy,
+        (req) => this.session.requestApproval({ ...req, chatId }),
+        () => ({ followUp: (t: string) => piSession.followUp(t) }),
       ),
       buildAskUserTool((q) => this.session.askQuestion(q, chatId)),
     ];

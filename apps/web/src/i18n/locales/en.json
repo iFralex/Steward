@@ -249,6 +249,7 @@
   "approval": {
     "fields": {
       "from": "From", "to": "To", "cc": "Cc", "bcc": "Bcc", "subject": "Subject", "body": "Body",
+      "label": "Label", "text": "Text",
       "attachments": "Attachments", "scheduledSend": "Scheduled send", "replyAll": "Reply all",
       "calendar": "Calendar", "title": "Title", "start": "Start", "end": "End", "location": "Location",
       "description": "Description", "url": "URL", "allDay": "All day", "recurrence": "Recurrence",
@@ -263,7 +264,15 @@
     "approve": "Approve",
     "reject": "Reject",
     "editDialogTitle": "Edit · {{name}}",
-    "confirmDone": "Done"
+    "confirmDone": "Done",
+    "clipboard": {
+      "approve": "Approve and copy",
+      "chars_one": "{{count}} char",
+      "chars_other": "{{count}} chars",
+      "defaultLabel": "Clipboard text",
+      "empty": "There is no text to copy.",
+      "failed": "Could not copy to the clipboard."
+    }
   },
   "question": { "skip": "Skip", "send": "Send" },
   "toolCard": {
