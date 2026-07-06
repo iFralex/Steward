@@ -1,5 +1,7 @@
 # Steward — local-first personal agent for macOS
 
+![Steward chat, with the sidebar full of past conversations](docs/images/chat-home.png)
+
 Steward is a **personal AI assistant that runs on your Mac**. It can chat with you, read your personal knowledge base, search Apple Mail, Calendar, Contacts and local files, prepare actions such as email replies or calendar events, and ask for your approval before doing anything sensitive.
 
 The simplest way to describe it is:
@@ -72,6 +74,12 @@ The chat UI is not a generic chatbot. It is connected to local tools:
 
 Messages stream in the UI. Tool calls appear as visible cards, including status, inputs, outputs, duration and errors. The transcript can be copied as JSON for debugging.
 
+![A mail search tool card, expanded to show the matched messages](docs/images/chat-tool-card-mail-search.png)
+
+Rich results — emails, files, events — render as cards instead of raw text:
+
+![Search results rendered as file cards](docs/images/chat-file-cards.png)
+
 ### Approval Cards
 
 When the agent wants to perform a sensitive operation, the host turns the request into an approval card.
@@ -95,6 +103,8 @@ Approval cards support:
 
 This means the model can suggest an action, but deterministic host code decides whether it can run.
 
+![An approval card gating a clipboard write, next to the assistant's answer](docs/images/approval-card-clipboard.png)
+
 ### Action Center
 
 The Action Center is a background inbox of work Steward thinks may need you.
@@ -112,9 +122,13 @@ Each item stores the source thread, summary, status, proposed steps and diagnost
 
 The Action Center can also send Web Push notifications to a paired phone when something needs approval.
 
+![Opening an Action Center item in chat, ready to refine or execute its proposal](docs/images/action-center-open-in-chat.png)
+
 ### Personal Wiki Memory
 
 Steward uses LLM Wiki as durable memory. Instead of only retrieving raw documents at answer time, the wiki incrementally turns sources into Markdown pages that can be inspected, edited and searched.
+
+![Chat calling the LLM Wiki search tool, with the assistant's answer forming below](docs/images/chat-tool-card-wiki-search.png)
 
 The wiki keeps:
 
@@ -203,6 +217,15 @@ The intended setup is:
 
 The Mac remains the agent runtime. The phone is only a client. See [docs/mobile-access.md](docs/mobile-access.md).
 
+The same PWA, on an iPhone, over Tailscale:
+
+<p float="left">
+  <img src="docs/images/mobile-chat-list.png" alt="Mobile chat list" width="220" />
+  <img src="docs/images/mobile-tool-card.png" alt="Mobile chat with a tool card" width="220" />
+  <img src="docs/images/mobile-actions.png" alt="Mobile Action Center list" width="220" />
+  <img src="docs/images/mobile-system.png" alt="Mobile System page" width="220" />
+</p>
+
 ### Voice And Quick Send
 
 The web app includes microphone recording and transcription support.
@@ -215,6 +238,14 @@ The host can transcribe uploaded audio through local `whisper.cpp` when configur
 - optional timeout variables.
 
 There is also a `/quick-send` path for shortcuts such as an iPhone Action Button. It can send text or audio into a headless chat runner. Gated writes still require approval; unattended sensitive actions time out rather than silently executing.
+
+### Usage & Cost
+
+Every LLM call the platform makes — the host's chat agent, mail-mirror's embeddings, mail-promoter's triage/distillation, calendar-mcp's embeddings, or anywhere else — goes through the shared `apps/llm-gateway` and is logged once per call into `packages/usage-ledger`. Callers attribute their own spend with `x-usage-service` / `x-usage-action` HTTP headers; a call that forgets to label itself is recorded as `unknown` rather than silently disappearing, and the Usage page calls that out explicitly so unlabeled spend never goes unnoticed.
+
+The web UI's **Usage** page is the observability view over that ledger: total cost and tokens for the selected period (7 days, 30 days or all-time), cost broken down by service, by action, by day, by model and by token type (input/output/cache read/cache write), plus per-tool call counts, error counts and timing (average/max/total), and a table of the most recent calls. Cost figures combine the ledger's raw token counts with the gateway's live `/rates` endpoint, so a pricing change is reflected immediately without re-ingesting old data.
+
+![The Usage page: cost and token breakdowns by service, action, day and model](docs/images/usage-page.png)
 
 ### Audit Trail
 
@@ -233,6 +264,8 @@ Steward keeps a redacted, queryable audit log of what happened across chat, tool
 Redaction happens before anything is written to disk. Secrets (tokens, API keys, passwords) are stripped by key name, and full email or document bodies are never stored — only a short snippet, the same convention `packages/write-ops` already uses for mail bodies. The raw, unredacted payload never touches disk.
 
 The host exposes the ledger at `/audit` (filterable by actor, event type, risk, chat, tool, date range or free text). The web UI has an **Audit** page — reachable from the desktop sidebar footer and the mobile bottom-nav's "Altro" overflow — with a filterable timeline and a per-event detail view showing the redacted payload and any linked files/sources.
+
+![The Audit page: a filterable event timeline with a redacted per-event detail panel](docs/images/audit-page.png)
 
 ## Architecture
 
