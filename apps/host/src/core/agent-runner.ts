@@ -18,6 +18,7 @@ import { buildClipboardTool } from "./clipboard-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
 import { registerGatewayModel } from "./pi-provider.ts";
 import { chatStore, toolMessage } from "./chat-store.ts";
+import { markIdle, markRunning } from "./running-chats.ts";
 import { usageLedger } from "@steward/usage-ledger";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
@@ -347,6 +348,7 @@ export class ChatManager {
       ? `${prompt}\n\n[Files the user attached — absolute paths on disk. If the user wants them sent by email, pass these in the send_email/reply "attachments" array:]\n${attached.map((a) => `- ${a.name}: ${a.path}`).join("\n")}`
       : prompt;
 
+    markRunning(chatId);
     this.emit({ type: "status", sessionId: this.session.id, chatId, state: "running" });
     try {
       await runtime.session.prompt(piPrompt);
@@ -418,6 +420,7 @@ export class ChatManager {
         runtime.lastTokens = { input: stats.tokens.input, output: stats.tokens.output, cacheRead: stats.tokens.cacheRead, cacheWrite: stats.tokens.cacheWrite };
         this.emit({ type: "usage", sessionId: this.session.id, chatId, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
       } catch { /* stats unavailable */ }
+      markIdle(chatId);
       this.emit({ type: "status", sessionId: this.session.id, chatId, state: "idle" });
     }
   }

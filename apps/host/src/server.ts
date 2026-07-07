@@ -13,6 +13,7 @@ import { extname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ClientEvent } from "@steward/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
+import { isRunning } from "./core/running-chats.ts";
 import { auditLog, recordAudit, type AuditActor, type AuditRisk } from "@steward/audit-log";
 import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setPushRegistry } from "./core/action-center-service.ts";
 import type { ActionCenterItem } from "@steward/protocol";
@@ -668,6 +669,11 @@ export function startServer(config: HostConfig): WebSocketServer {
       if (!store.exists(chatId)) return;
       session.activeChatId = chatId;
       emit({ type: "chat_history", chatId, messages: store.getMessages(chatId) });
+      // A turn on this chat may be running on a completely different
+      // ChatManager (another connection, or /quick-send's headless runner) —
+      // reflect the shared registry so this connection's UI shows it too,
+      // instead of looking stuck until a later reload happens to catch it done.
+      emit({ type: "status", sessionId: session.id, chatId, state: isRunning(chatId) ? "running" : "idle" });
       sendChatList();
       recordAudit({
         actor: "user",

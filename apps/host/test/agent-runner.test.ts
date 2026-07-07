@@ -13,6 +13,7 @@ import { buildPiRuntime, ChatManager, KeyedQueue, sharedMcpBridge } from "../src
 import { Session } from "../src/core/session.ts";
 import { defaultPolicy } from "../src/core/tool-policy.ts";
 import { chatStore } from "../src/core/chat-store.ts";
+import { isRunning } from "../src/core/running-chats.ts";
 
 const echo = fileURLToPath(new URL("./fixtures/echo-mcp-server.mts", import.meta.url));
 
@@ -73,6 +74,28 @@ test("doRunTurn does not resurrect a deleted/nonexistent chat", async () => {
   await cm.runTurn(missingChatId, "hello");
   assert.equal(chatStore().exists(missingChatId), false);
   assert.deepEqual(chatStore().getMessages(missingChatId), []);
+});
+
+test("doRunTurn marks the chat running for the shared running-chats registry while in flight, and idle once it finishes", async () => {
+  const session = new Session(() => {}, 1000);
+  const cm = new ChatManager(
+    {
+      port: 0, systemPrompt: "You are a test assistant. Reply with one short sentence. Do not use any tools.", policy: defaultPolicy, approvalTimeoutMs: 1000,
+      gateway: { baseUrl: "http://127.0.0.1:4000/v1", tier: "tier-1", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      mcpServers: {},
+    } as any,
+    session,
+    () => {},
+  );
+  const chat = chatStore().createChat("running-chats test");
+  assert.equal(isRunning(chat.id), false, "must not be running before the turn starts");
+
+  const turnPromise = cm.runTurn(chat.id, "Say hello in one short sentence.");
+  await new Promise((r) => setTimeout(r, 50)); // let doRunTurn reach its synchronous markRunning() call
+  assert.equal(isRunning(chat.id), true, "must be marked running while the turn is in flight");
+
+  await turnPromise;
+  assert.equal(isRunning(chat.id), false, "must be marked idle once the turn finishes");
 });
 
 test("onPiEvent persists assistant text interleaved between tool calls, not merged at the end", () => {

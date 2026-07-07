@@ -292,6 +292,17 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event));
   }, []);
 
+  // A turn may be running on a different connection/mechanism entirely (another
+  // tab/device, or /quick-send's headless runner) — this connection never
+  // receives its live token/tool events. Poll a re-select while the active chat
+  // shows as running, so the UI picks up newly-persisted content and the
+  // eventual "idle" transition instead of looking stuck until a manual reload.
+  useEffect(() => {
+    if (state !== "running" || !activeChatId) return;
+    const interval = setInterval(() => send({ type: "chat_select", chatId: activeChatId }), 3000);
+    return () => clearInterval(interval);
+  }, [state, activeChatId, send]);
+
   const sendMessage = useCallback(
     (text: string, attachments?: ChannelFile[]) => {
       const trimmed = text.trim();
