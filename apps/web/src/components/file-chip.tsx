@@ -5,12 +5,54 @@
  * hidden and a download icon takes their place. The chip is draggable so dropping
  * it on Finder copies the file out.
  */
+import { useState } from "react";
 import { Download } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { authTokenKey, isLocalClient } from "@/lib/auth";
 import { hostHttpBase } from "@/lib/host-url";
 import type { ChannelFile } from "@steward/protocol";
+
+type ShareCapableNavigator = Navigator & {
+  share?: (data: ShareData) => Promise<void>;
+  canShare?: (data: ShareData) => boolean;
+};
+
+function triggerBrowserDownload(url: string, name: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+}
+
+/**
+ * On the phone, prefer the native share sheet (iOS/Android "share to...", incl.
+ * Save to Files/Photos) over a plain download — Safari's `<a download>` often
+ * just opens a preview instead of saving. Falls back to a direct download if
+ * the browser can't share files, the fetch fails, or sharing itself fails
+ * (but NOT if the user simply dismisses the share sheet — that's a deliberate
+ * "never mind", not a failure to recover from).
+ */
+async function shareOrDownload(url: string, file: ChannelFile): Promise<void> {
+  const nav = navigator as ShareCapableNavigator;
+  if (nav.share && nav.canShare) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const blob = await res.blob();
+        const shareFile = new File([blob], file.name, { type: file.mime || blob.type });
+        if (nav.canShare({ files: [shareFile] })) {
+          await nav.share({ files: [shareFile] });
+          return;
+        }
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // user dismissed the share sheet
+      // any other failure (fetch/share) falls through to a direct download
+    }
+  }
+  triggerBrowserDownload(url, file.name);
+}
 
 // /file/<fileToken> is a gated data route; an <img>/<a> can't set an Authorization
 // header, so the host's auth token rides along as a query param instead. The base
@@ -48,6 +90,7 @@ export function FileChip({
   const { t } = useTranslation();
   const url = fileUrl(file.token);
   const local = isLocalClient(); // Mac-only actions (native open / Finder) hidden on the phone
+  const [sharing, setSharing] = useState(false);
   return (
     <div
       draggable
@@ -80,16 +123,24 @@ export function FileChip({
           <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => onReveal(file.token)} title={t("fileChip.finderTitle")}>{t("fileChip.finder")}</Button>
         </>
       ) : (
-        <a
-          href={url}
-          download={file.name}
-          onClick={(e) => e.stopPropagation()}
-          className="text-muted-foreground hover:text-foreground rounded p-1"
+        <button
+          type="button"
+          disabled={sharing}
+          onClick={async (e) => {
+            e.stopPropagation();
+            setSharing(true);
+            try {
+              await shareOrDownload(url, file);
+            } finally {
+              setSharing(false);
+            }
+          }}
+          className="text-muted-foreground hover:text-foreground rounded p-1 disabled:opacity-50"
           title={t("fileChip.downloadTitle")}
           aria-label={t("fileChip.downloadTitle")}
         >
           <Download className="size-4" />
-        </a>
+        </button>
       )}
     </div>
   );
