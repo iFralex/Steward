@@ -5,7 +5,7 @@
  * wiki's recursive rescan then ingests them.
  */
 import { statSync, readdirSync, existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 
 /** File types worth ingesting (docs, text, code, images). */
 export const INGEST_EXT = new Set([
@@ -86,6 +86,32 @@ export function planFromRoot(files: string[], root: string, maxBytes = DEFAULT_M
     plans.push({ src: f, targetRel: rel.startsWith("..") ? basename(f) : join(rootName, rel) });
   }
   return plans;
+}
+
+/** True if `target` is `root` itself or nested inside it. */
+export function isInsideDir(root: string, target: string): boolean {
+  const r = resolve(root);
+  const t = resolve(target);
+  return t === r || t.startsWith(r + sep);
+}
+
+/** Prepend a relative destination prefix (e.g. from a user-chosen shared folder) to every plan's target. */
+export function withDestinationPrefix(plans: PlannedCopy[], prefixRel: string): PlannedCopy[] {
+  if (!prefixRel || prefixRel === ".") return plans;
+  return plans.map((p) => ({ ...p, targetRel: join(prefixRel, p.targetRel) }));
+}
+
+/** Plan a single file/folder input against a destination path the user chose explicitly (name + folder). */
+export function planForChosenPath(input: string, chosenAbsPath: string, sourcesDir: string, maxBytes = DEFAULT_MAX_BYTES): PlannedCopy[] {
+  const rel = relative(sourcesDir, chosenAbsPath);
+  let st; try { st = statSync(input); } catch { return []; }
+  if (st.isDirectory()) {
+    return walkIngestible(input, maxBytes).map((f) => ({ src: f, targetRel: join(rel, relative(input, f)) }));
+  }
+  if (st.isFile() && isIngestibleFile(input, maxBytes)) {
+    return [{ src: input, targetRel: rel }];
+  }
+  return [];
 }
 
 export interface AddResult { added: PlannedCopy[]; updated: PlannedCopy[]; skipped: number }
