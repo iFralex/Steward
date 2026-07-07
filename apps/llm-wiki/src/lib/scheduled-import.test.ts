@@ -242,4 +242,40 @@ describe("scanAndImport failure handling", () => {
     expect(mocks.copyFile).not.toHaveBeenCalled()
     expect(mocks.enqueueSourceIngest).not.toHaveBeenCalled()
   })
+
+  it("renames the destination when an unrelated file already occupies the computed path", async () => {
+    // Scoped to the originally-computed destination only (not a blanket
+    // `true`): findAvailablePath probes candidate paths with this same
+    // fileExists mock, and a blanket `true` would make that probe loop
+    // never terminate.
+    mocks.fileExists.mockImplementation(async (path: string) =>
+      path === "/Users/me/wiki-project/raw/sources/scheduled-import/paper.pdf",
+    )
+    mocks.getFileMd5.mockImplementation(async (path: string) =>
+      path === "/Users/me/inbox/paper.pdf" ? "new-hash" : "old-hash",
+    )
+    mocks.enqueueSourceIngest.mockResolvedValue(["task-1"])
+
+    await scanAndImport(project, "/Users/me/inbox")
+
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      "/Users/me/inbox/paper.pdf",
+      "/Users/me/wiki-project/raw/sources/scheduled-import/paper (2).pdf",
+    )
+    expect(mocks.enqueueSourceIngest).toHaveBeenCalledWith(
+      project,
+      ["/Users/me/wiki-project/raw/sources/scheduled-import/paper (2).pdf"],
+      expect.any(Object),
+    )
+  })
+
+  it("skips copying when an unrelated file at the destination already has identical content", async () => {
+    mocks.fileExists.mockResolvedValue(true)
+    mocks.getFileMd5.mockResolvedValue("same-hash")
+
+    await scanAndImport(project, "/Users/me/inbox")
+
+    expect(mocks.copyFile).not.toHaveBeenCalled()
+    expect(mocks.writeFileAtomic).toHaveBeenCalled()
+  })
 })

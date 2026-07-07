@@ -21,6 +21,7 @@ import {
   isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
 import { useActivityStore } from "@/stores/activity-store"
+import { decideAction, findAvailablePath } from "@steward/source-collision"
 
 interface ImportDb {
   files: Record<string, string>
@@ -391,10 +392,25 @@ export async function scanAndImport(
         }
 
         const destPath = scheduledImportDestinationForFile(projectPath, importRoot, file)
+        let finalDestPath = destPath
         if (normalizePath(destPath) !== sourcePath) {
-          await copyFile(sourcePath, destPath)
+          const isTrackedUpdate = Object.prototype.hasOwnProperty.call(db.files, key)
+          const exists = await fileExists(destPath)
+          let action: "write" | "skip" | "overwrite" | "rename" = "write"
+          if (exists) {
+            const existingHash = await getFileMd5(destPath)
+            action = decideAction({ exists, existingHash, newHash: md5, isTrackedUpdate })
+            if (action === "rename") {
+              finalDestPath = await findAvailablePath(destPath, (candidate) => fileExists(candidate))
+            }
+          }
+          if (action === "skip") {
+            nextDb.files[key] = md5
+            continue
+          }
+          await copyFile(sourcePath, finalDestPath)
         }
-        changedFiles.push({ key, md5, destPath })
+        changedFiles.push({ key, md5, destPath: finalDestPath })
       } catch (err) {
         console.warn(`[scheduled-import] skipped ${file.path}:`, err)
       }
