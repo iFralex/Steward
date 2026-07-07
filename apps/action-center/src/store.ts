@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { recordAudit } from "@steward/audit-log";
-import type { ActionItem, ActionStatus, UpsertAction } from "./types.ts";
+import type { ActionItem, ActionKind, ActionStatus, UpsertAction } from "./types.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS actions (
@@ -157,15 +157,28 @@ export class ActionStore {
     return row ? rowToAction(row) : null;
   }
 
-  list(opts: { includeDone?: boolean; limit?: number } = {}): ActionItem[] {
-    const includeDone = opts.includeDone ?? false;
+  list(opts: { includeDone?: boolean; status?: ActionStatus; kind?: ActionKind; limit?: number } = {}): ActionItem[] {
     const limit = opts.limit ?? 50;
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (opts.status) {
+      conditions.push("status = ?");
+      params.push(opts.status);
+    } else if (!opts.includeDone) {
+      conditions.push("status IN ('new','read')");
+    }
+    if (opts.kind) {
+      conditions.push("kind = ?");
+      params.push(opts.kind);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    params.push(limit);
     const rows = this.raw.prepare(
       `SELECT * FROM actions
-       ${includeDone ? "" : "WHERE status IN ('new','read')"}
+       ${where}
        ORDER BY COALESCE(due_at, 9223372036854775807), priority DESC, updated_at DESC
        LIMIT ?`,
-    ).all(limit) as Record<string, unknown>[];
+    ).all(...params) as Record<string, unknown>[];
     return rows.map(rowToAction);
   }
 

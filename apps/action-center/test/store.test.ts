@@ -58,6 +58,39 @@ test("get(id) returns one action regardless of list limits", () => {
   s.close();
 });
 
+test("list({status}) filters to that exact status, overriding includeDone", () => {
+  const s = ActionStore.open(":memory:");
+  const a = s.upsert({ sourceKey: "k1", sourceKind: "mail", kind: "reply-needed", title: "a", summary: "a" });
+  const b = s.upsert({ sourceKey: "k2", sourceKind: "mail", kind: "reply-needed", title: "b", summary: "b" });
+  s.mark(a.id, "read");
+  s.mark(b.id, "done");
+
+  assert.deepEqual(s.list({ status: "read" }).map((x) => x.id), [a.id]);
+  assert.deepEqual(s.list({ status: "done" }).map((x) => x.id), [b.id]);
+  assert.deepEqual(s.list({ status: "new" }).map((x) => x.id), []);
+  s.close();
+});
+
+test("list({kind}) filters to that action kind", () => {
+  const s = ActionStore.open(":memory:");
+  const a = s.upsert({ sourceKey: "k1", sourceKind: "mail", kind: "reply-needed", title: "a", summary: "a" });
+  s.upsert({ sourceKey: "k2", sourceKind: "mail", kind: "deadline", title: "b", summary: "b" });
+
+  assert.deepEqual(s.list({ kind: "reply-needed" }).map((x) => x.id), [a.id]);
+  s.close();
+});
+
+test("list({status, kind}) combines both filters", () => {
+  const s = ActionStore.open(":memory:");
+  const a = s.upsert({ sourceKey: "k1", sourceKind: "mail", kind: "deadline", title: "a", summary: "a" });
+  const b = s.upsert({ sourceKey: "k2", sourceKind: "mail", kind: "deadline", title: "b", summary: "b" });
+  s.upsert({ sourceKey: "k3", sourceKind: "mail", kind: "reply-needed", title: "c", summary: "c" });
+  s.mark(b.id, "done");
+
+  assert.deepEqual(s.list({ status: "new", kind: "deadline" }).map((x) => x.id), [a.id]);
+  s.close();
+});
+
 test("updateSummary changes the summary without touching status", () => {
   const s = ActionStore.open(":memory:");
   const { id } = s.upsert({
