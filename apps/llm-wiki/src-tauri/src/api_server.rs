@@ -1569,27 +1569,54 @@ fn handle_add_source(app: &AppHandle, project_id: &str, body: &str) -> ApiRespon
     let mut any_ok = false;
     for item in &items {
         let entry = match source_rel_path(item.dir.as_deref(), &item.filename) {
-            Ok(rel) => {
-                match safe_join(&project.path, &rel) {
-                    Ok(abs) => {
-                        let existed = abs.exists();
-                        let parent_ok = abs
-                            .parent()
-                            .map(|p| fs::create_dir_all(p).is_ok())
-                            .unwrap_or(false);
-                        if !parent_ok {
-                            json!({ "filename": item.filename, "status": "error", "error": "could not create destination folder" })
-                        } else if let Err(e) = fs::write(&abs, item.content.as_bytes()) {
-                            json!({ "filename": item.filename, "status": "error", "error": format!("write failed: {e}") })
-                        } else {
-                            any_ok = true;
-                            let status = if existed { "overwritten" } else { "written" };
-                            json!({ "filename": item.filename, "status": status, "path": rel })
+            Ok(rel) => match safe_join(&project.path, &rel) {
+                Ok(abs) => {
+                    let exists = abs.exists();
+                    let existing_hash_result: Result<Option<String>, String> = if exists {
+                        fs::read(&abs)
+                            .map(|bytes| Some(hash_bytes(&bytes)))
+                            .map_err(|e| format!("could not read existing file: {e}"))
+                    } else {
+                        Ok(None)
+                    };
+                    match existing_hash_result {
+                        Err(e) => json!({ "filename": item.filename, "status": "error", "error": e }),
+                        Ok(existing_hash) => {
+                            let new_hash = hash_bytes(item.content.as_bytes());
+                            let action = decide_source_action(exists, existing_hash.as_deref(), &new_hash, false);
+                            if action == CollisionAction::Skip {
+                                json!({ "filename": item.filename, "status": "unchanged", "path": rel })
+                            } else {
+                                let target = if action == CollisionAction::Rename {
+                                    find_available_path(&abs)
+                                } else {
+                                    abs.clone()
+                                };
+                                let parent_ok = target
+                                    .parent()
+                                    .map(|p| fs::create_dir_all(p).is_ok())
+                                    .unwrap_or(false);
+                                if !parent_ok {
+                                    json!({ "filename": item.filename, "status": "error", "error": "could not create destination folder" })
+                                } else if let Err(e) = fs::write(&target, item.content.as_bytes()) {
+                                    json!({ "filename": item.filename, "status": "error", "error": format!("write failed: {e}") })
+                                } else {
+                                    any_ok = true;
+                                    let status = match action {
+                                        CollisionAction::Write => "written",
+                                        CollisionAction::Overwrite => "overwritten",
+                                        CollisionAction::Rename => "renamed",
+                                        CollisionAction::Skip => unreachable!(),
+                                    };
+                                    let final_rel = relative_to_project(&project.path, &target);
+                                    json!({ "filename": item.filename, "status": status, "path": final_rel })
+                                }
+                            }
                         }
                     }
-                    Err(e) => json!({ "filename": item.filename, "status": "error", "error": e }),
                 }
-            }
+                Err(e) => json!({ "filename": item.filename, "status": "error", "error": e }),
+            },
             Err(e) => json!({ "filename": item.filename, "status": "error", "error": e }),
         };
         written.push(entry);

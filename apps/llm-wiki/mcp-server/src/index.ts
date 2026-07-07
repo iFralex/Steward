@@ -131,7 +131,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "llm_wiki_add_source",
-      description: "Add one or more source documents to a project's raw/sources/ folder and (by default) trigger ingest via rescan. Accepts a single file or a batch. Writing to a filename/dir that already exists overwrites it. Use llm_wiki_files with dirs_only to see the existing folder hierarchy first, and llm_wiki_create_folder to create a new folder ahead of time if needed.",
+      description: "Add one or more source documents to a project's raw/sources/ folder and (by default) trigger ingest via rescan. Accepts a single file or a batch. If the destination already exists with identical content, nothing is written (no-op). If it exists with different content, the file is written to a renamed path instead (e.g. \"notes (2).md\") rather than destroying it — check the returned `path`/`status` for where it actually landed. Use llm_wiki_files with dirs_only to see the existing folder hierarchy first, and llm_wiki_create_folder to create a new folder ahead of time if needed.",
       inputSchema: {
         type: "object",
         properties: {
