@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   createDirectory: vi.fn(),
   deleteFile: vi.fn(),
   fileExists: vi.fn(),
+  getFileMd5: vi.fn(),
   getFileSize: vi.fn(),
   listDirectory: vi.fn(),
   preprocessFile: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/commands/fs", async () => {
     createDirectory: mocks.createDirectory,
     deleteFile: mocks.deleteFile,
     fileExists: mocks.fileExists,
+    getFileMd5: mocks.getFileMd5,
     getFileSize: mocks.getFileSize,
     listDirectory: mocks.listDirectory,
     preprocessFile: mocks.preprocessFile,
@@ -42,6 +44,7 @@ beforeEach(() => {
   mocks.createDirectory.mockResolvedValue(undefined)
   mocks.deleteFile.mockResolvedValue(undefined)
   mocks.fileExists.mockResolvedValue(false)
+  mocks.getFileMd5.mockResolvedValue("unused-default-hash")
   mocks.getFileSize.mockResolvedValue(1024)
   mocks.listDirectory.mockResolvedValue([])
   mocks.preprocessFile.mockResolvedValue("")
@@ -180,5 +183,54 @@ describe("source-lifecycle path helpers", () => {
         folderContext: "",
       },
     ])
+  })
+
+  it("skips importing a file when the destination already has identical content", async () => {
+    mocks.fileExists.mockResolvedValue(true)
+    mocks.getFileMd5.mockResolvedValue("same-hash")
+
+    const imported = await importSourceFiles(
+      { id: "p1", name: "Project", path: "/project" },
+      ["/external/report.pdf"],
+      {
+        provider: "openai",
+        endpoint: "https://api.example.com/v1",
+        apiKey: "key",
+        model: "model",
+        customModel: "",
+        reasoning: { enabled: false, effort: "low" },
+      } as never,
+    )
+
+    expect(imported).toEqual([])
+    expect(mocks.copyFile).not.toHaveBeenCalled()
+  })
+
+  it("renames the destination when re-importing a same-named but different file", async () => {
+    mocks.fileExists.mockImplementation(async (path: string) =>
+      path === "/project/raw/sources/report.pdf",
+    )
+    mocks.getFileMd5.mockImplementation(async (path: string) =>
+      path === "/external/report.pdf" ? "new-hash" : "old-hash",
+    )
+
+    const imported = await importSourceFiles(
+      { id: "p1", name: "Project", path: "/project" },
+      ["/external/report.pdf"],
+      {
+        provider: "openai",
+        endpoint: "https://api.example.com/v1",
+        apiKey: "key",
+        model: "model",
+        customModel: "",
+        reasoning: { enabled: false, effort: "low" },
+      } as never,
+    )
+
+    expect(imported).toEqual(["/project/raw/sources/report (2).pdf"])
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      "/external/report.pdf",
+      "/project/raw/sources/report (2).pdf",
+    )
   })
 })

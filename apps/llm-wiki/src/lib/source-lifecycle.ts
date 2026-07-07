@@ -3,6 +3,7 @@ import {
   createDirectory,
   deleteFile,
   fileExists,
+  getFileMd5,
   getFileSize,
   listDirectory,
   preprocessFile,
@@ -11,6 +12,7 @@ import {
 } from "@/commands/fs"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import type { LlmConfig } from "@/stores/wiki-store"
+import { decideAction, findAvailablePath } from "@steward/source-collision"
 import { enqueueBatch } from "@/lib/ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getFileName, getFileStem, getRelativePath, normalizePath } from "@/lib/path-utils"
@@ -174,11 +176,14 @@ export async function importSourceFiles(
     }
     if (!allowed) continue
 
-    const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
+    const basePath = `${pp}/raw/sources/${originalName}`
     try {
-      await copyFile(sourcePath, destPath)
-      importedPaths.push(destPath)
-      preprocessFile(destPath).catch(() => {})
+      const destPath = await resolveImportDestination(basePath, sourcePath)
+      if (destPath) {
+        await copyFile(sourcePath, destPath)
+        importedPaths.push(destPath)
+        preprocessFile(destPath).catch(() => {})
+      }
     } catch (err) {
       console.error(`Failed to import ${originalName}:`, err)
     }
@@ -209,7 +214,7 @@ export async function importSourceFolder(
 
   for (const file of sourceFiles) {
     const relativeSourcePath = getRelativePath(file.path, sourceRoot)
-    const destPath = `${destDir}/${relativeSourcePath}`
+    const basePath = `${destDir}/${relativeSourcePath}`
     const relPath = `raw/sources/${folderName}/${relativeSourcePath}`
     let allowed = isPathAllowedBySourceWatch(relPath, cfg)
     if (allowed) {
@@ -220,6 +225,8 @@ export async function importSourceFolder(
       }
     }
     if (!allowed) continue
+    const destPath = await resolveImportDestination(basePath, file.path)
+    if (!destPath) continue
     const parent = parentPath(destPath)
     if (parent) await createDirectory(parent)
     await copyFile(file.path, destPath)
@@ -445,30 +452,18 @@ export async function cleanupDeletedWikiPages(
   }
 }
 
-async function getUniqueDestPath(dir: string, fileName: string): Promise<string> {
-  const basePath = `${dir}/${fileName}`
-
-  if (!(await fileExists(basePath))) {
-    return basePath
-  }
-
-  const ext = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")) : ""
-  const nameWithoutExt = ext ? fileName.slice(0, -ext.length) : fileName
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
-
-  const withDate = `${dir}/${nameWithoutExt}-${date}${ext}`
-  if (!(await fileExists(withDate))) {
-    return withDate
-  }
-
-  for (let i = 2; i <= 99; i++) {
-    const withCounter = `${dir}/${nameWithoutExt}-${date}-${i}${ext}`
-    if (!(await fileExists(withCounter))) {
-      return withCounter
-    }
-  }
-
-  return `${dir}/${nameWithoutExt}-${date}-${Date.now()}${ext}`
+/** Decide where a file being imported should actually land: `null` means
+ * "identical content already there, nothing to do." Always isTrackedUpdate
+ * = false here — the user is picking a file from the OS picker each time,
+ * there's no prior-origin tracking in this flow. */
+async function resolveImportDestination(destPath: string, sourcePath: string): Promise<string | null> {
+  const exists = await fileExists(destPath)
+  if (!exists) return destPath
+  const [existingHash, newHash] = await Promise.all([getFileMd5(destPath), getFileMd5(sourcePath)])
+  const action = decideAction({ exists, existingHash, newHash, isTrackedUpdate: false })
+  if (action === "skip") return null
+  if (action === "rename") return findAvailablePath(destPath, (candidate) => fileExists(candidate))
+  return destPath
 }
 
 async function appendSourceDeleteLog(
