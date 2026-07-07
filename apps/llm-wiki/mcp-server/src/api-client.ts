@@ -139,10 +139,11 @@ export class LlmWikiApiClient {
     return { projects, currentProject }
   }
 
-  async files(projectId = "current", options: { root?: "wiki" | "sources" | "all"; recursive?: boolean; maxFiles?: number } = {}): Promise<ApiFilesResponse> {
+  async files(projectId = "current", options: { root?: "wiki" | "sources" | "all"; recursive?: boolean; dirsOnly?: boolean; maxFiles?: number } = {}): Promise<ApiFilesResponse> {
     const params = new URLSearchParams()
     params.set("root", options.root ?? "wiki")
     if (options.recursive !== undefined) params.set("recursive", String(options.recursive))
+    if (options.dirsOnly !== undefined) params.set("dirsOnly", String(options.dirsOnly))
     if (options.maxFiles !== undefined) params.set("maxFiles", String(options.maxFiles))
     const json = await this.request(`/projects/${encodeURIComponent(projectId)}/files?${params.toString()}`)
     return {
@@ -214,12 +215,19 @@ export class LlmWikiApiClient {
 
   async addSources(
     projectId = "current",
-    sources: Array<{ filename: string; content: string }>,
+    sources: Array<{ filename: string; content: string; dir?: string }>,
     rescan = true,
   ): Promise<Record<string, unknown>> {
     return this.request(`/projects/${encodeURIComponent(projectId)}/sources`, {
       method: "POST",
       body: { sources, rescan },
+    })
+  }
+
+  async createFolder(projectId = "current", dir: string): Promise<Record<string, unknown>> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/sources/folders`, {
+      method: "POST",
+      body: { dir },
     })
   }
 

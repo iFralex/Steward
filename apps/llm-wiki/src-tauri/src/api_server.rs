@@ -265,6 +265,9 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "sources"]) => {
             handle_add_source(app, project_id, body)
         }
+        (&Method::Post, ["projects", project_id, "sources", "folders"]) => {
+            handle_create_folder(app, project_id, body)
+        }
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
         }
@@ -693,6 +696,7 @@ fn handle_files(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(DEFAULT_MAX_FILES)
         .clamp(1, HARD_MAX_FILES);
+    let dirs_only = params.get("dirsOnly").map(|v| v == "true").unwrap_or(false);
     let rel = match root {
         "wiki" => "wiki",
         "sources" | "raw" | "raw/sources" => "raw/sources",
@@ -700,7 +704,7 @@ fn handle_files(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
         _ => return err(400, "root must be wiki, sources, or all"),
     };
     if rel.is_empty() {
-        return match list_public_roots(&project.path, recursive, max_files) {
+        return match list_public_roots(&project.path, recursive, dirs_only, max_files) {
             Ok(files) => ok(json!({
                 "ok": true,
                 "projectId": project.id,
@@ -716,7 +720,7 @@ fn handle_files(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
         Err(e) => return err(400, e),
     };
     let mut count = 0;
-    match list_tree(&project.path, &dir, recursive, max_files, &mut count) {
+    match list_tree(&project.path, &dir, recursive, dirs_only, max_files, &mut count) {
         Ok(files) => ok(json!({
             "ok": true,
             "projectId": project.id,
@@ -787,6 +791,40 @@ fn validate_source_filename(name: &str) -> Result<(), String> {
         return Err(format!("filename contains control characters: {name}"));
     }
     Ok(())
+}
+
+/// Validate/normalize a relative folder path (may contain `/`-separated
+/// segments) that will be joined under `raw/sources/`. Empty means "the
+/// raw/sources/ root itself". Rejects `..`, empty segments, backslashes,
+/// and control chars; full traversal safety is still enforced by
+/// `safe_join` at write time.
+fn validate_relative_dir(dir: &str) -> Result<String, String> {
+    let trimmed = dir.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    for part in trimmed.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return Err(format!("invalid folder path: {dir}"));
+        }
+        if part.contains('\\') || part.chars().any(|c| c.is_control()) {
+            return Err(format!("invalid folder path: {dir}"));
+        }
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Build the raw/sources/-relative path for a source file, combining an
+/// optional relative destination folder with its flat filename.
+fn source_rel_path(dir: Option<&str>, filename: &str) -> Result<String, String> {
+    validate_source_filename(filename)?;
+    let dir = validate_relative_dir(dir.unwrap_or(""))?;
+    let name = filename.trim();
+    if dir.is_empty() {
+        Ok(format!("raw/sources/{name}"))
+    } else {
+        Ok(format!("raw/sources/{dir}/{name}"))
+    }
 }
 
 fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
@@ -881,6 +919,7 @@ struct ApiFileNode {
 fn list_public_roots(
     project_path: &str,
     recursive: bool,
+    dirs_only: bool,
     max_files: usize,
 ) -> Result<Vec<ApiFileNode>, String> {
     let mut count = 0;
@@ -894,6 +933,7 @@ fn list_public_roots(
             project_path,
             &path,
             recursive,
+            dirs_only,
             max_files,
             &mut count,
             &mut roots,
@@ -906,6 +946,7 @@ fn list_tree(
     project_path: &str,
     path: &Path,
     recursive: bool,
+    dirs_only: bool,
     max_files: usize,
     count: &mut usize,
 ) -> Result<Vec<ApiFileNode>, String> {
@@ -917,6 +958,7 @@ fn list_tree(
             project_path,
             &entry.path(),
             recursive,
+            dirs_only,
             max_files,
             count,
             &mut out,
@@ -930,6 +972,7 @@ fn push_file_node(
     project_path: &str,
     path: &Path,
     recursive: bool,
+    dirs_only: bool,
     max_files: usize,
     count: &mut usize,
     out: &mut Vec<ApiFileNode>,
@@ -947,13 +990,16 @@ fn push_file_node(
     if file_type.is_symlink() {
         return Ok(());
     }
+    let is_dir = file_type.is_dir();
+    if dirs_only && !is_dir {
+        return Ok(());
+    }
     *count += 1;
     if *count > max_files {
         return Err(format!("File listing exceeds maxFiles limit ({max_files})"));
     }
-    let is_dir = file_type.is_dir();
     let children = if recursive && is_dir {
-        Some(list_tree(project_path, path, true, max_files, count)?)
+        Some(list_tree(project_path, path, true, dirs_only, max_files, count)?)
     } else {
         None
     };
@@ -1174,6 +1220,9 @@ struct SourceFileInput {
     filename: String,
     #[serde(default)]
     content: String,
+    /// Relative folder inside raw/sources/, e.g. "progetti/helmstudio". Omit for the root.
+    #[serde(default)]
+    dir: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1181,11 +1230,13 @@ struct AddSourceRequest {
     // Batch form.
     #[serde(default)]
     sources: Vec<SourceFileInput>,
-    // Single-file convenience form (top-level filename/content).
+    // Single-file convenience form (top-level filename/content/dir).
     #[serde(default)]
     filename: Option<String>,
     #[serde(default)]
     content: Option<String>,
+    #[serde(default)]
+    dir: Option<String>,
     // Defaults to true at the handler.
     #[serde(default)]
     rescan: Option<bool>,
@@ -1196,12 +1247,17 @@ impl AddSourceRequest {
         let mut out: Vec<SourceFileInput> = self
             .sources
             .iter()
-            .map(|s| SourceFileInput { filename: s.filename.clone(), content: s.content.clone() })
+            .map(|s| SourceFileInput {
+                filename: s.filename.clone(),
+                content: s.content.clone(),
+                dir: s.dir.clone(),
+            })
             .collect();
         if let Some(name) = &self.filename {
             out.push(SourceFileInput {
                 filename: name.clone(),
                 content: self.content.clone().unwrap_or_default(),
+                dir: self.dir.clone(),
             });
         }
         out
@@ -1449,9 +1505,8 @@ fn handle_add_source(app: &AppHandle, project_id: &str, body: &str) -> ApiRespon
     let mut written = Vec::new();
     let mut any_ok = false;
     for item in &items {
-        let entry = match validate_source_filename(&item.filename) {
-            Ok(()) => {
-                let rel = format!("raw/sources/{}", item.filename.trim());
+        let entry = match source_rel_path(item.dir.as_deref(), &item.filename) {
+            Ok(rel) => {
                 match safe_join(&project.path, &rel) {
                     Ok(abs) => {
                         let existed = abs.exists();
@@ -1460,7 +1515,7 @@ fn handle_add_source(app: &AppHandle, project_id: &str, body: &str) -> ApiRespon
                             .map(|p| fs::create_dir_all(p).is_ok())
                             .unwrap_or(false);
                         if !parent_ok {
-                            json!({ "filename": item.filename, "status": "error", "error": "could not create raw/sources" })
+                            json!({ "filename": item.filename, "status": "error", "error": "could not create destination folder" })
                         } else if let Err(e) = fs::write(&abs, item.content.as_bytes()) {
                             json!({ "filename": item.filename, "status": "error", "error": format!("write failed: {e}") })
                         } else {
@@ -1497,6 +1552,44 @@ fn handle_add_source(app: &AppHandle, project_id: &str, body: &str) -> ApiRespon
         "written": written,
         "rescan": rescan_result,
     }))
+}
+
+#[derive(Deserialize)]
+struct CreateFolderRequest {
+    dir: String,
+}
+
+fn handle_create_folder(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    let req: CreateFolderRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return err(400, format!("Invalid JSON: {e}")),
+    };
+    let dir = match validate_relative_dir(&req.dir) {
+        Ok(dir) => dir,
+        Err(e) => return err(400, e),
+    };
+    if dir.is_empty() {
+        return err(400, "dir is required");
+    }
+    let rel = format!("raw/sources/{dir}");
+    let abs = match safe_join(&project.path, &rel) {
+        Ok(abs) => abs,
+        Err(e) => return err(400, e),
+    };
+    let existed = abs.exists();
+    match fs::create_dir_all(&abs) {
+        Ok(()) => ok(json!({
+            "ok": true,
+            "projectId": project.id,
+            "path": rel,
+            "status": if existed { "exists" } else { "created" },
+        })),
+        Err(e) => err(500, format!("could not create folder: {e}")),
+    }
 }
 
 fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
@@ -1617,6 +1710,77 @@ mod tests {
         let joined = safe_join(&root_str, "wiki/index.md").unwrap();
         assert_eq!(joined, root.join("wiki/index.md"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_tree_dirs_only_recurses_but_omits_files() {
+        let root = test_project_dir();
+        let sources = root.join("raw").join("sources");
+        fs::create_dir_all(sources.join("progetti").join("helmstudio")).unwrap();
+        fs::write(sources.join("top.md"), "x").unwrap();
+        fs::write(sources.join("progetti").join("notes.md"), "x").unwrap();
+        fs::write(
+            sources.join("progetti").join("helmstudio").join("plan.md"),
+            "x",
+        )
+        .unwrap();
+
+        let root_str = root.to_string_lossy().to_string();
+        let mut count = 0;
+        let nodes = list_tree(&root_str, &sources, true, true, 1000, &mut count).unwrap();
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "progetti");
+        assert!(nodes[0].is_dir);
+        let children = nodes[0].children.as_ref().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "helmstudio");
+        let grandchildren = children[0].children.as_ref().unwrap();
+        assert!(grandchildren.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn validate_relative_dir_accepts_empty_and_nested_paths() {
+        assert_eq!(validate_relative_dir("").unwrap(), "");
+        assert_eq!(validate_relative_dir("   ").unwrap(), "");
+        assert_eq!(validate_relative_dir("progetti").unwrap(), "progetti");
+        assert_eq!(
+            validate_relative_dir("/progetti/helmstudio/").unwrap(),
+            "progetti/helmstudio"
+        );
+    }
+
+    #[test]
+    fn validate_relative_dir_rejects_traversal_and_junk() {
+        assert!(validate_relative_dir("..").is_err());
+        assert!(validate_relative_dir("progetti/../secret").is_err());
+        assert!(validate_relative_dir("progetti//helmstudio").is_err());
+        assert!(validate_relative_dir("progetti/.").is_err());
+        assert!(validate_relative_dir("progetti\\helmstudio").is_err());
+    }
+
+    #[test]
+    fn source_rel_path_joins_dir_and_filename() {
+        assert_eq!(
+            source_rel_path(None, "notes.md").unwrap(),
+            "raw/sources/notes.md"
+        );
+        assert_eq!(
+            source_rel_path(Some("progetti/helmstudio"), "notes.md").unwrap(),
+            "raw/sources/progetti/helmstudio/notes.md"
+        );
+        assert_eq!(
+            source_rel_path(Some(""), "notes.md").unwrap(),
+            "raw/sources/notes.md"
+        );
+    }
+
+    #[test]
+    fn source_rel_path_rejects_invalid_dir_or_filename() {
+        assert!(source_rel_path(Some(".."), "notes.md").is_err());
+        assert!(source_rel_path(None, "a/b.md").is_err());
     }
 
     #[test]

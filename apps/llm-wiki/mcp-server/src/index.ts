@@ -49,13 +49,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "llm_wiki_files",
-      description: "List files from a project using the desktop app's API permissions. project_id may be a UUID, filesystem path, or 'current'.",
+      description: "List files from a project using the desktop app's API permissions. project_id may be a UUID, filesystem path, or 'current'. Use dirs_only (with root: sources) to browse the raw/sources/ folder hierarchy before deciding where to add a file with llm_wiki_add_source, or before creating a new folder with llm_wiki_create_folder.",
       inputSchema: {
         type: "object",
         properties: {
           project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
           root: { type: "string", enum: ["wiki", "sources", "all"], description: "Tree root to list. Defaults to wiki." },
           recursive: { type: "boolean", description: "Whether to list recursively. Defaults to true." },
+          dirs_only: { type: "boolean", description: "Return only folders (no files), still recursive into subfolders. Defaults to false." },
           max_files: { type: "number", description: "Maximum files returned by the local API. Max 10000." },
         },
         additionalProperties: false,
@@ -130,19 +131,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "llm_wiki_add_source",
-      description: "Add one or more source documents to a project's raw/sources/ folder and (by default) trigger ingest via rescan. Accepts a single file or a batch.",
+      description: "Add one or more source documents to a project's raw/sources/ folder and (by default) trigger ingest via rescan. Accepts a single file or a batch. Writing to a filename/dir that already exists overwrites it. Use llm_wiki_files with dirs_only to see the existing folder hierarchy first, and llm_wiki_create_folder to create a new folder ahead of time if needed.",
       inputSchema: {
         type: "object",
         properties: {
           project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
           sources: {
             type: "array",
-            description: "Files to add. Each item is {filename, content}.",
+            description: "Files to add. Each item is {filename, content, dir?}.",
             items: {
               type: "object",
               properties: {
                 filename: { type: "string", description: "Flat filename (no path separators), e.g. notes.md" },
                 content: { type: "string", description: "UTF-8 file content." },
+                dir: { type: "string", description: "Relative folder inside raw/sources/, e.g. progetti/helmstudio. Omit for the root." },
               },
               required: ["filename", "content"],
               additionalProperties: false,
@@ -150,8 +152,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           filename: { type: "string", description: "Single-file convenience: filename (use with `content`)." },
           content: { type: "string", description: "Single-file convenience: content (use with `filename`)." },
+          dir: { type: "string", description: "Single-file convenience: relative folder inside raw/sources/ (use with `filename`/`content`)." },
           rescan: { type: "boolean", description: "Trigger ingest rescan after writing. Defaults to true." },
         },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "llm_wiki_create_folder",
+      description: "Create a new folder inside a project's raw/sources/ (creating intermediate folders as needed). Idempotent: succeeds if the folder already exists.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          dir: { type: "string", description: "Relative folder path to create inside raw/sources/, e.g. progetti/helmstudio." },
+        },
+        required: ["dir"],
         additionalProperties: false,
       },
     },
@@ -188,6 +204,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const response = await client.files(projectId(args), {
           root: enumArg(args.root, ["wiki", "sources", "all"] as const, "wiki"),
           recursive: boolArg(args.recursive, true),
+          dirsOnly: boolArg(args.dirs_only, false),
           maxFiles: numberArg(args.max_files),
         })
         return textResult(formatFileTree(response.files, response.truncated))
@@ -234,16 +251,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const rawSources = Array.isArray(args.sources) ? args.sources : []
         const sources = rawSources.map((s) => {
           const o = asObject(s)
-          return { filename: stringArg(o.filename, "filename"), content: stringArg(o.content, "content") }
+          return { filename: stringArg(o.filename, "filename"), content: stringArg(o.content, "content"), dir: optionalStringArg(o.dir) }
         })
         const single = typeof args.filename === "string"
         if (single) {
-          sources.push({ filename: stringArg(args.filename, "filename"), content: stringArg(args.content, "content") })
+          sources.push({ filename: stringArg(args.filename, "filename"), content: stringArg(args.content, "content"), dir: optionalStringArg(args.dir) })
         }
         if (sources.length === 0) {
           throw new McpError(ErrorCode.InvalidParams, "Provide `sources` (array) or `filename`+`content`.")
         }
         const result = await client.addSources(projectId(args), sources, boolArg(args.rescan, true))
+        return textResult(JSON.stringify(result, null, 2))
+      }
+      case "llm_wiki_create_folder": {
+        await assertMcpEnabled()
+        const dir = stringArg(args.dir, "dir")
+        const result = await client.createFolder(projectId(args), dir)
         return textResult(JSON.stringify(result, null, 2))
       }
       case "llm_wiki_show_window": {

@@ -100,6 +100,18 @@ test("files exposes truncated flag", async () => {
   assert.equal(files.files[0]?.path, "wiki/index.md")
 })
 
+test("files passes dirsOnly through as a query param", async () => {
+  let url = ""
+  const fetchImpl = async (u: string | URL | Request): Promise<Response> => {
+    url = String(u)
+    return new Response(JSON.stringify({ ok: true, files: [], truncated: false }), { status: 200 })
+  }
+  const client = new LlmWikiApiClient({ baseUrl: "http://localhost:19828", fetchImpl })
+  await client.files("current", { root: "sources", dirsOnly: true })
+
+  assert.match(url, /dirsOnly=true/)
+})
+
 test("reviews requests unresolved review items with filters", async () => {
   const calls: string[] = []
   const fetchImpl = async (url: string | URL | Request): Promise<Response> => {
@@ -177,6 +189,35 @@ test("addSources posts sources array and rescan flag", async () => {
   const parsed = JSON.parse(body)
   assert.equal(parsed.sources[0].filename, "a.md")
   assert.equal(parsed.rescan, false)
+})
+
+test("addSources passes dir through per source", async () => {
+  let body = ""
+  const fetchImpl = async (_u: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    body = String(init?.body ?? "")
+    return new Response(JSON.stringify({ ok: true, projectId: "p1", written: [], rescan: null }), { status: 200 })
+  }
+  const client = new LlmWikiApiClient({ fetchImpl })
+  await client.addSources("current", [{ filename: "notes.md", content: "x", dir: "progetti/helmstudio" }])
+
+  const parsed = JSON.parse(body)
+  assert.equal(parsed.sources[0].dir, "progetti/helmstudio")
+})
+
+test("createFolder posts dir to the sources/folders route", async () => {
+  let url = ""
+  let body = ""
+  const fetchImpl = async (u: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    url = String(u)
+    body = String(init?.body ?? "")
+    return new Response(JSON.stringify({ ok: true, projectId: "p1", path: "raw/sources/progetti", status: "created" }), { status: 200 })
+  }
+  const client = new LlmWikiApiClient({ baseUrl: "http://localhost:19828", fetchImpl })
+  const result = await client.createFolder("current", "progetti")
+
+  assert.equal(url, "http://localhost:19828/api/v1/projects/current/sources/folders")
+  assert.equal(JSON.parse(body).dir, "progetti")
+  assert.equal(result.path, "raw/sources/progetti")
 })
 
 test("showWindow posts to /window/show", async () => {
