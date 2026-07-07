@@ -399,7 +399,21 @@ export async function scanAndImport(
           let action: "write" | "skip" | "overwrite" | "rename" = "write"
           if (exists) {
             const existingHash = await getFileMd5(destPath)
-            action = decideAction({ exists, existingHash, newHash: md5, isTrackedUpdate })
+            // db.files only tracks the source's own last-imported hash, not
+            // where it was written last time (scheduledImportDestinationForFile
+            // always recomputes the same deterministic path and doesn't
+            // remember a prior rename). So isTrackedUpdate alone only proves
+            // "this origin has been imported before" — it does NOT prove the
+            // file currently sitting at destPath is this origin's own copy.
+            // Require the existing file's hash to match what we last recorded
+            // for this origin before treating it as a genuine update.
+            const ownsDest = db.files[key] === existingHash
+            action = decideAction({
+              exists,
+              existingHash,
+              newHash: md5,
+              isTrackedUpdate: isTrackedUpdate && ownsDest,
+            })
             if (action === "rename") {
               finalDestPath = await findAvailablePath(destPath, (candidate) => fileExists(candidate))
             }

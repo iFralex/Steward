@@ -278,4 +278,45 @@ describe("scanAndImport failure handling", () => {
     expect(mocks.copyFile).not.toHaveBeenCalled()
     expect(mocks.writeFileAtomic).toHaveBeenCalled()
   })
+
+  it("does not overwrite a foreign file squatting at the computed path even when the origin was previously tracked", async () => {
+    // Simulate: this origin (paper.pdf) was imported before under some old
+    // hash, but the destination path no longer holds that origin's own
+    // copy -- an unrelated file has since taken up residence there (e.g.
+    // it was renamed away on a prior collision and something else was
+    // dropped at the plain "paper.pdf" path). isTrackedUpdate being true
+    // on its own must NOT be enough to authorize an overwrite.
+    mocks.readFile.mockResolvedValue(
+      JSON.stringify({
+        version: 1,
+        directories: {
+          "/Users/me/inbox": {
+            files: {
+              "/Users/me/inbox/paper.pdf": "old-tracked-hash",
+            },
+            lastScan: 1,
+          },
+        },
+      }),
+    )
+    // Scoped like the rename test above: only the db file and the
+    // originally-computed destination "exist" on disk. findAvailablePath's
+    // rename-candidate probes (e.g. "paper (2).pdf") must see `false`, or
+    // the probe loop would spin forever since they'd never find a free slot.
+    mocks.fileExists.mockImplementation(async (path: string) =>
+      path === "/Users/me/wiki-project/.llm-wiki/scheduled-import-db.json" ||
+      path === "/Users/me/wiki-project/raw/sources/scheduled-import/paper.pdf",
+    )
+    mocks.getFileMd5.mockImplementation(async (path: string) =>
+      path === "/Users/me/inbox/paper.pdf" ? "new-source-hash" : "foreign-file-hash",
+    )
+    mocks.enqueueSourceIngest.mockResolvedValue(["task-1"])
+
+    await scanAndImport(project, "/Users/me/inbox")
+
+    expect(mocks.copyFile).not.toHaveBeenCalledWith(
+      "/Users/me/inbox/paper.pdf",
+      "/Users/me/wiki-project/raw/sources/scheduled-import/paper.pdf",
+    )
+  })
 })
