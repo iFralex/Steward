@@ -74,3 +74,35 @@ test("doRunTurn does not resurrect a deleted/nonexistent chat", async () => {
   assert.equal(chatStore().exists(missingChatId), false);
   assert.deepEqual(chatStore().getMessages(missingChatId), []);
 });
+
+test("onPiEvent persists assistant text interleaved between tool calls, not merged at the end", () => {
+  const session = new Session(() => {}, 1000);
+  const cm = new ChatManager(
+    {
+      port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
+      gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      mcpServers: {},
+    } as any,
+    session,
+    () => {},
+  );
+  const chat = chatStore().createChat("interleaved test");
+  const runtime = {
+    chatId: chat.id, session: {} as any, unsub: () => {},
+    lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
+  };
+  const onPiEvent = (cm as unknown as { onPiEvent: (r: typeof runtime, e: unknown) => void }).onPiEvent.bind(cm);
+
+  onPiEvent(runtime, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "text1" } });
+  onPiEvent(runtime, { type: "tool_execution_start", toolCallId: "t1", toolName: "toolA", args: {} });
+  onPiEvent(runtime, { type: "tool_execution_end", toolCallId: "t1", toolName: "toolA", result: "ok", isError: false });
+  onPiEvent(runtime, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "text2" } });
+  onPiEvent(runtime, { type: "tool_execution_start", toolCallId: "t2", toolName: "toolB", args: {} });
+  onPiEvent(runtime, { type: "tool_execution_end", toolCallId: "t2", toolName: "toolB", result: "ok", isError: false });
+
+  const messages = chatStore().getMessages(chat.id);
+  assert.deepEqual(messages.map((m) => m.role), ["assistant", "tool", "assistant", "tool"]);
+  assert.equal(messages[0].text, "text1");
+  assert.equal(messages[2].text, "text2");
+});

@@ -134,7 +134,8 @@ interface ChatRuntime {
   unsub: () => void;
   lastCostUsd: number;
   lastTokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
-  /** Assistant text accumulated during the current turn (flushed to transcript on done). */
+  /** Assistant text accumulated since the last flush point (flushed to transcript at
+   * each tool-call boundary, and once more when the turn ends). */
   assistantBuffer: string;
   /** Set while a user-requested stop is in flight, to suppress the abort error. */
   aborted: boolean;
@@ -243,6 +244,23 @@ export class ChatManager {
       return;
     }
     if (e.type === "tool_execution_start") {
+      // Flush any assistant text emitted before this tool call so it lands in the
+      // transcript in its actual chronological position, interleaved between tool
+      // messages — instead of only being flushed once at the end of the whole turn.
+      const pendingText = runtime.assistantBuffer.trim();
+      if (pendingText) {
+        store.addMessage(runtime.chatId, { id: randomUUID(), role: "assistant", text: pendingText });
+        recordAudit({
+          actor: "assistant",
+          eventType: "chat.assistant_message",
+          risk: "low",
+          summary: pendingText.slice(0, 180),
+          sessionId: this.session.id,
+          chatId: runtime.chatId,
+          payload: { text: pendingText },
+        });
+      }
+      runtime.assistantBuffer = "";
       if (e.toolCallId) { runtime.starts.set(e.toolCallId, Date.now()); runtime.toolInputs.set(e.toolCallId, e.args ?? {}); }
       recordAudit({
         actor: "assistant",
