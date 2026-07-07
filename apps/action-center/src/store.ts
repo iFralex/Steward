@@ -137,6 +137,15 @@ export class ActionStore {
     return byThread ? { ...byThread, payload: parsePayload(byThread.payload) } : undefined;
   }
 
+  /** Update only an action's summary (and updated_at) — never its status. Used when a
+   * message on a different thread appears to resolve/update an open action, so the
+   * user reviews and confirms the resolution themselves rather than it auto-closing. */
+  updateSummary(id: number, summary: string): boolean {
+    const info = this.raw.prepare("UPDATE actions SET summary=?, updated_at=? WHERE id=?")
+      .run(summary, Math.floor(Date.now() / 1000), id);
+    return info.changes > 0;
+  }
+
   mark(id: number, status: ActionStatus): boolean {
     const info = this.raw.prepare("UPDATE actions SET status=?, updated_at=? WHERE id=?")
       .run(status, Math.floor(Date.now() / 1000), id);

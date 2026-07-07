@@ -146,6 +146,68 @@ test("scanMailForActions skips no-reply senders without calling LLM", async () =
   actions.close();
 });
 
+test("scanMailForActions updates an open action's summary when a same-domain reply on a DIFFERENT thread turns out to resolve it, without changing its status", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  const { id: openActionId } = actions.upsert({
+    sourceKey: "mail:thread:37681",
+    sourceKind: "mail",
+    kind: "follow-up",
+    title: "Follow-up sulla richiesta Credit Lombard",
+    summary: "In attesa di risposta da Fineco.",
+    payload: {
+      threadId: 37681,
+      contextSnapshot: { mail: { to: ["helpdesk@finecobank.com"], from: "Alessio <me@example.com>" } },
+    },
+  });
+  actions.mark(openActionId, "read");
+
+  mail.upsertMessage(row({
+    messageId: "fineco-reply-1",
+    fromName: "",
+    fromAddr: "helpdesk@finecobank.com",
+    to: ["me@example.com"],
+    subject: "[FIN80822562] Comunicazione da FinecoBank",
+    bodyText: "La valutazione avviene entro circa 10 giorni lavorativi.",
+  }));
+  mail.setThreadId("fineco-reply-1", 37682); // a DIFFERENT thread than the open action's 37681
+
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    userAddrs: ["me@example.com"],
+    chat: async (system) => {
+      if (system.includes("Analyze")) {
+        return JSON.stringify({
+          needsAction: false,
+          kind: "admin-task",
+          priority: "normal",
+          summary: "No action.",
+          dueDateTime: null,
+          scheduling: null,
+          replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null },
+          reasoning: "Just an informational reply.",
+        });
+      }
+      if (system.includes("resolves or updates")) {
+        return JSON.stringify({
+          resolves: true,
+          updatedSummary: "Fineco ha risposto: la valutazione avviene entro ~10 giorni lavorativi.",
+        });
+      }
+      return JSON.stringify({ proposedActions: [] });
+    },
+  });
+
+  assert.equal(res.deferred, 1);
+  assert.equal(actions.list().length, 1, "no new action created for the reply itself — only the original open action remains");
+  const updated = actions.get(openActionId)!;
+  assert.equal(updated.summary, "Fineco ha risposto: la valutazione avviene entro ~10 giorni lavorativi.");
+  assert.equal(updated.status, "read", "must stay open for manual confirmation, not auto-close");
+  mail.close();
+  actions.close();
+});
+
 test("scanMailForActions skips low-value surveys without calling LLM", async () => {
   const mail = Store.open(":memory:");
   const actions = ActionStore.open(":memory:");

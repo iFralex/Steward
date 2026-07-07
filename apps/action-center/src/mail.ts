@@ -3,6 +3,7 @@ import type { ActionStore } from "./store.ts";
 import type { Chat } from "./llm.ts";
 import { planMailAction } from "./planner.ts";
 import type { ReadToolExecutor } from "./tool-context.ts";
+import { checkIfMessageResolvesAction, findResolvableOpenActions } from "./cross-thread-resolution.ts";
 
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|mailer|newsletter|bounce|postmaster)\b/i;
 const LOW_VALUE_SURVEY = /\b(survey|questionario|soddisfazione|feedback|post[-\s]?result survey)\b/i;
@@ -102,7 +103,25 @@ export async function scanMailForActions(deps: {
       // A genuine planner failure (as opposed to a normal "no action needed"
       // verdict) is left unmarked so it's retried on the next scan instead of
       // being permanently skipped.
-      if (!planFailed && !manual) deps.actions.markSeen(candidate.batchIds);
+      if (!planFailed) {
+        // The planner found nothing actionable in this message on its own thread —
+        // but it may still be the real answer to an open action tracked on a
+        // DIFFERENT thread (e.g. a corporate ticketing system that replies with a
+        // new Message-ID and a ticket-numbered subject, breaking the mirror's
+        // thread linkage). Check same-domain open actions and update their
+        // summary (never their status) when this message resolves them.
+        const openActions = deps.actions.list({ includeDone: false });
+        const resolvable = findResolvableOpenActions(openActions, { fromAddr: msg.fromAddr, threadId: msg.threadId }, deps.userAddrs ?? []);
+        for (const openAction of resolvable) {
+          const check = await checkIfMessageResolvesAction(
+            openAction,
+            { subject: msg.subject, fromName: msg.fromName, fromAddr: msg.fromAddr, bodyText: msg.bodyText },
+            deps.chat,
+          );
+          if (check.resolves && check.updatedSummary) deps.actions.updateSummary(openAction.id, check.updatedSummary);
+        }
+        if (!manual) deps.actions.markSeen(candidate.batchIds);
+      }
       continue;
     }
     if (!plan.needsAction) {

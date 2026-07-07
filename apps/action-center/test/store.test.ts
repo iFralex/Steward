@@ -58,6 +58,30 @@ test("get(id) returns one action regardless of list limits", () => {
   s.close();
 });
 
+test("updateSummary changes the summary without touching status", () => {
+  const s = ActionStore.open(":memory:");
+  const { id } = s.upsert({
+    sourceKey: "k",
+    sourceKind: "mail",
+    kind: "follow-up",
+    title: "t",
+    summary: "original summary",
+  });
+  s.mark(id, "read");
+  const ok = s.updateSummary(id, "reply arrived: resolved in ~10 business days");
+  assert.equal(ok, true);
+  const after = s.get(id)!;
+  assert.equal(after.summary, "reply arrived: resolved in ~10 business days");
+  assert.equal(after.status, "read", "must not touch status");
+  s.close();
+});
+
+test("updateSummary returns false for an unknown id", () => {
+  const s = ActionStore.open(":memory:");
+  assert.equal(s.updateSummary(999999, "x"), false);
+  s.close();
+});
+
 test("mail thread source key migrates old message-keyed active rows", () => {
   const s = ActionStore.open(":memory:");
   s.upsert({
