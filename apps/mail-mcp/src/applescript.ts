@@ -197,16 +197,25 @@ export function readScript(ref: MessageRef): string {
   ].join("\n");
 }
 
-export function saveAttachmentScript(ref: MessageRef, attachment: string | number, destPath: string): string {
+/**
+ * Save an attachment to `destDir`, using the attachment's own `name` (queried
+ * from Mail.app) as the filename — never a caller-guessed placeholder. A
+ * numeric index only tells us *which* attachment to select; it can't tell us
+ * its real filename/extension, so the script resolves that itself and
+ * returns it for the caller to build the final path.
+ */
+export function saveAttachmentScript(ref: MessageRef, attachment: string | number, destDir: string): string {
   const sel = typeof attachment === "number"
     ? `mail attachment ${attachment} of theMsg`
     : `(first mail attachment of theMsg whose name is "${esc(attachment)}")`;
   return [
     'tell application "Mail"',
     ...findMessageLines(ref),
-    `  save ${sel} in POSIX file "${esc(destPath)}"`,
+    `  set theAttachment to ${sel}`,
+    "  set attName to name of theAttachment",
+    `  save theAttachment in POSIX file ("${esc(destDir)}" & "/" & attName)`,
     "end tell",
-    `return "${esc(destPath)}"`,
+    "return attName",
   ].join("\n");
 }
 

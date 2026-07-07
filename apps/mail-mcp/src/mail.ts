@@ -145,10 +145,10 @@ export class Mail {
     const fromMirror = await this.saveAttachmentFromMirror(args, dir);
     if (fromMirror) return fromMirror;
     // Fallback: live AppleScript save (message not mirrored / no .emlx / not found).
-    const name = typeof args.attachment === "string" ? args.attachment : `attachment-${args.attachment}`;
-    const dest = join(dir, basename(name));
-    await this.run(saveAttachmentScript(args, args.attachment, dest), READ_TIMEOUT_MS);
-    return { path: dest };
+    // The script resolves and returns the attachment's real name — a numeric
+    // index only selects *which* attachment, it can't tell us its filename.
+    const attName = await this.run(saveAttachmentScript(args, args.attachment, dir), READ_TIMEOUT_MS);
+    return { path: join(dir, basename(attName.trim())) };
   }
 
   /** Save an attachment straight from the message's .emlx (decoded by the mirror's parser). */

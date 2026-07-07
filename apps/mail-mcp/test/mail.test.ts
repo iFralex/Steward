@@ -80,6 +80,17 @@ test("saveAttachment falls back to AppleScript instead of writing a 0-byte file 
   s.close();
 });
 
+test("saveAttachment by numeric index uses the real attachment name Mail.app returns, not a placeholder like attachment-1", async () => {
+  const mail = new Mail({
+    store: emptyStore(),
+    // Simulates Mail.app's live AppleScript save: the script looks up and
+    // returns the attachment's real name, e.g. "invoice-march.pdf".
+    runner: async () => "invoice-march.pdf",
+  });
+  const r = await mail.saveAttachment({ messageId: "missing@x", attachment: 1, destDir: "/tmp" });
+  assert.equal(r.path, "/tmp/invoice-march.pdf");
+});
+
 test("send with sendAt queues the email and does NOT run AppleScript", async () => {
   const writeOps = WriteOpsStore.open(":memory:");
   let ran = false;

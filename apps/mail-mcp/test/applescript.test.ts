@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { esc, sendScript, searchScript, replyScript, mailboxesScript, readScript } from "../src/applescript.ts";
+import { esc, sendScript, searchScript, replyScript, mailboxesScript, readScript, saveAttachmentScript } from "../src/applescript.ts";
 
 test("esc escapes backslashes and quotes for AppleScript literals", () => {
   assert.equal(esc('a "b" \\ c'), 'a \\"b\\" \\\\ c');
@@ -98,6 +98,19 @@ test("searchScript falls back to per-account folder iteration for a custom mailb
   const s = searchScript({ mailbox: "Projects/2026" });
   assert.ok(s.includes("repeat with mb in mailboxes of acct"));
   assert.ok(s.includes('name of mb is "Projects/2026"'));
+});
+
+test("saveAttachmentScript selects by numeric index and looks up the attachment's real name before saving", () => {
+  const s = saveAttachmentScript({ messageId: "m1@x" }, 1, "/tmp");
+  assert.ok(s.includes("mail attachment 1 of theMsg"));
+  assert.ok(s.includes("name of theAttachment"), "must query Mail.app for the real attachment name rather than guessing one");
+  assert.ok(/return attName|return theName/.test(s), "must return the real name so the caller can build the correct final path");
+});
+
+test("saveAttachmentScript selects by name and still looks up the resolved name before saving", () => {
+  const s = saveAttachmentScript({ messageId: "m1@x" }, "invoice.pdf", "/tmp");
+  assert.ok(s.includes('name is "invoice.pdf"'));
+  assert.ok(s.includes("name of theAttachment"));
 });
 
 test("readScript locates the message across all mailboxes, not just inbox", () => {
