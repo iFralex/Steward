@@ -827,6 +827,69 @@ fn source_rel_path(dir: Option<&str>, filename: &str) -> Result<String, String> 
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollisionAction {
+    Write,
+    Skip,
+    Overwrite,
+    Rename,
+}
+
+/// Same policy as packages/source-collision's decideAction (TypeScript): no
+/// existing file -> write; identical content -> skip; different content and
+/// a recognized update of a tracked origin -> overwrite; different content
+/// and not tracked -> rename (a genuine collision between unrelated files).
+fn decide_source_action(
+    exists: bool,
+    existing_hash: Option<&str>,
+    new_hash: &str,
+    is_tracked_update: bool,
+) -> CollisionAction {
+    if !exists {
+        return CollisionAction::Write;
+    }
+    if existing_hash == Some(new_hash) {
+        return CollisionAction::Skip;
+    }
+    if is_tracked_update {
+        return CollisionAction::Overwrite;
+    }
+    CollisionAction::Rename
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+/// Find the next available "path (2).ext", "path (3).ext"... when `path`
+/// already exists. Mirrors packages/source-collision's findAvailablePath.
+fn find_available_path(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+    let dir = path.parent().unwrap_or_else(|| Path::new(""));
+    let ext = path.extension().and_then(|e| e.to_str());
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let mut i = 2;
+    loop {
+        let candidate_name = match ext {
+            Some(ext) => format!("{stem} ({i}).{ext}"),
+            None => format!("{stem} ({i})"),
+        };
+        let candidate = dir.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+        i += 1;
+    }
+}
+
 fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(project_path);
     let rel = rel.trim_start_matches('/');
@@ -1781,6 +1844,54 @@ mod tests {
     fn source_rel_path_rejects_invalid_dir_or_filename() {
         assert!(source_rel_path(Some(".."), "notes.md").is_err());
         assert!(source_rel_path(None, "a/b.md").is_err());
+    }
+
+    #[test]
+    fn decide_source_action_matches_shared_policy() {
+        assert_eq!(
+            decide_source_action(false, None, "abc", false),
+            CollisionAction::Write
+        );
+        assert_eq!(
+            decide_source_action(true, Some("abc"), "abc", false),
+            CollisionAction::Skip
+        );
+        assert_eq!(
+            decide_source_action(true, Some("abc"), "abc", true),
+            CollisionAction::Skip
+        );
+        assert_eq!(
+            decide_source_action(true, Some("abc"), "xyz", true),
+            CollisionAction::Overwrite
+        );
+        assert_eq!(
+            decide_source_action(true, Some("abc"), "xyz", false),
+            CollisionAction::Rename
+        );
+    }
+
+    #[test]
+    fn hash_bytes_is_deterministic_and_content_sensitive() {
+        assert_eq!(hash_bytes(b"hello"), hash_bytes(b"hello"));
+        assert_ne!(hash_bytes(b"hello"), hash_bytes(b"world"));
+    }
+
+    #[test]
+    fn find_available_path_suffixes_until_free() {
+        let root = test_project_dir();
+        fs::write(root.join("report.pdf"), "x").unwrap();
+        fs::write(root.join("report (2).pdf"), "x").unwrap();
+        let result = find_available_path(&root.join("report.pdf"));
+        assert_eq!(result, root.join("report (3).pdf"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn find_available_path_returns_input_when_free() {
+        let root = test_project_dir();
+        let result = find_available_path(&root.join("new.pdf"));
+        assert_eq!(result, root.join("new.pdf"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
