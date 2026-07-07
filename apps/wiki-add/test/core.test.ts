@@ -65,6 +65,19 @@ test("applyPlans copies into sources, and re-adding the same origin updates (no 
   assert.equal(readFileSync(join(sources, "a.pdf"), "utf8"), "v2");
 });
 
+test("applyPlans skips re-adding the same content unchanged (no write, no duplicate)", () => {
+  const { dir, project, sources } = fixture();
+  writeFileSync(join(dir, "a.pdf"), "same");
+
+  const first = applyPlans(planFromInputs([join(dir, "a.pdf")]), sources, project);
+  assert.equal(first.added.length, 1);
+
+  const second = applyPlans(planFromInputs([join(dir, "a.pdf")]), sources, project);
+  assert.equal(second.added.length, 0);
+  assert.equal(second.updated.length, 0);
+  assert.equal(second.unchanged.length, 1);
+});
+
 test("applyPlans avoids collisions across different origins with the same name", () => {
   const { dir, project, sources } = fixture();
   mkdirSync(join(dir, "one"));

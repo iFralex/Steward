@@ -4,8 +4,9 @@
  * de-duplicating re-adds by origin path (a manifest at the project root). The
  * wiki's recursive rescan then ingests them.
  */
-import { statSync, readdirSync, existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { statSync, readdirSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { resolveDestination } from "@steward/source-collision/node";
 
 /** File types worth ingesting (docs, text, code, images). */
 export const INGEST_EXT = new Set([
@@ -114,7 +115,7 @@ export function planForChosenPath(input: string, chosenAbsPath: string, sourcesD
   return [];
 }
 
-export interface AddResult { added: PlannedCopy[]; updated: PlannedCopy[]; skipped: number }
+export interface AddResult { added: PlannedCopy[]; updated: PlannedCopy[]; unchanged: PlannedCopy[]; skipped: number }
 
 type Manifest = Record<string, string>; // origin absolute path -> target relative to raw/sources/
 const MANIFEST_NAME = ".llmwiki-added.json";
@@ -126,36 +127,35 @@ export function saveManifest(projectPath: string, m: Manifest): void {
   writeFileSync(join(projectPath, MANIFEST_NAME), JSON.stringify(m, null, 2));
 }
 
-function uniqueRel(sourcesDir: string, rel: string): string {
-  if (!existsSync(join(sourcesDir, rel))) return rel;
-  const dir = dirname(rel);
-  const ext = extname(rel);
-  const stem = basename(rel, ext);
-  const make = (i: number) => (dir === "." ? `${stem} (${i})${ext}` : join(dir, `${stem} (${i})${ext}`));
-  let i = 2;
-  while (existsSync(join(sourcesDir, make(i)))) i++;
-  return make(i);
-}
-
-/** Copy planned files into raw/sources/, de-duplicating re-adds by origin path. */
+/** Copy planned files into raw/sources/, de-duplicating re-adds by origin path and
+ * never silently overwriting a different, unrelated file that happens to share a name. */
 export function applyPlans(plans: PlannedCopy[], sourcesDir: string, projectPath: string): AddResult {
   const manifest = loadManifest(projectPath);
   const added: PlannedCopy[] = [];
   const updated: PlannedCopy[] = [];
+  const unchanged: PlannedCopy[] = [];
   let skipped = 0;
   for (const p of plans) {
     const prior = manifest[p.src];
-    const targetRel = prior ?? uniqueRel(sourcesDir, p.targetRel);
-    const target = join(sourcesDir, targetRel);
+    const isTrackedUpdate = prior !== undefined;
+    const target = join(sourcesDir, prior ?? p.targetRel);
     try {
-      mkdirSync(dirname(target), { recursive: true });
-      copyFileSync(p.src, target);
+      const content = readFileSync(p.src);
+      const decision = resolveDestination(target, content, isTrackedUpdate);
+      const targetRel = relative(sourcesDir, decision.path);
+      if (decision.action === "skip") {
+        manifest[p.src] = targetRel;
+        unchanged.push({ src: p.src, targetRel });
+        continue;
+      }
+      mkdirSync(dirname(decision.path), { recursive: true });
+      copyFileSync(p.src, decision.path);
       manifest[p.src] = targetRel;
-      (prior ? updated : added).push({ src: p.src, targetRel });
+      (isTrackedUpdate ? updated : added).push({ src: p.src, targetRel });
     } catch {
       skipped++;
     }
   }
   saveManifest(projectPath, manifest);
-  return { added, updated, skipped };
+  return { added, updated, unchanged, skipped };
 }

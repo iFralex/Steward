@@ -112,7 +112,7 @@ async function addAndReport(plans: PlannedCopy[], sourcesDir: string, projectPat
   }
   const res = applyPlans(plans, sourcesDir, projectPath);
   const rescanned = res.added.length + res.updated.length > 0 ? await rescan() : false;
-  console.log(JSON.stringify({ added: res.added.length, updated: res.updated.length, skipped: res.skipped, rescanned, sourcesDir }, null, 2));
+  console.log(JSON.stringify({ added: res.added.length, updated: res.updated.length, unchanged: res.unchanged.length, skipped: res.skipped, rescanned, sourcesDir }, null, 2));
 }
 
 main().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); });

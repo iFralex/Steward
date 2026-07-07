@@ -13,7 +13,8 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@steward/applescript": "*"
+    "@steward/applescript": "*",
+    "@steward/source-collision": "*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
