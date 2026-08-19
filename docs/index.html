@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08110e">
+  <meta name="description" content="Steward is a local-first personal agent for macOS: inspectable memory, local tools, and human approval.">
+  <meta property="og:title" content="Steward — Your Mac, finally helpful.">
+  <meta property="og:description" content="A private personal assistant with memory that lives on your Mac.">
+  <meta property="og:image" content="images/chat-home.png">
+  <meta property="og:type" content="website">
+  <title>Steward — Personal agent for macOS</title>
+  <link rel="icon" href="images/logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <header class="site-header" data-header>
+    <a class="brand" href="#top" aria-label="Steward, back to top"><img src="images/logo.png" alt=""><span>Steward</span></a>
+    <nav class="desktop-nav" aria-label="Main navigation">
+      <a href="#capabilities">What it does</a><a href="#architecture">Architecture</a><a href="#trust">Security</a><a href="#details">Details</a>
+    </nav>
+    <a class="button button-small header-cta" href="https://github.com/iFralex/Steward" target="_blank" rel="noreferrer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.29-5.27-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.47.11-3.05 0 0 .97-.31 3.16 1.18a10.94 10.94 0 0 1 5.76 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.71 5.38-5.29 5.67.42.36.79 1.06.79 2.14v3.18c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
+      GitHub
+    </a>
+    <button class="menu-button" type="button" aria-label="Open menu" aria-expanded="false" data-menu-button><span></span><span></span></button>
+    <div class="mobile-menu" data-mobile-menu>
+      <a href="#capabilities">What it does</a><a href="#architecture">Architecture</a><a href="#trust">Security</a><a href="#details">Details</a>
+      <a href="https://github.com/iFralex/Steward">View on GitHub ↗</a>
+    </div>
+  </header>
+  <main id="top">
+    <section class="hero section-shell">
+      <div class="hero-copy reveal">
+        <div class="eyebrow"><span class="live-dot"></span> Local-first personal agent · macOS</div>
+        <h1>Your Mac.<br><em>Finally helpful.</em></h1>
+        <p class="hero-lede">Steward is a private personal assistant with memory. It knows your work, finds what you have forgotten, and prepares the next step — without taking control away from you.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#how-it-works">See how it works <span>↓</span></a>
+          <a class="text-link" href="https://github.com/iFralex/Steward#setup" target="_blank" rel="noreferrer">Explore the code <span>↗</span></a>
+        </div>
+        <div class="hero-proof"><span><i>✓</i> Data stays on your Mac</span><span><i>✓</i> Actions approved by you</span><span><i>✓</i> Inspectable memory</span></div>
+      </div>
+      <div class="hero-visual reveal delay-one">
+        <div class="orbital orbital-a"></div><div class="orbital orbital-b"></div>
+        <div class="window-frame hero-window">
+          <div class="window-bar"><span></span><span></span><span></span><b>Steward</b></div>
+          <img src="images/chat-home.png" alt="Steward home screen with conversations and suggested actions">
+        </div>
+        <div class="floating-card card-mail"><span class="float-icon">✉</span><div><b>12 emails analyzed</b><small>2 need attention</small></div></div>
+        <div class="floating-card card-safe"><span class="float-icon safe">✓</span><div><b>Local &amp; private</b><small>No intermediary cloud</small></div></div>
+      </div>
+    </section>
+    <section class="manifesto section-shell reveal">
+      <p>An assistant should not be another app you have to manage.</p>
+      <h2>It should know the context.<br>Remember decisions.<br><span>And ask before it acts.</span></h2>
+    </section>
+    <section class="capabilities section-shell" id="capabilities">
+      <div class="section-intro reveal">
+        <span class="kicker">01 · One place</span>
+        <h2>All your context,<br><em>finally connected.</em></h2>
+        <p>Steward connects information that currently lives in separate places on your Mac and makes it available through a natural conversation.</p>
+      </div>
+      <div class="capability-grid">
+        <article class="feature-card feature-wide reveal">
+          <div class="feature-copy">
+            <div class="icon-box purple">✦</div><span class="feature-number">01</span><h3>Chat with real context</h3>
+            <p>It does not guess: it searches your mail, calendar, contacts, files, and wiki. Sources and every tool call remain visible.</p>
+            <ul class="mini-list"><li>Rich results, not raw text</li><li>Drag-and-drop files and attachments</li><li>Voice with local transcription</li></ul>
+          </div>
+          <button class="image-stage" data-lightbox="images/chat-tool-card-mail-search.png" aria-label="Enlarge the mail search screenshot"><img src="images/chat-tool-card-mail-search.png" alt="Email search shown inside the chat" loading="lazy"></button>
+        </article>
+        <article class="feature-card reveal">
+          <span class="feature-number">02</span><div class="icon-box orange">⌁</div><h3>Memory you can read</h3>
+          <p>Facts, decisions, and commitments become Markdown pages linked to their original sources. No opaque memory hidden inside a model.</p>
+          <div class="memory-stack" aria-hidden="true"><div class="paper back"></div><div class="paper middle"></div><div class="paper front"><small>PEOPLE / PROJECTS</small><b>Solar certification</b><span>Decision confirmed on June 12</span><i>[[Project Atlas]] &nbsp; [[Marco]]</i></div></div>
+        </article>
+        <article class="feature-card action-card reveal delay-one">
+          <span class="feature-number">03</span><div class="icon-box green">↗</div><h3>The next step, ready to go</h3>
+          <p>Action Center reads recent signals and prepares replies, follow-ups, and events. You review, edit, or approve.</p>
+          <div class="mock-action"><div><span class="status-dot"></span><small>NEEDS ATTENTION</small></div><b>Confirm the meeting with Anna</b><p>She proposed Friday at 3:00 PM. Your calendar is free.</p><div class="mock-buttons"><span>Dismiss</span><strong>Review proposal →</strong></div></div>
+        </article>
+        <article class="feature-card feature-wide reverse reveal">
+          <div class="feature-copy">
+            <div class="icon-box blue">⌕</div><span class="feature-number">04</span><h3>Find what you cannot remember</h3>
+            <p>Describe the content, person, or moment. Hybrid search combines keywords, trigrams, and semantic vectors across your local indexes.</p>
+            <blockquote>“Find the invoice PDF my accountant sent me last month.”</blockquote>
+          </div>
+          <button class="image-stage" data-lightbox="images/chat-file-cards.png" aria-label="Enlarge the file results screenshot"><img src="images/chat-file-cards.png" alt="Local files shown as cards inside the chat" loading="lazy"></button>
+        </article>
+      </div>
+    </section>
+    <section class="workflow section-shell" id="how-it-works">
+      <div class="section-intro compact reveal"><span class="kicker">02 · How it works</span><h2>From a request to an action.<br><em>No leaps in the dark.</em></h2></div>
+      <div class="workflow-line reveal">
+        <article><span>1</span><div class="flow-icon">“ ”</div><h3>You ask</h3><p>Write or speak as you would to someone who understands your work.</p></article>
+        <article><span>2</span><div class="flow-icon">⌕</div><h3>Steward searches</h3><p>It consults only the local tools and sources needed for your request.</p></article>
+        <article><span>3</span><div class="flow-icon">✦</div><h3>It prepares</h3><p>It composes an answer or a concrete, verifiable proposal.</p></article>
+        <article><span>4</span><div class="flow-icon">✓</div><h3>You decide</h3><p>Reads can flow; every change to the outside world requires approval.</p></article>
+      </div>
+    </section>
+    <section class="trust" id="trust">
+      <div class="section-shell trust-grid">
+        <div class="trust-copy reveal">
+          <span class="kicker light">03 · Structural control</span><h2>Private by design.<br><em>Safe by structure.</em></h2>
+          <p>Trust does not depend on the model “behaving well.” It is enforced by deterministic code around the model.</p>
+          <div class="trust-points">
+            <article><span>01</span><div><h3>Default deny</h3><p>Unknown tools are blocked. Permitted read operations are explicitly allow-listed.</p></div></article>
+            <article><span>02</span><div><h3>Human in the loop</h3><p>Emails, events, and writes become approval cards: approve, edit, deny, or request a revision.</p></div></article>
+            <article><span>03</span><div><h3>Verifiable trail</h3><p>Every decision, tool call, and operation is recorded in a local, redacted audit log.</p></div></article>
+          </div>
+        </div>
+        <div class="approval-demo reveal delay-one">
+          <div class="approval-top"><span class="shield">⌾</span><div><small>APPROVAL REQUIRED</small><b>Send reply to Marco</b></div><span class="risk">MEDIUM</span></div>
+          <div class="approval-body">
+            <label>To</label><div class="recipient"><span>MA</span><b>Marco Bianchi</b><small>marco@example.com</small></div>
+            <label>Subject</label><p>Re: Solar panel certification</p>
+            <label>Message</label><div class="message-preview">Hi Marco,<br><br>I can confirm that Friday afternoon works. I will send the calendar invite as soon as it is approved.<br><br>Best,<br>Alessio</div>
+          </div>
+          <div class="approval-actions"><button>Deny</button><button>Edit</button><button class="approve">✓ Approve and send</button></div>
+          <div class="approval-note"><span>◉</span> The action will be recorded and verified after sending</div>
+        </div>
+      </div>
+    </section>
+    <section class="architecture section-shell" id="architecture">
+      <div class="section-intro reveal"><span class="kicker">04 · Under the hood</span><h2>Local at the core.<br><em>Modular at the edges.</em></h2><p>Three operating planes separate conversation, background automation, and write reliability.</p></div>
+      <div class="architecture-board reveal">
+        <div class="arch-client"><span>CLIENT</span><b>Browser · PWA · WebKit</b><small>Chat, actions, approvals, usage, audit</small></div>
+        <div class="connector vertical"></div>
+        <div class="arch-host"><span>ORCHESTRATOR</span><b>Steward Host <code>:4317</code></b><small>Sessions · policy · WebSocket · files · speech · push</small></div>
+        <div class="arch-split"><i></i><i></i></div>
+        <div class="arch-bottom">
+          <div class="arch-node"><span>CONTEXT</span><b>MCP Connectors</b><small>Mail · Calendar · Contacts<br>Wiki · Files · Actions</small></div>
+          <div class="arch-node featured"><span>REASONING</span><b>LLM Gateway <code>:4000</code></b><small>Capability tiers · fallback<br>rates · usage attribution</small></div>
+          <div class="arch-node"><span>MEMORY</span><b>Local stores</b><small>Markdown · SQLite · vectors<br>audit · journals · chats</small></div>
+        </div>
+        <div class="arch-scheduler"><span>BACKGROUND PLANE</span><b>Scheduler</b><small>Sync · index · distill · confirm · retry</small></div>
+      </div>
+      <div class="planes reveal">
+        <button class="plane active" data-plane="interactive"><span>01</span><b>Interactive plane</b><small>Real-time chat and tools</small></button>
+        <button class="plane" data-plane="background"><span>02</span><b>Background plane</b><small>Always-fresh indexes and knowledge</small></button>
+        <button class="plane" data-plane="reliability"><span>03</span><b>Reliability plane</b><small>Confirmed writes and safe retries</small></button>
+      </div>
+      <p class="plane-description reveal" data-plane-description>The client communicates with the host over HTTP and WebSocket. The host runs the agent and routes every tool call to MCP connectors under a default-deny policy.</p>
+    </section>
+    <section class="ecosystem section-shell" id="details">
+      <div class="section-intro compact reveal"><span class="kicker">05 · The ecosystem</span><h2>Twelve services.<br><em>One coherent experience.</em></h2></div>
+      <div class="service-grid reveal">
+        <article><span class="service-icon">◫</span><h3>Web + Host</h3><p>React PWA, Pi sessions, WebSocket streaming, files, authentication, and policy.</p><code>apps/web · apps/host</code></article>
+        <article><span class="service-icon">✉</span><h3>Mail intelligence</h3><p>.emlx mirror, hybrid search, threads, attachments, and wiki promotion.</p><code>mail-mirror · mail-mcp · promoter</code></article>
+        <article><span class="service-icon">⌘</span><h3>Apple context</h3><p>Locally indexed calendars and contacts, with approved writes via AppleScript.</p><code>calendar-mcp · contacts-mcp</code></article>
+        <article><span class="service-icon">◇</span><h3>Long-term memory</h3><p>Markdown, wikilinks, knowledge graph, multimodal ingest, and semantic search.</p><code>apps/llm-wiki</code></article>
+        <article><span class="service-icon">⚡</span><h3>Action Center</h3><p>A proactive inbox of follow-ups, replies, and proposals ready for review.</p><code>apps/action-center</code></article>
+        <article><span class="service-icon">⌁</span><h3>Gateway &amp; ledger</h3><p>Tiered models, fallback, costs, tokens, and latency attributed by service.</p><code>llm-gateway · usage-ledger</code></article>
+        <article><span class="service-icon">⌕</span><h3>Safe shell</h3><p>File search and parsed read-only commands without invoking a real shell.</p><code>apps/shell-mcp</code></article>
+        <article><span class="service-icon">↻</span><h3>Write operations</h3><p>Journal before execute, mirror confirmation, and idempotent retries.</p><code>packages/write-ops</code></article>
+      </div>
+      <div class="tech-stats reveal" aria-label="Technical details at a glance">
+        <div><strong>4317</strong><span>local host</span></div>
+        <div><strong>6</strong><span>model tiers</span></div>
+        <div><strong>8</strong><span>scheduled jobs</span></div>
+        <div><strong>5</strong><span>context sources</span></div>
+        <div><strong>0</strong><span>silent writes</span></div>
+      </div>
+    </section>
+    <section class="mobile-section section-shell">
+      <div class="mobile-showcase reveal">
+        <div class="phones">
+          <div class="phone phone-back"><img src="images/mobile-actions.png" alt="Action Center on iPhone" loading="lazy"></div>
+          <div class="phone phone-front"><img src="images/mobile-chat-list.png" alt="Steward chat list on iPhone" loading="lazy"></div>
+        </div>
+        <div class="mobile-copy"><span class="kicker">06 · In your pocket</span><h2>The brain stays home.<br><em>You can go anywhere.</em></h2><p>Steward keeps running on your Mac. The phone PWA connects over HTTPS through a private Tailscale network and receives Web Push notifications when your decision is needed.</p>
+          <ul><li><span>✓</span> No public exposure of your Mac</li><li><span>✓</span> Shared token for pairing</li><li><span>✓</span> Quick Send from text or voice</li><li><span>✓</span> Sensitive writes always require approval</li></ul>
+        </div>
+      </div>
+    </section>
+    <section class="observability section-shell">
+      <div class="section-intro reveal"><span class="kicker">07 · No black boxes</span><h2>See what it does.<br><em>And what it costs.</em></h2></div>
+      <div class="observability-grid">
+        <button class="screen-card reveal" data-lightbox="images/usage-page.png"><div><span>USAGE</span><h3>Tokens, costs, and performance</h3><p>By service, action, day, model, and token type.</p></div><img src="images/usage-page.png" alt="Steward Usage page" loading="lazy"></button>
+        <button class="screen-card reveal delay-one" data-lightbox="images/audit-page.png"><div><span>AUDIT</span><h3>Every event, traceable</h3><p>A filterable timeline with payloads redacted before persistence.</p></div><img src="images/audit-page.png" alt="Steward Audit page" loading="lazy"></button>
+      </div>
+    </section>
+    <section class="quickstart section-shell">
+      <div class="quickstart-card reveal">
+        <div><span class="kicker light">Open source · macOS</span><h2>Built to be<br><em>understood and changed.</em></h2><p>TypeScript ESM, React, Vite, Swift, SQLite, and open protocols. Clone the repository and start the three main processes.</p></div>
+        <div class="terminal">
+          <div class="terminal-bar"><span></span><span></span><span></span><b>steward — zsh</b><button data-copy-code>Copy</button></div>
+          <pre><code><i># install dependencies</i><br>npm install<br><br><i># gateway, host, and interface</i><br>npm run dev -w @steward/llm-gateway<br>npm run dev -w @steward/host<br>npm run dev -w @steward/web</code></pre>
+        </div>
+      </div>
+      <div class="requirements reveal"><span>Requires</span><b>macOS</b><b>Node.js 20+</b><b>Ollama</b><b>Xcode CLI Tools</b><b>Full Disk Access</b></div>
+    </section>
+    <section class="final-cta section-shell reveal">
+      <img src="images/logo.png" alt=""><span class="kicker">Steward</span><h2>Your context is personal.<br><em>Your agent should be too.</em></h2><p>A local, inspectable assistant under your control.</p>
+      <a class="button button-primary" href="https://github.com/iFralex/Steward" target="_blank" rel="noreferrer">Explore Steward on GitHub <span>↗</span></a>
+    </section>
+  </main>
+  <footer class="site-footer section-shell">
+    <a class="brand" href="#top"><img src="images/logo.png" alt=""><span>Steward</span></a><p>Local-first personal agent for macOS.</p>
+    <div><a href="https://github.com/iFralex/Steward">GitHub</a><a href="https://github.com/iFralex/Steward#setup">Setup</a><a href="mobile-access.md">Mobile access</a></div>
+  </footer>
+  <dialog class="lightbox" data-lightbox-dialog><button aria-label="Close image" data-lightbox-close>×</button><img src="" alt="Enlarged Steward screenshot"></dialog>
+</body>
+</html>
