@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Globe, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Globe, ListChecks, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
 import QRCode from "qrcode";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -45,11 +45,19 @@ interface SystemStatus {
   services: SystemServiceStatus[];
 }
 
+interface ActionAutomationSettings {
+  enabled: boolean;
+  enabledAt: number | null;
+  updatedAt: number | null;
+}
+
 export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingAutostart, setSavingAutostart] = useState(false);
+  const [actionAutomation, setActionAutomation] = useState<ActionAutomationSettings | null>(null);
+  const [savingActionAutomation, setSavingActionAutomation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pairToken, setPairToken] = useState<string | null>(null);
   const [pushOn, setPushOn] = useState(false);
@@ -61,9 +69,14 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     setLoading(true);
     setError(null);
     try {
-      const res = await authFetch(`${httpBase}/system/status`, token, onUnauthorized);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setStatus(await res.json() as SystemStatus);
+      const [statusRes, actionsRes] = await Promise.all([
+        authFetch(`${httpBase}/system/status`, token, onUnauthorized),
+        authFetch(`${httpBase}/settings/actions`, token, onUnauthorized),
+      ]);
+      if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
+      if (!actionsRes.ok) throw new Error(`HTTP ${actionsRes.status}`);
+      setStatus(await statusRes.json() as SystemStatus);
+      setActionAutomation(await actionsRes.json() as ActionAutomationSettings);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -137,6 +150,25 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     }
   };
 
+  const setActionsEnabled = async (enabled: boolean) => {
+    setSavingActionAutomation(true);
+    setError(null);
+    try {
+      const res = await authFetch(`${httpBase}/settings/actions`, token, onUnauthorized, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const body = await res.json() as ActionAutomationSettings | { error?: string };
+      if (!res.ok) throw new Error("error" in body && body.error ? body.error : `HTTP ${res.status}`);
+      setActionAutomation(body as ActionAutomationSettings);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingActionAutomation(false);
+    }
+  };
+
   const counts = countStates(status?.services ?? []);
 
   return (
@@ -171,6 +203,12 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
       </div>
 
       <LanguageCard httpBase={httpBase} token={token} onUnauthorized={onUnauthorized} />
+
+      <ActionsAutomationCard
+        settings={actionAutomation}
+        busy={savingActionAutomation}
+        onToggle={setActionsEnabled}
+      />
 
       {pairToken && <PairingPanel token={pairToken} />}
 
@@ -233,6 +271,47 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
         </p>
       )}
     </div>
+  );
+}
+
+function ActionsAutomationCard({
+  settings,
+  busy,
+  onToggle,
+}: {
+  settings: ActionAutomationSettings | null;
+  busy: boolean;
+  onToggle: (enabled: boolean) => void | Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const enabled = settings?.enabled ?? true;
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ListChecks className="size-4" />
+          {t("system.actionsAutomation.title")}
+        </CardTitle>
+        <CardDescription>{t("system.actionsAutomation.description")}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex items-center justify-between gap-3">
+        <Badge variant={enabled ? "default" : "outline"}>
+          {enabled ? t("system.actionsAutomation.on") : t("system.actionsAutomation.off")}
+        </Badge>
+        <Button
+          size="sm"
+          variant={enabled ? "outline" : "default"}
+          disabled={!settings || busy}
+          onClick={() => void onToggle(!enabled)}
+        >
+          {busy
+            ? t("system.actionsAutomation.saving")
+            : enabled
+              ? t("system.actionsAutomation.disable")
+              : t("system.actionsAutomation.enable")}
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

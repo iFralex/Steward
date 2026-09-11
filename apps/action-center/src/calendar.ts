@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import { indexDbPath } from "../../calendar-mcp/src/paths.ts";
+import { unixToCoreData } from "../../calendar-mcp/src/coredata.ts";
 import type { ActionStore } from "./store.ts";
 
 export interface CalendarScanResult { considered: number; created: number; updated: number }
@@ -10,6 +11,8 @@ export function scanCalendarForActions(deps: {
   calendarDbPath?: string;
   now?: Date;
   horizonDays?: number;
+  /** Ignore events last modified at or before this Unix timestamp. */
+  modifiedAfter?: number;
 }): CalendarScanResult {
   const path = deps.calendarDbPath ?? indexDbPath();
   if (!existsSync(path)) return { considered: 0, created: 0, updated: 0 };
@@ -17,12 +20,15 @@ export function scanCalendarForActions(deps: {
   try {
     const now = deps.now ?? new Date();
     const end = new Date(now.getTime() + (deps.horizonDays ?? 3) * 86400_000);
+    const modifiedClause = typeof deps.modifiedAfter === "number" ? "AND last_modified > ?" : "";
+    const params: unknown[] = [now.toISOString(), end.toISOString()];
+    if (typeof deps.modifiedAfter === "number") params.push(unixToCoreData(deps.modifiedAfter));
     const rows = db.prepare(
       `SELECT uid, summary, description, location, start, end, all_day, calendar, account, url
        FROM events
-       WHERE start >= ? AND start <= ? AND COALESCE(status, 1) != 3
+       WHERE start >= ? AND start <= ? AND COALESCE(status, 1) != 3 ${modifiedClause}
        ORDER BY start ASC`,
-    ).all(now.toISOString(), end.toISOString()) as {
+    ).all(...params) as {
       uid: string; summary: string | null; description: string | null; location: string | null;
       start: string; end: string; all_day: number; calendar: string | null; account: string | null; url: string | null;
     }[];

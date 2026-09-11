@@ -475,3 +475,36 @@ test("seedIfEmpty marks the current window seen without evaluating; new mail is 
   mail.close();
   actions.close();
 });
+
+test("a re-enable cutoff skips disabled-period mail and evaluates only later ingestion", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  const now = Math.floor(Date.now() / 1000);
+  mail.upsertMessage(row({ messageId: "during-off", date: now - 20 }));
+  mail.setThreadId("during-off", 10);
+  mail.upsertMessage(row({ messageId: "after-on", date: now - 10 }));
+  mail.setThreadId("after-on", 20);
+  mail.raw.prepare("UPDATE messages SET ingested_at=? WHERE message_id=?").run(100, "during-off");
+  mail.raw.prepare("UPDATE messages SET ingested_at=? WHERE message_id=?").run(300, "after-on");
+  let analyzeCalls = 0;
+  const chat = async (system: string) => {
+    if (system.includes("Analyze")) analyzeCalls++;
+    return noActionChat(system);
+  };
+
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    chat,
+    now,
+    seedIfEmpty: true,
+    ingestedAfter: 200,
+  });
+
+  assert.equal(res.considered, 1);
+  assert.equal(analyzeCalls, 1);
+  assert.equal(actions.loadSeen().has("during-off"), true);
+  assert.equal(actions.loadSeen().has("after-on"), true);
+  mail.close();
+  actions.close();
+});

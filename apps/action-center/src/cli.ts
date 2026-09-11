@@ -17,6 +17,13 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     if (cmd === "scan") {
       const what = argv[1] ?? "all";
       const out: Record<string, unknown> = {};
+      const automation = actions.getAutomationSettings();
+      if (!automation.enabled) {
+        out.disabled = true;
+        actions.setMeta("lastScan", { at: Math.floor(Date.now() / 1000), what, result: out });
+        console.log(JSON.stringify(out, null, 2));
+        return;
+      }
       let readBridge: McpBridge | null = null;
       if (what === "all" || what === "mail") {
         const mail = Store.openReadonly(mailDbPath());
@@ -37,6 +44,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
             recentDays,
             seedIfEmpty: process.env.ACTION_CENTER_NO_SEED !== "1",
             threadId: process.env.ACTION_CENTER_THREAD_ID ? Number(process.env.ACTION_CENTER_THREAD_ID) : undefined,
+            ingestedAfter: automation.enabledAt ?? undefined,
             readTool: bridgeForReadTools
               ? (tool, input) => {
                   if (!isAllowedReadTool(tool)) throw new Error(`read tool not allowed: ${tool}`);
@@ -55,6 +63,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
         out.calendar = scanCalendarForActions({
           actions,
           horizonDays: Number(process.env.ACTION_CENTER_CALENDAR_DAYS ?? 3),
+          modifiedAfter: automation.enabledAt ?? undefined,
         });
       }
       actions.setMeta("lastScan", { at: Math.floor(Date.now() / 1000), what, result: out });

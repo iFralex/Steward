@@ -132,6 +132,15 @@
       "enable": "Attiva",
       "pathUnavailable": "Path app non disponibile."
     },
+    "actionsAutomation": {
+      "title": "Creazione automatica delle Actions",
+      "description": "Se la disattivi, Steward non analizza email o calendario per creare nuove Actions e non consuma token per questa funzione. Quando la riattivi, considera solo gli elementi acquisiti o modificati da quel momento.",
+      "on": "attiva",
+      "off": "disattiva",
+      "saving": "Salvo...",
+      "disable": "Disattiva",
+      "enable": "Attiva"
+    },
     "pairing": {
       "title": "Connetti il telefono",
       "description": "Scansiona dal telefono (stessa rete Tailscale) per collegarlo.",

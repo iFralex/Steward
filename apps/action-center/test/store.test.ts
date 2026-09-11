@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ActionStore } from "../src/store.ts";
 
+test("Action automation defaults on and records a fresh cutoff when re-enabled", () => {
+  const s = ActionStore.open(":memory:");
+  assert.deepEqual(s.getAutomationSettings(), { enabled: true, enabledAt: null, updatedAt: null });
+  assert.deepEqual(s.setAutomationEnabled(false, 100), { enabled: false, enabledAt: null, updatedAt: 100 });
+  assert.deepEqual(s.setAutomationEnabled(true, 200), { enabled: true, enabledAt: 200, updatedAt: 200 });
+  assert.deepEqual(s.setAutomationEnabled(true, 300), { enabled: true, enabledAt: 200, updatedAt: 200 });
+  s.close();
+});
+
 test("upsert inserts, updates active items, and preserves done items", () => {
   const s = ActionStore.open(":memory:");
   const a = s.upsert({

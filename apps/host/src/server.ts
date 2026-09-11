@@ -15,7 +15,7 @@ import type { ClientEvent } from "@steward/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
 import { isRunning } from "./core/running-chats.ts";
 import { auditLog, recordAudit, type AuditActor, type AuditRisk } from "@steward/audit-log";
-import { ActionRevisionRequestedError, executeActionProposal, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setPushRegistry } from "./core/action-center-service.ts";
+import { ActionRevisionRequestedError, executeActionProposal, getActionAutomationSettings, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setActionAutomationEnabled, setPushRegistry } from "./core/action-center-service.ts";
 import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageLedger } from "@steward/usage-ledger";
@@ -104,7 +104,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/push/", "/quick-send", "/transcribe"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/settings/actions", "/push/", "/quick-send", "/transcribe"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -464,6 +464,40 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       });
       res.writeHead(status.detail && body.enabled === true && !status.enabled ? 400 : 200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(status));
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  if (req.method === "GET" && url.startsWith("/settings/actions")) {
+    try {
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(getActionAutomationSettings()));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    }
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/settings/actions")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? JSON.parse(raw) as { enabled?: unknown } : {};
+      if (typeof body.enabled !== "boolean") {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "enabled must be a boolean" }));
+        return;
+      }
+      const settings = setActionAutomationEnabled(body.enabled);
+      recordAudit({
+        actor: "user",
+        eventType: "settings.actions_automation",
+        risk: "low",
+        summary: `${settings.enabled ? "Enabled" : "Disabled"} automatic Actions`,
+        payload: settings,
+      });
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(settings));
     }).catch((err) => {
       res.writeHead(400, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));

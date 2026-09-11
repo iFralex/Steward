@@ -8,7 +8,7 @@ import type {
 } from "@steward/protocol";
 import { chatStore, toolMessage } from "./chat-store.ts";
 import { randomUUID } from "node:crypto";
-import { ActionStore } from "../../../action-center/src/store.ts";
+import { ActionStore, type ActionAutomationSettings } from "../../../action-center/src/store.ts";
 import { actionDbPath } from "../../../action-center/src/paths.ts";
 import { gatewayChat, jsonFromLlm } from "../../../action-center/src/llm.ts";
 import type { HostConfig } from "../config.ts";
@@ -120,6 +120,24 @@ export function loadActionCenterState(opts: { includeDone?: boolean; limit?: num
     const items = store.list({ includeDone: opts.includeDone, limit: opts.limit ?? 50 }) as ActionCenterItem[];
     const all = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
     return { items, diagnostics: diagnostics(store, all) };
+  } finally {
+    store.close();
+  }
+}
+
+export function getActionAutomationSettings(): ActionAutomationSettings {
+  const store = ActionStore.open(actionDbPath());
+  try {
+    return store.getAutomationSettings();
+  } finally {
+    store.close();
+  }
+}
+
+export function setActionAutomationEnabled(enabled: boolean): ActionAutomationSettings {
+  const store = ActionStore.open(actionDbPath());
+  try {
+    return store.setAutomationEnabled(enabled);
   } finally {
     store.close();
   }

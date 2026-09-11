@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS seen_messages (
 CREATE INDEX IF NOT EXISTS idx_seen_at ON seen_messages(seen_at);
 `;
 
+const AUTOMATION_SETTINGS_KEY = "automationSettings";
+
+export interface ActionAutomationSettings {
+  enabled: boolean;
+  /** Unix timestamp: after a re-enable, only newer source items may create Actions. */
+  enabledAt: number | null;
+  updatedAt: number | null;
+}
+
 export class ActionStore {
   private constructor(readonly raw: Database.Database) {}
 
@@ -205,6 +214,27 @@ export class ActionStore {
     }
   }
 
+  getAutomationSettings(): ActionAutomationSettings {
+    const saved = this.getMeta<Partial<ActionAutomationSettings>>(AUTOMATION_SETTINGS_KEY);
+    return {
+      enabled: typeof saved?.enabled === "boolean" ? saved.enabled : true,
+      enabledAt: finiteNumberOrNull(saved?.enabledAt),
+      updatedAt: finiteNumberOrNull(saved?.updatedAt),
+    };
+  }
+
+  setAutomationEnabled(enabled: boolean, now = Math.floor(Date.now() / 1000)): ActionAutomationSettings {
+    const current = this.getAutomationSettings();
+    if (current.enabled === enabled) return current;
+    const next: ActionAutomationSettings = {
+      enabled,
+      enabledAt: enabled ? now : null,
+      updatedAt: now,
+    };
+    this.setMeta(AUTOMATION_SETTINGS_KEY, next);
+    return next;
+  }
+
   // --- "already evaluated" ledger: mail we've run the planner on, so scans work
   //     only on genuinely new mail (or new replies) instead of re-evaluating. ---
 
@@ -233,6 +263,10 @@ export class ActionStore {
   }
 
   close(): void { this.raw.close(); }
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function rowToAction(r: Record<string, unknown>): ActionItem {

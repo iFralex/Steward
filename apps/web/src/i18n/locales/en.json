@@ -132,6 +132,15 @@
       "enable": "Enable",
       "pathUnavailable": "App path not available."
     },
+    "actionsAutomation": {
+      "title": "Automatic Action creation",
+      "description": "When disabled, Steward does not analyze mail or calendars to create new Actions and uses no tokens for this feature. When re-enabled, it considers only items acquired or modified from that moment on.",
+      "on": "on",
+      "off": "off",
+      "saving": "Saving...",
+      "disable": "Disable",
+      "enable": "Enable"
+    },
     "pairing": {
       "title": "Connect your phone",
       "description": "Scan from your phone (same Tailscale network) to connect it.",

@@ -33,6 +33,8 @@ export async function scanMailForActions(deps: {
   /** First run: mark the whole current window as already-seen (clean start). */
   seedIfEmpty?: boolean;
   threadId?: number;
+  /** Ignore mail mirrored at or before this Unix timestamp (used after re-enabling Actions). */
+  ingestedAfter?: number;
 }): Promise<MailScanResult> {
   const now = deps.now ?? Math.floor(Date.now() / 1000);
   const since = now - (deps.recentDays ?? 14) * 86400;
@@ -43,12 +45,21 @@ export async function scanMailForActions(deps: {
   // Clean start: on first activation mark the whole current window as seen, so we
   // never re-evaluate the existing backlog — only mail arriving from now on.
   if (deps.seedIfEmpty && seen.size === 0 && !manual) {
+    const cutoffClause = typeof deps.ingestedAfter === "number" ? "AND ingested_at <= ?" : "";
+    const seedParams: unknown[] = [since];
+    if (typeof deps.ingestedAfter === "number") seedParams.push(deps.ingestedAfter);
     const ids = (deps.mail.raw.prepare(
       `SELECT message_id FROM messages
-       WHERE deleted=0 AND junk=0 AND date>=? AND length(trim(coalesce(body_text,'')))>0`,
-    ).all(since) as { message_id: string }[]).map((r) => r.message_id);
+       WHERE deleted=0 AND junk=0 AND date>=? ${cutoffClause}
+         AND length(trim(coalesce(body_text,'')))>0`,
+    ).all(...seedParams) as { message_id: string }[]).map((r) => r.message_id);
     deps.actions.markSeen(ids);
-    return { considered: 0, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {}, seeded: ids.length };
+    for (const id of ids) seen.add(id);
+    // The normal first run seeds and stops. After a re-enable, continue so mail
+    // acquired after the cutoff is handled immediately, without touching backlog.
+    if (typeof deps.ingestedAfter !== "number") {
+      return { considered: 0, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {}, seeded: ids.length };
+    }
   }
 
   // No unread/answered filters: consider ALL recent mail (incl. read, and threads
@@ -56,12 +67,14 @@ export async function scanMailForActions(deps: {
   // thread_id is the mirror's canonical thread id — never mix in apple_thrid (a
   // different id namespace that collides across unrelated threads).
   const threadClause = manual ? "AND thread_id=?" : "";
+  const ingestionClause = !manual && typeof deps.ingestedAfter === "number" ? "AND ingested_at>?" : "";
   const params: unknown[] = [since];
+  if (!manual && typeof deps.ingestedAfter === "number") params.push(deps.ingestedAfter);
   if (manual) params.push(deps.threadId);
   params.push(manual ? limit : SCAN_QUERY_LIMIT);
   const rows = deps.mail.raw.prepare(
     `SELECT * FROM messages
-     WHERE deleted=0 AND date>=? ${threadClause} AND junk=0
+     WHERE deleted=0 AND date>=? ${ingestionClause} ${threadClause} AND junk=0
        AND length(trim(coalesce(body_text,'')))>0
      ORDER BY date DESC
      LIMIT ?`,
