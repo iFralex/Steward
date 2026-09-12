@@ -27,8 +27,8 @@ test("mail search defaults to a compact eight-result page and fetches one look-a
   assert.equal(page.messages.length, 8);
   assert.deepEqual(page.page, { offset: 0, returned: 8, hasMore: true, nextOffset: 8 });
   assert.equal("messageId" in page.messages[0], false);
-  assert.equal("mailUrl" in page.messages[0], false);
-  assert.equal("account" in page.messages[0], false);
+  assert.equal(page.messages[0].mailUrl, "message://message-0@example.com");
+  assert.equal(page.messages[0].account, "long-account-uuid");
   assert.equal(page.messages[3].snippet.length, 120);
 });
 

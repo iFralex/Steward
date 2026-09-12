@@ -9,8 +9,10 @@ export interface CompactMessageSummary {
   from: string;
   date: string;
   mailbox: string;
+  account: string;
   snippet: string;
   threadId?: number;
+  mailUrl: string;
 }
 
 export interface MessageSearchPage {
@@ -39,8 +41,10 @@ export function buildSearchPage(rows: MessageSummary[], limit: number, offset: n
       from: row.from,
       date: row.date,
       mailbox: row.mailbox,
+      account: row.account,
       snippet: truncate(row.snippet, index < 3 ? 200 : 120),
       ...(row.threadId == null ? {} : { threadId: row.threadId }),
+      mailUrl: row.mailUrl,
     })),
     page: {
       offset,

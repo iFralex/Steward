@@ -104,7 +104,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "read_message",
-      description: "Read a message body and attachment list. Pass the `messageId` from a search_messages result. Results include `mailUrl`, a clickable Apple Mail deep link (message://…) that opens the message in Mail — useful e.g. in a calendar event's url/description.",
+      description: "Read a message body and attachment list. Pass the `id` from a search_messages result. Results include `mailUrl`, a clickable Apple Mail deep link (message://…) that opens the message in Mail — useful e.g. in a calendar event's url/description.",
       inputSchema: {
         type: "object",
         properties: {

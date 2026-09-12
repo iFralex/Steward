@@ -190,6 +190,10 @@ export function cardForApproval(tool: string, input: unknown): { type: string; d
 export function cardForTool(tool: string, input: unknown, output: unknown): { type: string; data: unknown } | null {
   const name = bareName(tool);
   if (name === "read_message" && output && typeof output === "object") return { type: "email", data: output };
+  if (name === "search_messages" && output && typeof output === "object" && !Array.isArray(output)) {
+    const messages = (output as Dict).messages;
+    if (Array.isArray(messages)) return { type: "search", data: messages };
+  }
   if ((name === "search_messages" || name === "get_thread") && Array.isArray(output)) return { type: "search", data: output };
   if ((name === "create_event" || name === "update_event") && input && typeof input === "object") {
     const uid = (output as Dict)?.uid;
