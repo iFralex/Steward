@@ -43,12 +43,20 @@ const PUSH_NOTIFIED_META_KEY = "pushNotifiedIds";
  * already notified for. Never throws — a push failure must never break the
  * action-center read/refresh/mark/execute flow that calls this.
  */
-function notifyNewProposals(store: ActionStore, items: ActionCenterItem[]): void {
+export async function notifyNewProposals(store: ActionStore, items: ActionCenterItem[]): Promise<void> {
   if (!pushRegistry) return;
   try {
-    const notified = new Set(store.getMeta<number[]>(PUSH_NOTIFIED_META_KEY) ?? []);
+    const saved = store.getMeta<number[]>(PUSH_NOTIFIED_META_KEY);
+    if (saved === null) {
+      // Feature migration: remember the current inbox as the baseline instead of
+      // flooding the phone with every Action that predates notifications.
+      store.setMeta(PUSH_NOTIFIED_META_KEY, items.filter((item) => item.status === "new").map((item) => item.id));
+      return;
+    }
+    const notified = new Set(saved);
     const stillNew = new Set(items.filter((i) => i.status === "new").map((i) => i.id));
     let changed = false;
+    const sends: Promise<void>[] = [];
     for (const id of notified) {
       if (!stillNew.has(id)) {
         notified.delete(id); // left "new" (read/done/dismissed) — allow re-notifying if it ever reopens
@@ -61,17 +69,31 @@ function notifyNewProposals(store: ActionStore, items: ActionCenterItem[]): void
       if (!Array.isArray(proposals) || proposals.length === 0) continue;
       notified.add(item.id);
       changed = true;
-      void pushRegistry.sendAll({
+      sends.push(pushRegistry.sendAll({
         title: "Steward",
         body: item.title || item.summary || notificationCopy(getNotificationLang()).newProposal,
         tag: `action-${item.id}`,
         actionId: item.id,
         type: "approval",
-      }).catch(() => { /* best-effort — never break the caller */ });
+      }));
     }
     if (changed) store.setMeta(PUSH_NOTIFIED_META_KEY, [...notified]);
+    await Promise.allSettled(sends);
   } catch {
     /* best-effort — never break the caller */
+  }
+}
+
+/** Check for newly-created Action proposals even while every UI is closed. */
+export function pollNewActionNotifications(): void {
+  if (!pushRegistry) return;
+  const store = ActionStore.open(actionDbPath());
+  try {
+    const items = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
+    void notifyNewProposals(store, items);
+  } finally {
+    // notifyNewProposals performs all DB work before awaiting network delivery.
+    store.close();
   }
 }
 
@@ -119,6 +141,7 @@ export function loadActionCenterState(opts: { includeDone?: boolean; limit?: num
   try {
     const items = store.list({ includeDone: opts.includeDone, limit: opts.limit ?? 50 }) as ActionCenterItem[];
     const all = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
+    void notifyNewProposals(store, all);
     return { items, diagnostics: diagnostics(store, all) };
   } finally {
     store.close();

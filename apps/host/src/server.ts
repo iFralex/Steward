@@ -15,7 +15,7 @@ import type { ClientEvent } from "@steward/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
 import { isRunning } from "./core/running-chats.ts";
 import { auditLog, recordAudit, type AuditActor, type AuditRisk } from "@steward/audit-log";
-import { ActionRevisionRequestedError, executeActionProposal, getActionAutomationSettings, getActionItem, loadActionCenterState, markAction, reviseActionProposal, setActionAutomationEnabled, setPushRegistry } from "./core/action-center-service.ts";
+import { ActionRevisionRequestedError, executeActionProposal, getActionAutomationSettings, getActionItem, loadActionCenterState, markAction, pollNewActionNotifications, reviseActionProposal, setActionAutomationEnabled, setPushRegistry } from "./core/action-center-service.ts";
 import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageLedger } from "@steward/usage-ledger";
@@ -659,6 +659,12 @@ function isAuditRisk(value: string | null): value is AuditRisk {
 export function startServer(config: HostConfig): WebSocketServer {
   const pushRegistry = new PushRegistry(pushSubscriptionsPath());
   setPushRegistry(pushRegistry);
+  // The scheduler writes Actions in a separate process. Polling this local
+  // SQLite DB lets the host push them even when no browser/PWA is connected.
+  pollNewActionNotifications();
+  const actionPushPollMs = Math.max(1_000, Number(process.env.ACTION_PUSH_POLL_MS ?? 15_000));
+  const actionPushTimer = setInterval(pollNewActionNotifications, actionPushPollMs);
+  actionPushTimer.unref();
   // Two listeners: plain HTTP on localhost (the Mac's own WebView — a secure
   // context anyway, auto-pairs, keeps native "open/reveal" actions), and — when a
   // TLS cert+key are provided (e.g. `tailscale cert`) — HTTPS on all interfaces
@@ -668,6 +674,7 @@ export function startServer(config: HostConfig): WebSocketServer {
   const tlsKey = process.env.STEWARD_TLS_KEY;
   const useTls = !!(tlsCert && tlsKey);
   const wss = new WebSocketServer({ noServer: true });
+  wss.once("close", () => clearInterval(actionPushTimer));
   const acceptUpgrade = (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
     const ok =
       (isAllowedOrigin(req.headers.origin, config.port) || originMatchesHost(req.headers.origin, req.headers.host)) &&
