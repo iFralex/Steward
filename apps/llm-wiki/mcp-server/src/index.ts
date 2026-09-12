@@ -13,9 +13,9 @@ import {
   type ApiGraphNode,
   type ApiReviewItem,
   type ApiReviewsResponse,
-  type ApiSearchResult,
 } from "./api-client.js"
 import { VERSION } from "./version.js"
+import { buildWikiSearchPage, normalizeWikiSearchPage, type WikiSearchPage } from "./search-page.js"
 
 const DEFAULT_PROJECT_ID = "current"
 const MAX_TEXT_BYTES = 120_000
@@ -91,13 +91,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "llm_wiki_search",
-      description: "Search a project using the same backend keyword/vector retrieval used by the desktop API.",
+      description: "Search a project using the same backend keyword/vector retrieval used by the desktop API. Returns a five-result page by default; follow page.nextOffset only when more results are materially needed.",
       inputSchema: {
         type: "object",
         properties: {
           project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
           query: { type: "string", description: "Search query." },
-          top_k: { type: "number", description: "Maximum results. The local API clamps to its configured maximum." },
+          top_k: { type: "number", description: "Page size. Defaults to 5 and is capped at 10." },
+          offset: { type: "number", description: "Rank offset from page.nextOffset." },
           include_content: { type: "boolean", description: "Include full page content in results when supported by the API." },
         },
         required: ["query"],
@@ -227,11 +228,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "llm_wiki_search": {
         await assertMcpEnabled()
         const query = stringArg(args.query, "query")
+        const page = normalizeWikiSearchPage(numberArg(args.top_k), numberArg(args.offset))
         const search = await client.search(projectId(args), query, {
-          topK: numberArg(args.top_k),
+          topK: page.fetchTopK,
           includeContent: boolArg(args.include_content, false),
         })
-        return textResult(formatSearchResults(query, search))
+        return textResult(formatSearchResults(query, buildWikiSearchPage(search, page.limit, page.offset)))
       }
       case "llm_wiki_graph": {
         await assertMcpEnabled()
@@ -367,13 +369,16 @@ function formatFileTree(files: ApiFileNode[], truncated = false): string {
   return lines.join("\n")
 }
 
-function formatSearchResults(query: string, search: { results: ApiSearchResult[]; mode?: string; tokenHits?: number; vectorHits?: number }): string {
+function formatSearchResults(query: string, search: WikiSearchPage): string {
   const { results } = search
   if (results.length === 0) return `No results for "${query}".`
   const meta = [
     search.mode ? `Mode: ${search.mode}` : null,
     typeof search.tokenHits === "number" ? `Token hits: ${search.tokenHits}` : null,
     typeof search.vectorHits === "number" ? `Vector hits: ${search.vectorHits}` : null,
+    `Page offset: ${search.page.offset}`,
+    `Returned: ${search.page.returned}`,
+    search.page.hasMore ? `Next offset: ${search.page.nextOffset}` : "Final page",
   ].filter(Boolean)
   const lines = [`# Search results for "${query}"`, ...(meta.length > 0 ? [meta.join(" | ")] : []), ""]
   results.forEach((result, index) => {

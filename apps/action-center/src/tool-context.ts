@@ -25,7 +25,7 @@ export const READ_TOOL_SPECS = [
   "mcp__contacts__search_contacts with {query: string, limit? number}",
   "mcp__contacts__read_contact with {uid: string}",
   "mcp__contacts__resolve_recipient with {query: string}",
-  "mcp__llm-wiki__llm_wiki_search with {query: string, topK? number, includeContent? boolean}",
+  "mcp__llm-wiki__llm_wiki_search with {query: string, top_k? number (max 5 here), offset? number, include_content? boolean}",
   "mcp__llm-wiki__llm_wiki_read_file with {path: string}",
 ] as const;
 
@@ -50,6 +50,7 @@ Rules:
 - For administrative replies where the answer may depend on facts the user already communicated elsewhere, search recent related mail across threads using the same sender/domain, recipients, and key terms from the task.
 - If a current thread says "also", "forgot", "as mentioned", "you must specify", "nothing to report", attendance/absence/presence, expenses, documents, or deadlines, look for related recent sent and received messages before drafting final actions.
 - If a wiki search is useful but unavailable or fails, continue with other read tools and preserve the uncertainty in observations.
+- LLM Wiki search is paginated and capped at five results in this context. Follow page.nextOffset only when another result page is materially necessary.
 - If previous observations reveal new facts that need validation, request additional read tools.
 - Do not repeat calls already present in previous observations.
 - Do not call write tools. Do not include unavailable tools. Respect the remaining call budget.`;
@@ -188,6 +189,20 @@ function extractEmail(value: string): string | null {
 }
 
 function sanitizeReadToolInput(tool: string, input: Record<string, unknown>): Record<string, unknown> {
+  if (tool === "mcp__llm-wiki__llm_wiki_search") {
+    const normalized = { ...input };
+    if (typeof normalized.topK === "number" && typeof normalized.top_k !== "number") normalized.top_k = normalized.topK;
+    if (typeof normalized.includeContent === "boolean" && typeof normalized.include_content !== "boolean") normalized.include_content = normalized.includeContent;
+    const requestedTopK = typeof normalized.top_k === "number" && Number.isFinite(normalized.top_k)
+      ? Math.floor(normalized.top_k)
+      : 5;
+    normalized.top_k = Math.min(Math.max(requestedTopK, 1), 5);
+    if (typeof normalized.offset === "number" && Number.isFinite(normalized.offset)) {
+      normalized.offset = Math.max(0, Math.floor(normalized.offset));
+    }
+    const allowed = new Set(["query", "project_id", "top_k", "offset", "include_content"]);
+    return Object.fromEntries(Object.entries(normalized).filter(([key]) => allowed.has(key)));
+  }
   if (tool !== "mcp__mail__search_messages") return input;
   const normalized = { ...input };
   if (typeof normalized.since === "string" && typeof normalized.dateFrom !== "string") normalized.dateFrom = normalized.since;
