@@ -3,7 +3,7 @@ import type { ActionStore } from "./store.ts";
 import type { Chat } from "./llm.ts";
 import { planMailAction } from "./planner.ts";
 import type { ReadToolExecutor } from "./tool-context.ts";
-import { checkIfMessageResolvesAction, findResolvableOpenActions } from "./cross-thread-resolution.ts";
+import { checkIfMessageResolvesAction, findResolvableOpenActions, selectContinuationCandidates } from "./cross-thread-resolution.ts";
 
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|mailer|newsletter|bounce|postmaster)\b/i;
 const LOW_VALUE_SURVEY = /\b(survey|questionario|soddisfazione|feedback|post[-\s]?result survey)\b/i;
@@ -104,7 +104,12 @@ export async function scanMailForActions(deps: {
     let plan: Awaited<ReturnType<typeof planMailAction>>;
     let planFailed = false;
     try {
-      plan = await planMailAction(msg, deps.chat, { userAddrs: deps.userAddrs, readTool: deps.readTool });
+      const relatedOpenActions = selectContinuationCandidates(
+        deps.actions.list({ includeDone: false, limit: 200 }),
+        { fromAddr: msg.fromAddr, threadId: msg.threadId, subject: msg.subject, bodyText: msg.bodyText },
+        deps.userAddrs ?? [],
+      );
+      plan = await planMailAction(msg, deps.chat, { userAddrs: deps.userAddrs, readTool: deps.readTool, relatedOpenActions });
     } catch (err) {
       recordDeferred(result, err instanceof Error ? err.message : String(err));
       plan = null;
@@ -165,7 +170,7 @@ export async function scanMailForActions(deps: {
         proposedActions: plan.proposedActions,
         chatPrompt: buildActionChatPrompt(plan.title),
       },
-    });
+    }, { mergeIntoId: plan.relatedActionId ?? undefined });
     if (upsert.inserted) result.created++;
     else if (upsert.updated) result.updated++;
     if (!manual) deps.actions.markSeen(candidate.batchIds);

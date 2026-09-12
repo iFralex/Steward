@@ -126,6 +126,73 @@ test("scanMailForActions keys actions by thread when available", async () => {
   actions.close();
 });
 
+test("scanMailForActions merges a later notification when the planner confirms the shortlisted action", async () => {
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  const { id } = actions.upsert({
+    sourceKey: "mail:thread:10",
+    sourceKind: "mail",
+    kind: "admin-task",
+    priority: "high",
+    title: "Carta Fineco ****5675 sospesa",
+    summary: "La carta ****5675 è stata sospesa per sicurezza.",
+    payload: {
+      threadId: 10,
+      contextSnapshot: { mail: { from: "Fineco <service@finecobank.com>" } },
+      proposedActions: [],
+    },
+  });
+  mail.upsertMessage(row({
+    messageId: "fineco-later",
+    fromName: "Fineco",
+    fromAddr: "service@finecobank.com",
+    subject: "Nuovo blocco carta ****5675",
+    bodyText: "Dopo la riattivazione, la carta ****5675 è stata nuovamente bloccata.",
+  }));
+  mail.setThreadId("fineco-later", 11);
+
+  const res = await scanMailForActions({
+    mail,
+    actions,
+    userAddrs: ["me@example.com"],
+    chat: async (system, prompt) => {
+      if (system.includes("Analyze")) return JSON.stringify({
+        needsAction: true,
+        kind: "admin-task",
+        priority: "high",
+        summary: "La carta è stata nuovamente bloccata.",
+        dueDateTime: null,
+        scheduling: null,
+        replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null },
+        reasoning: "Security state changed.",
+      });
+      assert.match(prompt, new RegExp(`\\"id\\": ${id}`));
+      return JSON.stringify({
+        title: "Carta Fineco ****5675: sospesa, riattivata e nuovamente bloccata",
+        summary: "La carta ****5675 è stata sospesa, poi riattivata e ora è di nuovo bloccata.",
+        relatedActionId: id,
+        proposedActions: [{
+          id: "verify",
+          label: "Verifica il blocco",
+          summary: "Segui le indicazioni ufficiali della banca.",
+          confidence: "high",
+          steps: [{ id: "manual", label: "Verifica stato e operazioni nell'app ufficiale", kind: "manual", links: [] }],
+        }],
+      });
+    },
+  });
+
+  assert.equal(res.created, 0);
+  assert.equal(res.updated, 1);
+  assert.equal(actions.list().length, 1);
+  const merged = actions.get(id)!;
+  assert.equal(merged.sourceKey, "mail:thread:10");
+  assert.equal(merged.title, "Carta Fineco ****5675: sospesa, riattivata e nuovamente bloccata");
+  assert.deepEqual(merged.payload.relatedSourceKeys, ["mail:thread:11"]);
+  mail.close();
+  actions.close();
+});
+
 test("scanMailForActions skips no-reply senders without calling LLM", async () => {
   const mail = Store.open(":memory:");
   const actions = ActionStore.open(":memory:");

@@ -50,10 +50,15 @@ export class ActionStore {
     return new ActionStore(db);
   }
 
-  upsert(input: UpsertAction): { id: number; inserted: boolean; updated: boolean } {
+  upsert(input: UpsertAction, opts: { mergeIntoId?: number } = {}): { id: number; inserted: boolean; updated: boolean } {
     const now = Math.floor(Date.now() / 1000);
-    const payload = JSON.stringify(input.payload ?? {});
-    const existing = this.findExisting(input);
+    const existing = typeof opts.mergeIntoId === "number"
+      ? this.getExistingById(opts.mergeIntoId)
+      : this.findExisting(input);
+    const payloadObject = existing && typeof opts.mergeIntoId === "number"
+      ? mergeRelatedPayload(existing, input, now)
+      : input.payload ?? {};
+    const payload = JSON.stringify(payloadObject);
 
     if (!existing) {
       const info = this.raw.prepare(
@@ -101,7 +106,7 @@ export class ActionStore {
        WHERE id=@id`,
     ).run({
       id: existing.id,
-      source_key: input.sourceKey,
+      source_key: typeof opts.mergeIntoId === "number" ? existing.sourceKey : input.sourceKey,
       source_kind: input.sourceKind,
       kind: input.kind,
       status: reopening ? "new" : existing.status,
@@ -125,11 +130,21 @@ export class ActionStore {
     return { id: existing.id, inserted: false, updated: true };
   }
 
-  private findExisting(input: UpsertAction): { id: number; status: ActionStatus; payload: Record<string, unknown> } | undefined {
-    const byKey = this.raw.prepare("SELECT id, status, payload FROM actions WHERE source_key=?").get(input.sourceKey) as
-      | { id: number; status: ActionStatus; payload: string }
-      | undefined;
-    if (byKey) return { ...byKey, payload: parsePayload(byKey.payload) };
+  private getExistingById(id: number): ExistingAction | undefined {
+    const row = this.raw.prepare("SELECT id, source_key, status, title, summary, payload, updated_at FROM actions WHERE id=?")
+      .get(id) as ExistingActionRow | undefined;
+    return row ? existingFromRow(row) : undefined;
+  }
+
+  private findExisting(input: UpsertAction): ExistingAction | undefined {
+    const byKey = this.raw.prepare(
+      `SELECT id, source_key, status, title, summary, payload, updated_at FROM actions
+       WHERE source_key=? OR EXISTS (
+         SELECT 1 FROM json_each(actions.payload, '$.relatedSourceKeys') WHERE value=?
+       )
+       LIMIT 1`,
+    ).get(input.sourceKey, input.sourceKey) as ExistingActionRow | undefined;
+    if (byKey) return existingFromRow(byKey);
 
     const threadId = input.sourceKind === "mail" ? input.payload?.threadId : null;
     if (typeof threadId !== "number" || !Number.isFinite(threadId)) return undefined;
@@ -137,13 +152,15 @@ export class ActionStore {
     // Migration bridge for older rows keyed by message id: if they already
     // represent the same thread, update that row instead of creating a duplicate.
     const byThread = this.raw.prepare(
-      `SELECT id, status, payload FROM actions
+      `SELECT id, source_key, status, title, summary, payload, updated_at FROM actions
        WHERE source_kind='mail'
-         AND json_extract(payload, '$.threadId') = ?
+         AND (json_extract(payload, '$.threadId') = ? OR EXISTS (
+           SELECT 1 FROM json_each(actions.payload, '$.relatedThreadIds') WHERE value=?
+         ))
        ORDER BY updated_at DESC
        LIMIT 1`,
-    ).get(threadId) as { id: number; status: ActionStatus; payload: string } | undefined;
-    return byThread ? { ...byThread, payload: parsePayload(byThread.payload) } : undefined;
+    ).get(threadId, threadId) as ExistingActionRow | undefined;
+    return byThread ? existingFromRow(byThread) : undefined;
   }
 
   /** Update only an action's summary (and updated_at) — never its status. Used when a
@@ -263,6 +280,86 @@ export class ActionStore {
   }
 
   close(): void { this.raw.close(); }
+}
+
+interface ExistingActionRow {
+  id: number;
+  source_key: string;
+  status: ActionStatus;
+  title: string;
+  summary: string;
+  payload: string;
+  updated_at: number;
+}
+
+interface ExistingAction {
+  id: number;
+  sourceKey: string;
+  status: ActionStatus;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  updatedAt: number;
+}
+
+function existingFromRow(row: ExistingActionRow): ExistingAction {
+  return {
+    id: row.id,
+    sourceKey: row.source_key,
+    status: row.status,
+    title: row.title,
+    summary: row.summary,
+    payload: parsePayload(row.payload),
+    updatedAt: row.updated_at,
+  };
+}
+
+function mergeRelatedPayload(existing: ExistingAction, input: UpsertAction, now: number): Record<string, unknown> {
+  const next = input.payload ?? {};
+  const oldThreadId = finiteNumberOrNull(existing.payload.threadId);
+  const nextThreadId = finiteNumberOrNull(next.threadId);
+  const relatedSourceKeys = uniqueValues([
+    ...stringArray(existing.payload.relatedSourceKeys),
+    input.sourceKey,
+  ]);
+  const relatedThreadIds = uniqueValues([
+    ...numberArray(existing.payload.relatedThreadIds),
+    ...(oldThreadId == null ? [] : [oldThreadId]),
+    ...(nextThreadId == null ? [] : [nextThreadId]),
+  ]);
+  const history = [
+    ...objectArray(existing.payload.relatedHistory),
+    {
+      sourceKey: existing.sourceKey,
+      title: existing.title,
+      summary: existing.summary,
+      threadId: oldThreadId,
+      recordedAt: existing.updatedAt,
+    },
+  ].slice(-5);
+  return {
+    ...next,
+    relatedSourceKeys,
+    relatedThreadIds,
+    relatedHistory: history,
+    mergedAt: now,
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function numberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((v): v is number => typeof v === "number" && Number.isFinite(v)) : [];
+}
+
+function objectArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter((v): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v)) : [];
+}
+
+function uniqueValues<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
 function finiteNumberOrNull(value: unknown): number | null {

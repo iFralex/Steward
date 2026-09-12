@@ -259,6 +259,40 @@ test("planMailAction drops a manual link that is not present in the mail body, b
   assert.deepEqual((step as { links?: unknown[] }).links, []);
 });
 
+test("planMailAction safely upgrades a literal www link from the email to https", async () => {
+  const m = msg();
+  m.bodyText = "Accedi a www.example.com/account per scaricare il documento.";
+  const card = await planMailAction(m, async (system) => {
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "document-action",
+        priority: "normal",
+        summary: "Scarica il documento.",
+        dueDateTime: null,
+        scheduling: null,
+        replyDrafts: { accept: null, decline: null, proposeAlternative: null, askClarification: null },
+        reasoning: "Document available.",
+      });
+    }
+    return JSON.stringify({
+      title: "Scarica documento",
+      summary: "Documento disponibile.",
+      relatedActionId: null,
+      proposedActions: [{
+        id: "download",
+        label: "Scarica",
+        summary: "Apri il portale.",
+        confidence: "high",
+        steps: [{ id: "open", label: "Apri il portale", kind: "manual", links: [{ url: "www.example.com/account" }] }],
+      }],
+    });
+  });
+  assert.ok(card);
+  const step = card.proposedActions[0].steps[0] as { links?: { url: string }[] };
+  assert.equal(step.links?.[0]?.url, "https://www.example.com/account");
+});
+
 test("planMailAction preserves a proposal mixing a tool step and a manual step", async () => {
   const m = msg();
   m.bodyText = "Ciao Alessio, conferma la presenza e carica il modulo qui: https://portal.example/modulo";

@@ -71,3 +71,10 @@ export interface UpsertAction {
   dueAt?: number | null;
   payload?: Record<string, unknown>;
 }
+
+export interface RelatedActionCandidate {
+  id: number;
+  title: string;
+  summary: string;
+  updatedAt: number;
+}

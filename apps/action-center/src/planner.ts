@@ -1,7 +1,7 @@
 import { cleanBody } from "../../mail-promoter/src/clean-body.ts";
 import type { Chat } from "./llm.ts";
 import { jsonFromLlm } from "./llm.ts";
-import type { ActionKind, ActionPriority, ContextSnapshot, ProposedAction, ProposedManualStep, ProposedToolStep } from "./types.ts";
+import type { ActionKind, ActionPriority, ContextSnapshot, ProposedAction, ProposedManualStep, ProposedToolStep, RelatedActionCandidate } from "./types.ts";
 import { lookupCalendarContext, lookupContactContext, lookupWikiContext, type CalendarContext } from "./context.ts";
 import { collectReadToolContext, isAllowedReadTool, type ReadToolExecutor } from "./tool-context.ts";
 
@@ -28,6 +28,7 @@ export interface PlannedActionCard {
   contextSnapshot: ContextSnapshot;
   proposedActions: ProposedAction[];
   needsAction: boolean;
+  relatedActionId: number | null;
 }
 
 const ANALYZE_SYSTEM = `You are the intelligence layer for Alessio's personal action center.
@@ -60,9 +61,9 @@ Rules:
 - Drafts should be ready to send, in the likely language/tone of the thread.
 - Do not execute anything.`;
 
-const PLAN_SYSTEM = `You turn an analyzed action item plus context into executable proposed actions for Alessio.
+const PLAN_SYSTEM = `You turn an analyzed action item plus context into useful proposed courses of action for Alessio.
 Return ONLY JSON:
-{"title": string, "summary": string, "proposedActions": [
+{"title": string, "summary": string, "relatedActionId": number|null, "proposedActions": [
   {"id": string, "label": string, "summary": string, "confidence": "low"|"medium"|"high",
    "steps": [{"id": string, "label": string, "kind": "tool"|"manual", "tool": string|null, "input": object|null, "writes": boolean|null, "links": [{"url": string, "label": string|null}]|null}]}
 ]}.
@@ -73,7 +74,18 @@ Available write tools:
 Available read tools for later chat refinement:
 - mcp__mail__get_thread, mcp__contacts__search_contacts, mcp__llm-wiki__llm_wiki_search, mcp__calendar__search_events
 Rules:
-- Include multiple realistic alternatives when useful.
+- A proposed action is a distinct course of action or decision, not a generic checklist variant. Usually return one recommended course; include alternatives only when they lead to meaningfully different outcomes.
+- Steps are the necessary sequence for completing that course. A step may be manual when Alessio must act outside the available tools. Do not turn every screen, click, check, or piece of advice into a separate step: combine adjacent navigation into one concise, outcome-oriented manual step.
+- Preserve useful initiative, but ground every extra step or alternative in the source or validated context. A reminder is useful only when timing materially affects completion; a prepared editable message is useful only when missing information blocks or materially changes the decision. Do not add generic checks, advice, or tool usage merely to make the proposal look more complete.
+- Keep each proposal focused on the requested outcome. Do not broaden the task into optional adjacent work unless that work is required to complete it.
+- Timing alternatives are meaningful only when they change feasibility and both are supported by source data, calendar availability, known operating constraints, or other validated context. Never assume availability or opening hours. When the needed timing information is unknown, omit the time-specific option or propose a concise clarification instead.
+- Do not repeat the card's common goal as an identical manual step in every alternative. If alternatives differ only by reminder date, their calendar tool step is enough; the card title already states the task to perform.
+- Passive outcomes such as ignoring, archiving, waiting, staying reachable, or doing nothing are not proposed actions unless the user must actively communicate or configure something.
+- Financial, security, legal, and account actions may be proposed when the source explicitly supports them. Keep consequential actions conditional on first verifying the current state through an official channel; never turn an unverified alert into an unconditional transfer, trade, credential change, or account operation.
+- Use exact facts from the message and validated context. Never invent event hours, deadlines, amounts, accessibility needs, or personal preferences. When material information is missing, a distinct option may ask the sender only for the concrete details needed to decide or execute; prepare a concise editable email. Otherwise say what is unknown and avoid a tool action that requires it.
+- For an event or commitment, if the date, time, location, registration deadline, or other material logistics are missing and could change the decision, include a distinct clarification option with a concise editable email. A provisional all-day calendar hold may coexist with that option; do not present the hold as confirmed event timing.
+- currentTime is authoritative and includes Alessio's Europe/Rome local time. Never create or suggest a calendar event whose start is before currentTime. If a previously sensible reminder time has passed, choose a future suggestion or omit the reminder; never rewrite the source deadline or call a local-today time "tomorrow" because its UTC date differs.
+- Keep labels concise and put supporting detail in the proposal summary or tool input. Prefer roughly 1-3 proposals and 1-3 steps per proposal, but completeness is more important than a rigid count.
 - Read-only tool observations, if present in contextSnapshot.toolContext, have already been executed. Do not propose read-only steps merely to gather that same data; use those observations to produce validated write actions or explain uncertainty.
 - Proposed action steps must be executable user actions only. Do not include read-only tools in proposedActions.
 - Treat contextSnapshot.mail.replyRequirements as hard completeness requirements for reply/send-email proposals. A proposal that replies to the email must cover each requirement in the body, even when it offers alternatives.
@@ -87,10 +99,12 @@ Rules:
 - Do not propose forwarding/copying notifications to Alessio unless explicitly useful.
 - Use kind:"manual" for a step that requires Alessio to open an external link himself because no automation tool exists for it (e.g. uploading a document to a web portal, clicking a provided connection/registration/confirmation link). Manual steps must omit tool/input/writes and set links instead.
 - A manual step's links[].url must be copied verbatim from a URL that literally appears in the email content below. Never invent, guess, or complete a partial URL. If you are not certain of the exact URL, omit links entirely — the step's label alone still tells Alessio what to do.
+- When a manual step says to open, register, download, inspect, confirm, or accept something and the matching URL is present in the email, include that URL in links. Do not make Alessio search the message manually when the source already provides a safe direct link.
+- relatedOpenActions contains open Actions from the same correspondent domain. Set relatedActionId only when this email is a later notification or continuation of the same concrete issue, account event, request, transaction, or event. Same sender/domain or a similar generic subject is not enough. When relatedActionId is set, rewrite title and summary as the current chronological state, preserving relevant earlier facts and clearly stating what changed. Otherwise return null.
 - The host will guard all write tools, so output concrete executable inputs.
 - Preserve uncertainty in summaries, but keep tool inputs usable.`;
 
-export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[]; readTool?: ReadToolExecutor } = {}): Promise<PlannedActionCard | null> {
+export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[]; readTool?: ReadToolExecutor; relatedOpenActions?: RelatedActionCandidate[] } = {}): Promise<PlannedActionCard | null> {
   const analyzed = await analyzeMail(msg, chat, opts.userAddrs ?? []);
   if (!analyzed?.needsAction) return null;
 
@@ -146,7 +160,7 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
     reasoning: analyzed.reasoning,
   };
 
-  const planned = await planActions(msg, analyzed, contextSnapshot, calendar, chat);
+  const planned = await planActions(msg, analyzed, contextSnapshot, calendar, opts.relatedOpenActions ?? [], chat);
 
   return {
     kind: analyzed.kind,
@@ -158,6 +172,7 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
     contextSnapshot,
     proposedActions: planned?.proposedActions ?? fallbackActions(msg, analyzed, calendar),
     needsAction: true,
+    relatedActionId: planned?.relatedActionId ?? null,
   };
 }
 
@@ -262,14 +277,15 @@ async function planActions(
   analyzed: AnalyzedMail,
   contextSnapshot: ContextSnapshot,
   calendar: CalendarContext,
+  relatedOpenActions: RelatedActionCandidate[],
   chat: Chat,
-): Promise<{ title: string; summary: string; proposedActions: ProposedAction[] } | null> {
+): Promise<{ title: string; summary: string; proposedActions: ProposedAction[]; relatedActionId: number | null } | null> {
   const out = await chat(PLAN_SYSTEM, JSON.stringify({ message: {
     messageId: msg.messageId,
     subject: msg.subject,
     from: msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr,
     bodyText: msg.bodyText,
-  }, analyzed, contextSnapshot, calendar }, null, 2));
+  }, currentTime: currentTimeContext(), analyzed, contextSnapshot, calendar, relatedOpenActions }, null, 2));
   const parsed = jsonFromLlm<Record<string, unknown>>(out);
   if (!parsed) return null;
   const proposedActions = normalizeProposedActions(parsed.proposedActions, analyzed, msg.bodyText);
@@ -278,7 +294,28 @@ async function planActions(
     title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : defaultTitle(analyzed.kind, msg.subject),
     summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : analyzed.summary,
     proposedActions,
+    relatedActionId: normalizeRelatedActionId(parsed.relatedActionId, relatedOpenActions),
   };
+}
+
+function currentTimeContext(): { iso: string; local: string; timeZone: string } {
+  const now = new Date();
+  return {
+    iso: now.toISOString(),
+    local: new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Rome",
+      dateStyle: "short",
+      timeStyle: "medium",
+      hour12: false,
+    }).format(now),
+    timeZone: "Europe/Rome",
+  };
+}
+
+function normalizeRelatedActionId(value: unknown, candidates: RelatedActionCandidate[]): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && candidates.some((candidate) => candidate.id === value)
+    ? value
+    : null;
 }
 
 interface AnalyzedMail {
@@ -365,11 +402,12 @@ function normalizeProposedStep(
   if (!raw || typeof raw !== "object") return null;
   const step = raw as Record<string, unknown>;
   if (step.kind === "manual") {
+    const normalizedLinks = normalizeManualLinks(step.links, rawBodyText);
     return {
       id: typeof step.id === "string" ? step.id : `step-${index + 1}`,
       label: typeof step.label === "string" ? step.label : "Manual step",
       kind: "manual",
-      links: normalizeManualLinks(step.links, rawBodyText),
+      links: normalizedLinks.length > 0 ? normalizedLinks : inferSinglePlainWebLink(step.label, rawBodyText),
     };
   }
   if (typeof step.tool !== "string" || !step.tool.startsWith("mcp__")) return null;
@@ -389,6 +427,14 @@ function normalizeProposedStep(
   };
 }
 
+function inferSinglePlainWebLink(label: unknown, rawBodyText: string): { url: string }[] {
+  if (typeof label !== "string" || !/\b(apri|acced|scaric|consult|open|access|download|visit)\w*/i.test(label)) return [];
+  const matches = [...rawBodyText.matchAll(/\bwww\.[a-z0-9.-]+(?:\/[a-z0-9._~:/?#[\]@!$&'()*+,;=%-]*)?/gi)]
+    .map((match) => match[0].replace(/[.,;:!?]+$/, ""));
+  const unique = [...new Set(matches)];
+  return unique.length === 1 ? [{ url: `https://${unique[0]}` }] : [];
+}
+
 function normalizeManualLinks(value: unknown, rawBodyText: string): { url: string; label?: string }[] {
   if (!Array.isArray(value)) return [];
   const out: { url: string; label?: string }[] = [];
@@ -396,8 +442,14 @@ function normalizeManualLinks(value: unknown, rawBodyText: string): { url: strin
     if (!raw || typeof raw !== "object") continue;
     const l = raw as Record<string, unknown>;
     if (typeof l.url !== "string" || !l.url.trim()) continue;
-    const url = l.url.trim();
-    if (!rawBodyText.includes(url)) continue;
+    const sourceUrl = l.url.trim();
+    if (!rawBodyText.includes(sourceUrl)) continue;
+    const url = /^https?:\/\//i.test(sourceUrl)
+      ? sourceUrl
+      : /^www\.[a-z0-9.-]+(?:[/?#][^\s]*)?$/i.test(sourceUrl)
+        ? `https://${sourceUrl}`
+        : null;
+    if (!url) continue;
     out.push(typeof l.label === "string" && l.label.trim() ? { url, label: l.label.trim() } : { url });
   }
   return out;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ActionStore } from "../src/store.ts";
-import { checkIfMessageResolvesAction, findResolvableOpenActions } from "../src/cross-thread-resolution.ts";
+import { checkIfMessageResolvesAction, findResolvableOpenActions, selectContinuationCandidates } from "../src/cross-thread-resolution.ts";
 import type { ActionItem } from "../src/types.ts";
 
 const openAction = { title: "Follow-up sulla richiesta Credit Lombard", summary: "In attesa di risposta da Fineco." };
@@ -99,6 +99,101 @@ test("findResolvableOpenActions caps to the 5 most recently updated matches", ()
   const matches = findResolvableOpenActions(actions, { fromAddr: "helpdesk@finecobank.com", threadId: 999 }, ["me@example.com"]);
   assert.equal(matches.length, 5);
   assert.deepEqual(matches.map((m) => m.id), [7, 6, 5, 4, 3]);
+});
+
+test("selectContinuationCandidates keeps only the matching account identifier and a compact summary", () => {
+  const now = 1_800_000_000;
+  const make = (id: number, last4: string, summary: string): ActionItem => ({
+    id,
+    sourceKey: `mail:thread:${id}`,
+    sourceKind: "mail",
+    kind: "admin-task",
+    status: "new",
+    priority: "high",
+    title: `Carta Fineco ****${last4} bloccata`,
+    summary,
+    dueAt: null,
+    createdAt: now,
+    updatedAt: now + id,
+    payload: { threadId: id, contextSnapshot: { mail: { from: "Fineco <service@finecobank.com>" } } },
+  });
+  const candidates = selectContinuationCandidates(
+    [make(1, "5675", "s".repeat(900)), make(2, "9911", "Altra carta bloccata")],
+    { fromAddr: "service@finecobank.com", threadId: 3, subject: "Nuovo blocco carta ****5675", bodyText: "Verificare la carta ****5675." },
+    ["me@example.com"],
+  );
+  assert.deepEqual(candidates.map((candidate) => candidate.id), [1]);
+  assert.equal(candidates[0].summary.length, 500);
+  assert.equal("sourceKey" in candidates[0], false);
+});
+
+test("selectContinuationCandidates rejects a different repository when both alerts have strong repo anchors", () => {
+  const action: ActionItem = {
+    id: 1,
+    sourceKey: "mail:thread:1",
+    sourceKind: "mail",
+    kind: "admin-task",
+    status: "new",
+    priority: "high",
+    title: "GitGuardian secret in owner/first-repo",
+    summary: "Rotate the leaked password and resolve the incident.",
+    dueAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+    payload: { threadId: 1, contextSnapshot: { mail: { from: "GitGuardian <alerts@gitguardian.com>" } } },
+  };
+  const candidates = selectContinuationCandidates(
+    [action],
+    { fromAddr: "alerts@gitguardian.com", threadId: 2, subject: "Secret in owner/second-repo", bodyText: "A password was detected in owner/second-repo." },
+    ["me@example.com"],
+  );
+  assert.deepEqual(candidates, []);
+});
+
+test("selectContinuationCandidates does not link unrelated notifications just because sender and brand match", () => {
+  const action: ActionItem = {
+    id: 1,
+    sourceKey: "mail:thread:1",
+    sourceKind: "mail",
+    kind: "admin-task",
+    status: "new",
+    priority: "normal",
+    title: "Accetta l'invito LinkedIn di Giorgio",
+    summary: "Valuta il profilo di Giorgio e decidi se accettare il collegamento.",
+    dueAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+    payload: { threadId: 1, contextSnapshot: { mail: { from: "LinkedIn <messages-noreply@linkedin.com>" } } },
+  };
+  const candidates = selectContinuationCandidates(
+    [action],
+    { fromAddr: "messages-noreply@linkedin.com", threadId: 2, subject: "XiangYu ti ha invitato a collegarti", bodyText: "Visualizza il profilo di XiangYu oppure accetta il suo invito." },
+    ["me@example.com"],
+  );
+  assert.deepEqual(candidates, []);
+});
+
+test("selectContinuationCandidates retains a prose match only when several specific terms agree", () => {
+  const action: ActionItem = {
+    id: 1,
+    sourceKey: "mail:thread:1",
+    sourceKind: "mail",
+    kind: "admin-task",
+    status: "new",
+    priority: "normal",
+    title: "Completa la formazione cybersecurity obbligatoria",
+    summary: "Il corso cybersecurity annuale richiede il completamento del quiz finale.",
+    dueAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+    payload: { threadId: 1, contextSnapshot: { mail: { from: "Training <training@example.org>" } } },
+  };
+  const candidates = selectContinuationCandidates(
+    [action],
+    { fromAddr: "reminders@example.org", threadId: 2, subject: "Promemoria formazione cybersecurity", bodyText: "Completa il corso cybersecurity e il quiz finale." },
+    ["me@example.com"],
+  );
+  assert.deepEqual(candidates.map((candidate) => candidate.id), [1]);
 });
 
 test("checkIfMessageResolvesAction returns the updated summary when the LLM says the message resolves the task", async () => {

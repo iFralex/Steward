@@ -11,6 +11,47 @@ test("Action automation defaults on and records a fresh cutoff when re-enabled",
   s.close();
 });
 
+test("upsert can merge a related thread into one action and remembers both sources", () => {
+  const s = ActionStore.open(":memory:");
+  const first = s.upsert({
+    sourceKey: "mail:thread:10",
+    sourceKind: "mail",
+    kind: "admin-task",
+    title: "Card suspended",
+    summary: "Fineco suspended card ****5675.",
+    payload: { threadId: 10, contextSnapshot: { mail: { from: "Fineco <service@finecobank.com>" } } },
+  });
+  const merged = s.upsert({
+    sourceKey: "mail:thread:20",
+    sourceKind: "mail",
+    kind: "admin-task",
+    title: "Card fully blocked",
+    summary: "Fineco later extended the block to every function.",
+    payload: { threadId: 20, contextSnapshot: { mail: { from: "Fineco <service@finecobank.com>" } } },
+  }, { mergeIntoId: first.id });
+
+  assert.equal(merged.id, first.id);
+  assert.equal(s.list().length, 1);
+  const item = s.get(first.id)!;
+  assert.equal(item.sourceKey, "mail:thread:10");
+  assert.deepEqual(item.payload.relatedSourceKeys, ["mail:thread:20"]);
+  assert.deepEqual(item.payload.relatedThreadIds, [10, 20]);
+  const history = item.payload.relatedHistory as Record<string, unknown>[];
+  assert.equal(history.length, 1);
+  assert.equal("contextSnapshot" in history[0], false, "merged history must not duplicate potentially large tool observations");
+  const same = s.upsert({
+    sourceKey: "mail:thread:20",
+    sourceKind: "mail",
+    kind: "admin-task",
+    title: "Card still blocked",
+    summary: "No change.",
+    payload: { threadId: 20 },
+  });
+  assert.equal(same.id, first.id, "a related source key must resolve to the merged action later");
+  assert.equal(s.list().length, 1);
+  s.close();
+});
+
 test("upsert inserts, updates active items, and preserves done items", () => {
   const s = ActionStore.open(":memory:");
   const a = s.upsert({
