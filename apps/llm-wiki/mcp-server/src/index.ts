@@ -16,9 +16,9 @@ import {
 } from "./api-client.js"
 import { VERSION } from "./version.js"
 import { buildWikiSearchPage, normalizeWikiSearchPage, type WikiSearchPage } from "./search-page.js"
+import { formatContentPage } from "./content-page.js"
 
 const DEFAULT_PROJECT_ID = "current"
-const MAX_TEXT_BYTES = 120_000
 
 const client = new LlmWikiApiClient()
 
@@ -64,12 +64,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "llm_wiki_read_file",
-      description: "Read a text file from a project through the desktop app API. Only public project paths such as wiki/ and raw/sources/ are allowed by the API.",
+      description: "Read an exact page of a text file through the desktop app API. Returns the first 5000 characters by default; follow the reported nextOffset only when more content is materially needed. Only public project paths such as wiki/ and raw/sources/ are allowed by the API.",
       inputSchema: {
         type: "object",
         properties: {
           project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
           path: { type: "string", description: "Project-relative file path, for example wiki/index.md." },
+          content_offset: { type: "number", description: "Character offset from nextOffset or earlierOffset in the previous page." },
+          content_limit: { type: "number", description: "Content characters to return. Defaults to 5000 and is capped at 12000." },
         },
         required: ["path"],
         additionalProperties: false,
@@ -214,7 +216,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await assertMcpEnabled()
         const relPath = stringArg(args.path, "path")
         const { path, content } = await client.fileContent(projectId(args), relPath)
-        return textResult(`# ${path}\n\n${truncateText(content, MAX_TEXT_BYTES)}`)
+        return textResult(formatContentPage(path, content, {
+          contentOffset: numberArg(args.content_offset),
+          contentLimit: numberArg(args.content_limit),
+        }))
       }
       case "llm_wiki_reviews": {
         await assertMcpEnabled()
@@ -337,20 +342,6 @@ function numberArg(value: unknown): number | undefined {
 
 function enumArg<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === "string" && allowed.includes(value as T) ? value as T : fallback
-}
-
-function truncateText(value: string, maxBytes: number): string {
-  const bytes = Buffer.byteLength(value, "utf8")
-  if (bytes <= maxBytes) return value
-  let out = ""
-  let used = 0
-  for (const ch of value) {
-    const size = Buffer.byteLength(ch, "utf8")
-    if (used + size > maxBytes) break
-    out += ch
-    used += size
-  }
-  return `${out}\n\n[truncated: ${bytes - used} bytes omitted]`
 }
 
 function formatFileTree(files: ApiFileNode[], truncated = false): string {

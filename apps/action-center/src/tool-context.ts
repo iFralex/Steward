@@ -26,7 +26,7 @@ export const READ_TOOL_SPECS = [
   "mcp__contacts__read_contact with {uid: string}",
   "mcp__contacts__resolve_recipient with {query: string}",
   "mcp__llm-wiki__llm_wiki_search with {query: string, top_k? number (max 5 here), offset? number, include_content? boolean}",
-  "mcp__llm-wiki__llm_wiki_read_file with {path: string}",
+  "mcp__llm-wiki__llm_wiki_read_file with {path: string, content_offset? number, content_limit? number (max 5000 here)}",
 ] as const;
 
 const ALLOWED_READ_TOOLS = new Set(READ_TOOL_SPECS.map((s) => s.split(" ")[0]));
@@ -51,6 +51,7 @@ Rules:
 - If a current thread says "also", "forgot", "as mentioned", "you must specify", "nothing to report", attendance/absence/presence, expenses, documents, or deadlines, look for related recent sent and received messages before drafting final actions.
 - If a wiki search is useful but unavailable or fails, continue with other read tools and preserve the uncertainty in observations.
 - LLM Wiki search is paginated and capped at five results in this context. Follow page.nextOffset only when another result page is materially necessary.
+- LLM Wiki files are returned as exact character pages capped at 5000 characters in this context. Follow nextOffset only when omitted content is materially necessary.
 - If previous observations reveal new facts that need validation, request additional read tools.
 - Do not repeat calls already present in previous observations.
 - Do not call write tools. Do not include unavailable tools. Respect the remaining call budget.`;
@@ -189,6 +190,20 @@ function extractEmail(value: string): string | null {
 }
 
 function sanitizeReadToolInput(tool: string, input: Record<string, unknown>): Record<string, unknown> {
+  if (tool === "mcp__llm-wiki__llm_wiki_read_file") {
+    const normalized = { ...input };
+    if (typeof normalized.contentOffset === "number" && typeof normalized.content_offset !== "number") normalized.content_offset = normalized.contentOffset;
+    if (typeof normalized.contentLimit === "number" && typeof normalized.content_limit !== "number") normalized.content_limit = normalized.contentLimit;
+    const requestedLimit = typeof normalized.content_limit === "number" && Number.isFinite(normalized.content_limit)
+      ? Math.floor(normalized.content_limit)
+      : 5_000;
+    normalized.content_limit = Math.min(Math.max(requestedLimit, 1), 5_000);
+    if (typeof normalized.content_offset === "number" && Number.isFinite(normalized.content_offset)) {
+      normalized.content_offset = Math.max(0, Math.floor(normalized.content_offset));
+    }
+    const allowed = new Set(["path", "project_id", "content_offset", "content_limit"]);
+    return Object.fromEntries(Object.entries(normalized).filter(([key]) => allowed.has(key)));
+  }
   if (tool === "mcp__llm-wiki__llm_wiki_search") {
     const normalized = { ...input };
     if (typeof normalized.topK === "number" && typeof normalized.top_k !== "number") normalized.top_k = normalized.topK;
