@@ -18,8 +18,19 @@ function clampLimit(raw: Raw, def: number): number {
   return typeof v === "number" && v >= 1 ? Math.min(Math.floor(v), 50) : def;
 }
 
-export function parseSearchArgs(raw: Raw): { query: string; limit: number } {
-  return { query: requireString(raw, "query"), limit: clampLimit(raw, 20) };
+export function parseSearchArgs(raw: Raw): { query: string; limit: number; offset: number; fetchLimit: number } {
+  const requestedLimit = raw.limit;
+  const limit = typeof requestedLimit === "number" && requestedLimit >= 1 ? Math.min(Math.floor(requestedLimit), 15) : 8;
+  const requestedOffset = raw.offset;
+  const offset = typeof requestedOffset === "number" && Number.isFinite(requestedOffset)
+    ? Math.max(0, Math.floor(requestedOffset))
+    : 0;
+  return {
+    query: requireString(raw, "query"),
+    limit,
+    offset,
+    fetchLimit: Math.min(offset + limit + 1, 50),
+  };
 }
 export function parseResolveArgs(raw: Raw): { description: string; limit: number } {
   return { description: requireString(raw, "description"), limit: clampLimit(raw, 5) };

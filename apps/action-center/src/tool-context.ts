@@ -22,7 +22,7 @@ export const READ_TOOL_SPECS = [
   "mcp__calendar__list_calendars with {}",
   "mcp__calendar__search_events with {query? string, start? ISO string, end? ISO string, account? string, calendar? string, limit? number (max 10 here), offset? number}",
   "mcp__calendar__read_event with {uid: string}",
-  "mcp__contacts__search_contacts with {query: string, limit? number}",
+  "mcp__contacts__search_contacts with {query: string, limit? number (max 8 here), offset? number}",
   "mcp__contacts__read_contact with {uid: string}",
   "mcp__contacts__resolve_recipient with {query: string}",
   "mcp__llm-wiki__llm_wiki_search with {query: string, top_k? number (max 5 here), offset? number, include_content? boolean}",
@@ -46,6 +46,7 @@ Rules:
 - For scheduling, availability, absences, deadlines, events, or reminders, use calendar tools when useful.
 - Calendar searches are paginated and capped at ten events in this context. Follow page.nextOffset only when more events are materially necessary; use read_event for an unabridged description.
 - For sender identity or recipient ambiguity, use contacts tools when useful.
+- Contact searches are paginated and capped at eight contacts in this context. Follow page.nextOffset only when more candidates are materially necessary; use read_contact for a complete note.
 - For project/document/personal-memory context, use LLM Wiki tools when useful.
 - For thread ambiguity, use mail thread/message tools when useful.
 - For administrative replies where the answer may depend on facts the user already communicated elsewhere, search recent related mail across threads using the same sender/domain, recipients, and key terms from the task.
@@ -191,6 +192,18 @@ function extractEmail(value: string): string | null {
 }
 
 function sanitizeReadToolInput(tool: string, input: Record<string, unknown>): Record<string, unknown> {
+  if (tool === "mcp__contacts__search_contacts") {
+    const normalized = { ...input };
+    const requestedLimit = typeof normalized.limit === "number" && Number.isFinite(normalized.limit)
+      ? Math.floor(normalized.limit)
+      : 8;
+    normalized.limit = Math.min(Math.max(requestedLimit, 1), 8);
+    if (typeof normalized.offset === "number" && Number.isFinite(normalized.offset)) {
+      normalized.offset = Math.max(0, Math.floor(normalized.offset));
+    }
+    const allowed = new Set(["query", "limit", "offset"]);
+    return Object.fromEntries(Object.entries(normalized).filter(([key]) => allowed.has(key)));
+  }
   if (tool === "mcp__calendar__search_events") {
     const normalized = { ...input };
     const requestedLimit = typeof normalized.limit === "number" && Number.isFinite(normalized.limit)

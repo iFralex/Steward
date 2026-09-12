@@ -12,6 +12,8 @@ import { embedText } from "@steward/search";
 import { createContact, updateContact } from "./applescript.ts";
 import { parseSearchArgs, parseResolveArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { sourceDbPaths, indexDbPath } from "./paths.ts";
+import { buildContactSearchPage } from "./contact-page.ts";
+import type { Contact } from "./types.ts";
 
 let store: AddressBookStore | null = null;
 let storeError: string | null = null;
@@ -38,7 +40,10 @@ const server = new Server({ name: "contacts", version: "0.0.0" }, { capabilities
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    { name: "search_contacts", description: "Search contacts (hybrid keyword+semantic).", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"], additionalProperties: false } },
+    { name: "search_contacts", description: "Search a compact page of contacts (hybrid keyword+semantic). Defaults to 8 results; follow page.nextOffset only when more are materially needed. Use read_contact for the complete note and internal source provenance.", inputSchema: { type: "object", properties: {
+      query: { type: "string" }, limit: { type: "number", description: "Page size; defaults to 8 and is capped at 15." },
+      offset: { type: "number", description: "Rank offset from page.nextOffset." },
+    }, required: ["query"], additionalProperties: false } },
     { name: "read_contact", description: "Read one contact by uid.", inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
     { name: "resolve_recipient", description: "Resolve a free-text description (e.g. 'the accountant') to ranked email-bearing candidates. Returns candidates for confirmation; does not auto-pick.", inputSchema: { type: "object", properties: { description: { type: "string" }, limit: { type: "number" } }, required: ["description"], additionalProperties: false } },
     { name: "create_contact", description: "Create a contact. Needs at least a name or organization.", inputSchema: { type: "object", properties: {
@@ -75,8 +80,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "search_contacts": {
         const liveStore = requireStore();
         const a = parseSearchArgs(raw);
-        const uids = index ? await search(a.query, a.limit) : [];
-        return ok(uids.map((u) => liveStore.getContact(u)).filter(Boolean).slice(0, a.limit));
+        const uids = index ? await search(a.query, a.fetchLimit) : [];
+        const contacts = uids.slice(a.offset, a.offset + a.limit + 1)
+          .map((u) => liveStore.getContact(u)).filter((contact): contact is Contact => !!contact);
+        return ok(buildContactSearchPage(contacts, a.limit, a.offset));
       }
       case "read_contact": {
         return ok(requireStore().getContact(requireString(raw, "uid")) ?? null);

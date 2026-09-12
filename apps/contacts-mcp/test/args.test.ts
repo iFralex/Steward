@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseSearchArgs, parseResolveArgs, parseCreateArgs } from "../src/args.ts";
 
-test("parseSearchArgs requires query, clamps limit", () => {
+test("parseSearchArgs requires query and paginates with a capped limit", () => {
   assert.throws(() => parseSearchArgs({}), /query/);
   const a = parseSearchArgs({ query: "anna", limit: 999 });
   assert.equal(a.query, "anna");
-  assert.equal(a.limit, 50);
+  assert.equal(a.limit, 15);
+  assert.equal(a.offset, 0);
+  assert.equal(a.fetchLimit, 16);
+  const defaults = parseSearchArgs({ query: "anna" });
+  assert.equal(defaults.limit, 8);
+  assert.equal(defaults.fetchLimit, 9);
 });
 
 test("parseResolveArgs requires description, default limit 5", () => {

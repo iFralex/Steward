@@ -54,7 +54,8 @@ Hybrid keyword + semantic search over indexed contacts.
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | `query` | string | yes | Free-text query |
-| `limit` | number | no | Max results (default 20, max 50) |
+| `limit` | number | no | Page size (default 8, max 15) |
+| `offset` | number | no | Rank offset returned as `page.nextOffset` |
 
 ### `read_contact`
 

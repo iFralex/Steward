@@ -89,3 +89,25 @@ test("caps paginated calendar searches at ten events", async () => {
     offset: 10,
   });
 });
+
+test("caps paginated contact searches at eight candidates", async () => {
+  let executedInput: Record<string, unknown> | undefined;
+  await collectReadToolContext({
+    chat: async () => JSON.stringify({
+      toolCalls: [{
+        tool: "mcp__contacts__search_contacts",
+        input: { query: "accountant", limit: 50, offset: 8, ignored: true },
+        reason: "Check another page of possible contacts.",
+      }],
+    }),
+    execute: async (_tool, input) => {
+      executedInput = input;
+      return { contacts: [] };
+    },
+    message: { subject: "Question" },
+    analyzed: { kind: "informational" },
+    maxCalls: 1,
+  });
+
+  assert.deepEqual(executedInput, { query: "accountant", limit: 8, offset: 8 });
+});
