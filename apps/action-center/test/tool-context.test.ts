@@ -2,6 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { collectReadToolContext } from "../src/tool-context.ts";
 
+test("mail searches cannot read beyond the planner reference time", async () => {
+  let executedInput: Record<string, unknown> | undefined;
+  await collectReadToolContext({
+    chat: async () => JSON.stringify({ toolCalls: [{ tool: "mcp__mail__search_messages", input: { query: "example", dateTo: "2026-09-30T00:00:00Z" }, reason: "Find prior examples" }] }),
+    execute: async (_tool, input) => { executedInput = input; return []; },
+    message: { subject: "Historical replay" },
+    analyzed: { kind: "admin-task" },
+    referenceTime: new Date("2026-08-24T21:55:14Z"),
+    maxCalls: 1,
+  });
+  assert.equal(executedInput?.dateTo, "2026-08-24T21:55:14.000Z");
+});
+
 test("normalizes LLM Wiki search aliases and caps Action results at five", async () => {
   let executedInput: Record<string, unknown> | undefined;
   const context = await collectReadToolContext({

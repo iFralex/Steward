@@ -17,6 +17,21 @@ function msg(): PlanningMessage {
   };
 }
 
+test("planner injects a matching flow before read-tool selection and snapshots only applied versions", async () => {
+  const simulatedNow = new Date("2026-06-20T10:15:00+02:00");
+  const prompts: string[] = [];
+  const flow = { id: 42, name: "Train assistance", when: "Future train purchase confirmation", guidance: "Ask the assistance desk and create a reminder", exclusions: "Journey already departed", enabled: true, version: 3, createdAt: 1, updatedAt: 2, score: 0.91 };
+  const card = await planMailAction({ ...msg(), subject: "Conferma acquisto treno", bodyText: "Viaggio il 27 giugno." }, async (system, prompt) => {
+    prompts.push(prompt);
+    if (system.includes("Analyze")) return JSON.stringify({ needsAction: true, kind: "admin-task", priority: "normal", summary: "Acquisto treno", dueDateTime: null, scheduling: null, replyDrafts: {}, reasoning: "Future journey" });
+    return JSON.stringify({ title: "Organizza assistenza", summary: "Proposta basata sul flusso Train assistance.", relatedActionId: null, appliedFlowIds: [42, 999], proposedActions: [{ id: "assist", label: "Organizza", summary: "Contatta assistenza e imposta il promemoria", confidence: "high", steps: [{ id: "mail", label: "Scrivi all'assistenza", kind: "tool", tool: "mcp__mail__send_email", input: { to: ["desk@example.com"], subject: "Assistenza", body: "Richiesta" }, writes: true }] }] });
+  }, { now: simulatedNow, flowSearch: async () => [flow] });
+  assert.equal(card?.contextSnapshot.flows?.[0]?.id, 42);
+  assert.equal(card?.contextSnapshot.flows?.[0]?.version, 3);
+  assert.equal(prompts[0].includes(simulatedNow.toISOString()), true);
+  assert.equal(prompts[1].includes('"name": "Train assistance"'), true);
+});
+
 test("planMailAction stores executable scheduling proposals", async () => {
   let calls = 0;
   let planningPayload: { currentTime?: { iso?: string; local?: string; timeZone?: string } } = {};

@@ -55,6 +55,7 @@ Rules:
 - LLM Wiki search is paginated and capped at five results in this context. Follow page.nextOffset only when another result page is materially necessary.
 - LLM Wiki files are returned as exact character pages capped at 5000 characters in this context. Follow nextOffset only when omitted content is materially necessary.
 - If previous observations reveal new facts that need validation, request additional read tools.
+- When a flow asks you to consult prior examples, retrieve them to learn stable recipients or structure only. Treat old dates, stations, booking identifiers, passengers, case status, and other transaction-specific details as stale; they must never override the current message.
 - Do not repeat calls already present in previous observations.
 - Do not call write tools. Do not include unavailable tools. Respect the remaining call budget.`;
 
@@ -63,6 +64,9 @@ export async function collectReadToolContext(args: {
   execute?: ReadToolExecutor;
   message: Record<string, unknown>;
   analyzed: Record<string, unknown>;
+  flows?: unknown[];
+  /** Causal upper bound for mail reads, especially during historical replay. */
+  referenceTime?: Date;
   maxCalls?: number;
 }): Promise<{ requested: ReadToolCall[]; observations: ReadToolObservation[] }> {
   if (!args.execute) return { requested: [], observations: [] };
@@ -71,7 +75,7 @@ export async function collectReadToolContext(args: {
   const maxCalls = args.maxCalls ?? 6;
   const seen = new Set<string>();
 
-  const seeded = seedToolCalls(args.message, args.analyzed, maxCalls);
+  const seeded = seedToolCalls(args.message, args.analyzed, maxCalls, args.referenceTime);
   if (seeded.length) {
     requested.push(...seeded);
     for (const call of seeded) {
@@ -89,11 +93,13 @@ export async function collectReadToolContext(args: {
     const raw = await args.chat(TOOL_CONTEXT_SYSTEM, JSON.stringify({
       message: args.message,
       analyzed: args.analyzed,
+      flows: args.flows ?? [],
       previousObservations: observations,
       remainingCalls: maxCalls - requested.length,
     }, null, 2));
     const parsed = jsonFromLlm<Record<string, unknown>>(raw);
     const nextCalls = normalizeToolCalls(parsed?.toolCalls, maxCalls - requested.length)
+      .map((call) => clampMailReadToReferenceTime(call, args.referenceTime))
       .filter((call) => {
         const key = callKey(call);
         if (seen.has(key)) return false;
@@ -112,6 +118,16 @@ export async function collectReadToolContext(args: {
     }
   }
   return { requested, observations };
+}
+
+function clampMailReadToReferenceTime(call: ReadToolCall, referenceTime?: Date): ReadToolCall {
+  if (!referenceTime || call.tool !== "mcp__mail__search_messages") return call;
+  const upper = referenceTime.toISOString();
+  const requested = typeof call.input.dateTo === "string" && Number.isFinite(Date.parse(call.input.dateTo))
+    ? new Date(call.input.dateTo as string)
+    : null;
+  if (requested && requested.getTime() <= referenceTime.getTime()) return call;
+  return { ...call, input: { ...call.input, dateTo: upper } };
 }
 
 export function isAllowedReadTool(tool: string): boolean {
@@ -136,7 +152,7 @@ function normalizeToolCalls(value: unknown, maxCalls: number): ReadToolCall[] {
   return out;
 }
 
-function seedToolCalls(message: Record<string, unknown>, analyzed: Record<string, unknown>, maxCalls: number): ReadToolCall[] {
+function seedToolCalls(message: Record<string, unknown>, analyzed: Record<string, unknown>, maxCalls: number, referenceTime?: Date): ReadToolCall[] {
   if (maxCalls <= 0 || !looksLikeAdministrativeCrossThreadCase(message, analyzed)) return [];
   const calls: ReadToolCall[] = [];
   const threadId = typeof message.threadId === "number" && Number.isFinite(message.threadId) ? message.threadId : null;
@@ -150,7 +166,7 @@ function seedToolCalls(message: Record<string, unknown>, analyzed: Record<string
   const sender = extractEmail(typeof message.from === "string" ? message.from : "");
   if (sender) {
     const messageDate = typeof message.date === "string" && Number.isFinite(Date.parse(message.date)) ? new Date(message.date) : new Date();
-    const now = new Date();
+    const now = referenceTime ?? new Date();
     const dateFrom = new Date(messageDate.getTime() - 21 * 86400_000).toISOString();
     const dateTo = new Date(Math.max(now.getTime(), messageDate.getTime()) + 2 * 3600_000).toISOString();
     calls.push({

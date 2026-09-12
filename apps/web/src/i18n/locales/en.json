@@ -282,10 +282,12 @@
       "from": "From", "to": "To", "cc": "Cc", "bcc": "Bcc", "subject": "Subject", "body": "Body",
       "label": "Label", "text": "Text",
       "attachments": "Attachments", "scheduledSend": "Scheduled send", "replyAll": "Reply all",
+      "flowName": "Flow name", "flowWhen": "When to use it", "flowGuidance": "What to propose", "flowExclusions": "When not to use it", "flowEnabled": "Enabled",
       "calendar": "Calendar", "title": "Title", "start": "Start", "end": "End", "location": "Location",
       "description": "Description", "url": "URL", "allDay": "All day", "recurrence": "Recurrence",
       "alarms": "Alerts (minutes before, comma-separated)"
     },
+    "flow": { "untitled": "Untitled flow", "enabled": "Enabled", "disabled": "Disabled" },
     "filesPlaceholder": "Drag a file from the chat, or paste a path + Enter",
     "approvalRequested": "approval requested",
     "edit": "Edit",

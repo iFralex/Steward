@@ -67,6 +67,20 @@ const FORMS: Record<string, Field[]> = {
     { key: "recurrence", labelKey: "recurrence", kind: "text" },
     { key: "alarms", labelKey: "alarms", kind: "numbers" },
   ],
+  create_flow: [
+    { key: "name", labelKey: "flowName", kind: "text" },
+    { key: "when", labelKey: "flowWhen", kind: "textarea" },
+    { key: "guidance", labelKey: "flowGuidance", kind: "textarea" },
+    { key: "exclusions", labelKey: "flowExclusions", kind: "textarea" },
+    { key: "enabled", labelKey: "flowEnabled", kind: "bool" },
+  ],
+  update_flow: [
+    { key: "name", labelKey: "flowName", kind: "text" },
+    { key: "when", labelKey: "flowWhen", kind: "textarea" },
+    { key: "guidance", labelKey: "flowGuidance", kind: "textarea" },
+    { key: "exclusions", labelKey: "flowExclusions", kind: "textarea" },
+    { key: "enabled", labelKey: "flowEnabled", kind: "bool" },
+  ],
 };
 
 const bareName = (tool: string): string => {
@@ -137,6 +151,21 @@ function ClipboardApprovalPreview({ input }: { input: Record<string, unknown> })
   );
 }
 
+function FlowApprovalPreview({ input }: { input: Record<string, unknown> }) {
+  const { t } = useTranslation();
+  return (
+    <div className="bg-muted/40 space-y-3 rounded-md border p-3 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold">{String(input.name ?? t("approval.flow.untitled"))}</span>
+        <Badge variant="outline">{input.enabled === false ? t("approval.flow.disabled") : t("approval.flow.enabled")}</Badge>
+      </div>
+      <div><div className="text-muted-foreground text-xs font-medium">{t("approval.fields.flowWhen")}</div><div className="whitespace-pre-wrap">{String(input.when ?? "")}</div></div>
+      <div><div className="text-muted-foreground text-xs font-medium">{t("approval.fields.flowGuidance")}</div><div className="whitespace-pre-wrap">{String(input.guidance ?? "")}</div></div>
+      {input.exclusions ? <div><div className="text-muted-foreground text-xs font-medium">{t("approval.fields.flowExclusions")}</div><div className="whitespace-pre-wrap">{String(input.exclusions)}</div></div> : null}
+    </div>
+  );
+}
+
 function FilesField({ value, onChange, fileApi }: { value: string; onChange: (v: string) => void; fileApi: FileApi }) {
   const { t } = useTranslation();
   const paths = value.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -183,12 +212,15 @@ export function ApprovalCard({
   const input = (approval.input ?? {}) as Record<string, unknown>;
   const fields = FORMS[bareName(approval.tool)];
   const isClipboardApproval = bareName(approval.tool) === "copy_to_clipboard";
+  const isFlowApproval = ["create_flow", "update_flow"].includes(bareName(approval.tool));
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [vals, setVals] = useState<Record<string, string | boolean>>(
-    () => Object.fromEntries((fields ?? []).map((f) => [f.key, toEditable(f.kind, input[f.key])])),
+    () => Object.fromEntries((fields ?? []).map((f) => [f.key,
+      isFlowApproval && f.key === "enabled" && input.enabled === undefined ? true : toEditable(f.kind, input[f.key]),
+    ])),
   );
 
   // JSON fallback (unknown tools).
@@ -251,6 +283,8 @@ export function ApprovalCard({
       <CardContent className="space-y-2">
         {isClipboardApproval ? (
           <ClipboardApprovalPreview input={edited} />
+        ) : isFlowApproval ? (
+          <FlowApprovalPreview input={edited} />
         ) : card ? (
           <CardView type={card.type} data={card.data} fileApi={fileApi} />
         ) : (

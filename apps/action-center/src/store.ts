@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { recordAudit } from "@steward/audit-log";
-import type { ActionItem, ActionKind, ActionStatus, UpsertAction } from "./types.ts";
+import type { ActionItem, ActionKind, ActionStatus, Flow, FlowMatch, UpsertAction, UpsertFlow } from "./types.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS actions (
@@ -29,6 +29,19 @@ CREATE TABLE IF NOT EXISTS seen_messages (
   seen_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_seen_at ON seen_messages(seen_at);
+CREATE TABLE IF NOT EXISTS flows (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  when_text TEXT NOT NULL,
+  guidance TEXT NOT NULL,
+  exclusions TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  embedding TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flows_enabled ON flows(enabled, updated_at);
 `;
 
 const AUTOMATION_SETTINGS_KEY = "automationSettings";
@@ -279,7 +292,107 @@ export class ActionStore {
     this.raw.prepare("DELETE FROM seen_messages WHERE seen_at < ?").run(beforeTs);
   }
 
+  createFlow(input: UpsertFlow, embedding: number[] | null = null): Flow {
+    const clean = normalizeFlowInput(input);
+    const now = Math.floor(Date.now() / 1000);
+    const info = this.raw.prepare(
+      `INSERT INTO flows(name,when_text,guidance,exclusions,enabled,version,embedding,created_at,updated_at)
+       VALUES (?,?,?,?,?,1,?,?,?)`,
+    ).run(clean.name, clean.when, clean.guidance, clean.exclusions, clean.enabled ? 1 : 0, serializeEmbedding(embedding), now, now);
+    return this.getFlow(Number(info.lastInsertRowid))!;
+  }
+
+  updateFlow(id: number, input: Partial<UpsertFlow>, embedding?: number[] | null): Flow | null {
+    const current = this.getFlow(id);
+    if (!current) return null;
+    const clean = normalizeFlowInput({ ...current, ...input });
+    const now = Math.floor(Date.now() / 1000);
+    const storedEmbedding = embedding === undefined
+      ? (this.raw.prepare("SELECT embedding FROM flows WHERE id=?").get(id) as { embedding: string | null }).embedding
+      : serializeEmbedding(embedding);
+    this.raw.prepare(
+      `UPDATE flows SET name=?,when_text=?,guidance=?,exclusions=?,enabled=?,version=version+1,embedding=?,updated_at=? WHERE id=?`,
+    ).run(clean.name, clean.when, clean.guidance, clean.exclusions, clean.enabled ? 1 : 0, storedEmbedding, now, id);
+    return this.getFlow(id);
+  }
+
+  setFlowEnabled(id: number, enabled: boolean): Flow | null {
+    return this.updateFlow(id, { enabled });
+  }
+
+  deleteFlow(id: number): boolean {
+    return this.raw.prepare("DELETE FROM flows WHERE id=?").run(id).changes > 0;
+  }
+
+  getFlow(id: number): Flow | null {
+    const row = this.raw.prepare("SELECT * FROM flows WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    return row ? rowToFlow(row) : null;
+  }
+
+  listFlows(opts: { enabledOnly?: boolean; limit?: number } = {}): Flow[] {
+    const limit = Math.min(Math.max(Math.floor(opts.limit ?? 50), 1), 100);
+    const rows = this.raw.prepare(
+      `SELECT * FROM flows ${opts.enabledOnly ? "WHERE enabled=1" : ""} ORDER BY updated_at DESC LIMIT ?`,
+    ).all(limit) as Record<string, unknown>[];
+    return rows.map(rowToFlow);
+  }
+
+  searchFlows(query: string, queryEmbedding: number[] | null, limit = 2): FlowMatch[] {
+    const tokens = tokenize(query);
+    const rows = this.raw.prepare("SELECT * FROM flows WHERE enabled=1").all() as Record<string, unknown>[];
+    return rows.map((row) => {
+      const flow = rowToFlow(row);
+      const haystack = `${flow.name} ${flow.when}`;
+      const lexical = lexicalScore(tokens, tokenize(haystack));
+      const vector = cosine(queryEmbedding, parseEmbedding(row.embedding));
+      const score = vector == null ? lexical : (vector * 0.72 + lexical * 0.28);
+      return { ...flow, score };
+    }).filter((match) => match.score >= 0.22)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.min(Math.max(Math.floor(limit), 1), 2));
+  }
+
   close(): void { this.raw.close(); }
+}
+
+function normalizeFlowInput(input: UpsertFlow): Required<UpsertFlow> {
+  const name = input.name?.trim().slice(0, 120);
+  const when = input.when?.trim().slice(0, 600);
+  const guidance = input.guidance?.trim().slice(0, 1600);
+  const exclusions = (input.exclusions ?? "").trim().slice(0, 600);
+  if (!name || !when || !guidance) throw new Error("name, when and guidance are required");
+  return { name, when, guidance, exclusions, enabled: input.enabled !== false };
+}
+
+function rowToFlow(row: Record<string, unknown>): Flow {
+  return { id: Number(row.id), name: String(row.name), when: String(row.when_text), guidance: String(row.guidance), exclusions: String(row.exclusions ?? ""), enabled: Number(row.enabled) === 1, version: Number(row.version), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) };
+}
+
+function serializeEmbedding(value: number[] | null): string | null {
+  return value?.length ? JSON.stringify(value) : null;
+}
+
+function parseEmbedding(value: unknown): number[] | null {
+  if (typeof value !== "string") return null;
+  try { const parsed = JSON.parse(value); return Array.isArray(parsed) && parsed.every(Number.isFinite) ? parsed : null; } catch { return null; }
+}
+
+function tokenize(value: string): Set<string> {
+  return new Set(value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9à-ÿ@]+/gi, " ").split(/\s+/).filter((t) => t.length >= 3));
+}
+
+function lexicalScore(query: Set<string>, document: Set<string>): number {
+  if (!query.size || !document.size) return 0;
+  let overlap = 0;
+  for (const token of document) if (query.has(token)) overlap++;
+  return Math.min(1, overlap / Math.max(2, Math.min(document.size, 8)));
+}
+
+function cosine(a: number[] | null, b: number[] | null): number | null {
+  if (!a || !b || a.length !== b.length || !a.length) return null;
+  let dot = 0, aa = 0, bb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; aa += a[i] * a[i]; bb += b[i] * b[i]; }
+  return aa && bb ? Math.max(0, dot / Math.sqrt(aa * bb)) : null;
 }
 
 interface ExistingActionRow {

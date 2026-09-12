@@ -1,9 +1,10 @@
 import { cleanBody } from "../../mail-promoter/src/clean-body.ts";
 import type { Chat } from "./llm.ts";
 import { jsonFromLlm } from "./llm.ts";
-import type { ActionKind, ActionPriority, ContextSnapshot, ProposedAction, ProposedManualStep, ProposedToolStep, RelatedActionCandidate } from "./types.ts";
+import type { ActionKind, ActionPriority, ContextSnapshot, FlowMatch, ProposedAction, ProposedManualStep, ProposedToolStep, RelatedActionCandidate } from "./types.ts";
 import { lookupCalendarContext, lookupContactContext, lookupWikiContext, type CalendarContext } from "./context.ts";
 import { collectReadToolContext, isAllowedReadTool, type ReadToolExecutor } from "./tool-context.ts";
+import { flowQuery } from "./flows.ts";
 
 export interface PlanningMessage {
   messageId: string;
@@ -57,13 +58,15 @@ Return ONLY JSON:
 }
 Rules:
 - If someone asks whether Alessio is free, available, can join a call/meeting/interview, or proposes a time, use kind="scheduling-request".
+- MatchingFlows contains user-authored workflow candidates retrieved for this exact message. A strong match may make an otherwise informational message actionable because the user explicitly wants the described follow-up. Apply the same when/exclusions checks; do not make weak matches actionable.
+- A matching flow is a preference, not evidence. Never copy dates, recipients, accessibility needs, or other facts from it unless the current message or later validated tool context supplies them.
 - For scheduling, requestedSlots must include concrete ISO intervals when the email contains or implies enough information; infer duration from the email or use a reasonable duration from the context.
 - Drafts should be ready to send, in the likely language/tone of the thread.
 - Do not execute anything.`;
 
 const PLAN_SYSTEM = `You turn an analyzed action item plus context into useful proposed courses of action for Alessio.
 Return ONLY JSON:
-{"title": string, "summary": string, "relatedActionId": number|null, "proposedActions": [
+{"title": string, "summary": string, "relatedActionId": number|null, "appliedFlowIds": [number], "proposedActions": [
   {"id": string, "label": string, "summary": string, "confidence": "low"|"medium"|"high",
    "steps": [{"id": string, "label": string, "kind": "tool"|"manual", "tool": string|null, "input": object|null, "writes": boolean|null, "links": [{"url": string, "label": string|null}]|null}]}
 ]}.
@@ -87,11 +90,16 @@ Rules:
 - currentTime is authoritative and includes the computer's current local time and system time zone. Never create or suggest a calendar event whose start is before currentTime. If a previously sensible reminder time has passed, choose a future suggestion or omit the reminder; never rewrite the source deadline or call a local-today time "tomorrow" because its UTC date differs.
 - Keep labels concise and put supporting detail in the proposal summary or tool input. Prefer roughly 1-3 proposals and 1-3 steps per proposal, but completeness is more important than a rigid count.
 - Read-only tool observations, if present in contextSnapshot.toolContext, have already been executed. Do not propose read-only steps merely to gather that same data; use those observations to produce validated write actions or explain uncertainty.
+- contextSnapshot.flows contains at most two user-authored workflow candidates retrieved for this situation. Apply a flow only when its "when" condition fits the actual message and none of its exclusions apply. Its guidance is a preference, not evidence: use exact dates, addresses, journey details, recipients, and other facts only from the message or validated read-tool observations. Never force a weak match.
+- If a flow is materially used, include its id in appliedFlowIds and say briefly in the Action summary that the proposal follows that named flow. If no flow is used, return an empty appliedFlowIds array. Do not expose retrieval scores or claim that a flow ran automatically.
+- A flow may require preparatory read-tool research. Use validated observations already present in toolContext; if a required fact is still missing, make the relevant step editable/conditional or omit it rather than inventing it. Flows never authorize execution: all write steps remain proposals requiring approval.
 - Proposed action steps must be executable user actions only. Do not include read-only tools in proposedActions.
 - Treat contextSnapshot.mail.replyRequirements as hard completeness requirements for reply/send-email proposals. A proposal that replies to the email must cover each requirement in the body, even when it offers alternatives.
 - If the current thread asks for multiple pieces of information, every reply proposal must address all of them. Do not narrow the action to only the latest detail. For example, if a thread asks for both monthly attendance/presences and how to account for a specific bridge/holiday day, the reply must include both the attendance/presence statement and the specific accounting choice for that day.
 - Treat contextSnapshot.mail.relatedMailFacts as validated facts. If it says Alessio already communicated absence/presence information in another thread, do not say he has not replied at all; frame the proposed reply as a follow-up/integration that acknowledges the earlier message and adds only the missing detail.
 - If read-only observations show the user already sent a related answer in another thread, draft the final action as a concise follow-up/update that acknowledges the earlier message and adds the missing information when appropriate.
+- When historical messages are consulted as examples, reuse only stable information that the flow explicitly asks for, such as a verified recipient address or general message structure. Never copy an old trip's station, date, time, train, booking code, passenger, assistance details, amount, account state, or other case-specific fact into the current Action. Current-source facts always win, including exact station variants.
+- When an applicable flow already defines a coherent sequence, normally return one course containing that sequence. Do not add a "do it later", partial, or reminder-only alternative merely to create choice. Add an alternative only for a real decision supported by current facts.
 - If requested slot is available, include an accept+create-calendar option.
 - If requested slot is busy, include a decline/propose-alternative option.
 - Calendar alarms must be numbers: minutes before event start, e.g. [15], not objects.
@@ -104,8 +112,10 @@ Rules:
 - The host will guard all write tools, so output concrete executable inputs.
 - Preserve uncertainty in summaries, but keep tool inputs usable.`;
 
-export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[]; readTool?: ReadToolExecutor; relatedOpenActions?: RelatedActionCandidate[] } = {}): Promise<PlannedActionCard | null> {
-  const analyzed = await analyzeMail(msg, chat, opts.userAddrs ?? []);
+export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[]; readTool?: ReadToolExecutor; relatedOpenActions?: RelatedActionCandidate[]; flowSearch?: (query: string, limit: number) => Promise<FlowMatch[]>; now?: Date } = {}): Promise<PlannedActionCard | null> {
+  const now = opts.now ?? new Date();
+  const flows = opts.flowSearch ? await opts.flowSearch(flowQuery(msg, {}), 2).catch(() => []) : [];
+  const analyzed = await analyzeMail(msg, chat, opts.userAddrs ?? [], now, flows);
   if (!analyzed?.needsAction) return null;
 
   const slots = analyzed.scheduling?.requestedSlots ?? [];
@@ -135,6 +145,8 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
       bodyPreview: cleanBody(msg.bodyText).slice(0, 2500),
     },
     analyzed: { ...analyzed, deadline },
+    flows,
+    referenceTime: now,
   });
   const replyRequirements: string[] = [];
   const relatedMailFacts = deriveRelatedMailFacts(toolContext, opts.userAddrs ?? [], msg.date);
@@ -157,10 +169,12 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
     contacts: { ...contacts },
     wiki,
     toolContext,
+    flows,
     reasoning: analyzed.reasoning,
   };
 
-  const planned = await planActions(msg, analyzed, contextSnapshot, calendar, opts.relatedOpenActions ?? [], chat);
+  const planned = await planActions(msg, analyzed, contextSnapshot, calendar, opts.relatedOpenActions ?? [], chat, now);
+  if (planned) contextSnapshot.flows = flows.filter((flow) => planned.appliedFlowIds.includes(flow.id));
 
   return {
     kind: analyzed.kind,
@@ -254,16 +268,17 @@ function uniqueFacts(facts: Record<string, unknown>[]): Record<string, unknown>[
   return out.slice(0, 5);
 }
 
-async function analyzeMail(msg: PlanningMessage, chat: Chat, userAddrs: string[]): Promise<AnalyzedMail | null> {
+async function analyzeMail(msg: PlanningMessage, chat: Chat, userAddrs: string[], now: Date, flows: FlowMatch[]): Promise<AnalyzedMail | null> {
   const body = cleanBody(msg.bodyText).slice(0, 9000);
   const out = await chat(ANALYZE_SYSTEM, [
-    `Today: ${new Date().toISOString()}`,
+    `Today: ${now.toISOString()}`,
     userAddrs.length ? `Alessio addresses: ${userAddrs.join(", ")}` : "",
     `From: ${msg.fromName} <${msg.fromAddr}>`,
     `To: ${msg.to.join(", ")}`,
     `Cc: ${msg.cc.join(", ")}`,
     `Subject: ${msg.subject}`,
     `Date: ${new Date(msg.date * 1000).toISOString()}`,
+    flows.length ? `MatchingFlows: ${JSON.stringify(flows)}` : "",
     "",
     body,
   ].filter(Boolean).join("\n"));
@@ -279,13 +294,14 @@ async function planActions(
   calendar: CalendarContext,
   relatedOpenActions: RelatedActionCandidate[],
   chat: Chat,
-): Promise<{ title: string; summary: string; proposedActions: ProposedAction[]; relatedActionId: number | null } | null> {
+  now: Date,
+): Promise<{ title: string; summary: string; proposedActions: ProposedAction[]; relatedActionId: number | null; appliedFlowIds: number[] } | null> {
   const out = await chat(PLAN_SYSTEM, JSON.stringify({ message: {
     messageId: msg.messageId,
     subject: msg.subject,
     from: msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr,
     bodyText: msg.bodyText,
-  }, currentTime: currentTimeContext(), analyzed, contextSnapshot, calendar, relatedOpenActions }, null, 2));
+  }, currentTime: currentTimeContext(now), analyzed, contextSnapshot, calendar, relatedOpenActions }, null, 2));
   const parsed = jsonFromLlm<Record<string, unknown>>(out);
   if (!parsed) return null;
   const proposedActions = normalizeProposedActions(parsed.proposedActions, analyzed, msg.bodyText);
@@ -295,11 +311,11 @@ async function planActions(
     summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : analyzed.summary,
     proposedActions,
     relatedActionId: normalizeRelatedActionId(parsed.relatedActionId, relatedOpenActions),
+    appliedFlowIds: normalizeAppliedFlowIds(parsed.appliedFlowIds, contextSnapshot.flows ?? []),
   };
 }
 
-function currentTimeContext(): { iso: string; local: string; timeZone: string } {
-  const now = new Date();
+function currentTimeContext(now = new Date()): { iso: string; local: string; timeZone: string } {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return {
     iso: now.toISOString(),
@@ -310,6 +326,12 @@ function currentTimeContext(): { iso: string; local: string; timeZone: string } 
     }).format(now),
     timeZone,
   };
+}
+
+function normalizeAppliedFlowIds(value: unknown, candidates: FlowMatch[]): number[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(candidates.map((flow) => flow.id));
+  return [...new Set(value.filter((id): id is number => typeof id === "number" && Number.isSafeInteger(id) && allowed.has(id)))];
 }
 
 function normalizeRelatedActionId(value: unknown, candidates: RelatedActionCandidate[]): number | null {

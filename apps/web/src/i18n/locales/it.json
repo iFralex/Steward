@@ -282,10 +282,12 @@
       "from": "Da", "to": "A", "cc": "Cc", "bcc": "Ccn", "subject": "Oggetto", "body": "Corpo",
       "label": "Etichetta", "text": "Testo",
       "attachments": "Allegati", "scheduledSend": "Invio posticipato", "replyAll": "Rispondi a tutti",
+      "flowName": "Nome del flusso", "flowWhen": "Quando usarlo", "flowGuidance": "Cosa proporre", "flowExclusions": "Quando non usarlo", "flowEnabled": "Attivo",
       "calendar": "Calendario", "title": "Titolo", "start": "Inizio", "end": "Fine", "location": "Luogo",
       "description": "Descrizione", "url": "URL", "allDay": "Tutto il giorno", "recurrence": "Ricorrenza",
       "alarms": "Avvisi (minuti prima, separati da virgola)"
     },
+    "flow": { "untitled": "Flusso senza nome", "enabled": "Attivo", "disabled": "Disattivato" },
     "filesPlaceholder": "Trascina un file dalla chat, o incolla un percorso + Invio",
     "approvalRequested": "approvazione richiesta",
     "edit": "Modifica",

@@ -4,6 +4,7 @@ import type { Chat } from "./llm.ts";
 import { planMailAction } from "./planner.ts";
 import type { ReadToolExecutor } from "./tool-context.ts";
 import { checkIfMessageResolvesAction, findResolvableOpenActions, selectContinuationCandidates } from "./cross-thread-resolution.ts";
+import { embedFlowText } from "./flows.ts";
 
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|mailer|newsletter|bounce|postmaster)\b/i;
 const LOW_VALUE_SURVEY = /\b(survey|questionario|soddisfazione|feedback|post[-\s]?result survey)\b/i;
@@ -109,7 +110,13 @@ export async function scanMailForActions(deps: {
         { fromAddr: msg.fromAddr, threadId: msg.threadId, subject: msg.subject, bodyText: msg.bodyText },
         deps.userAddrs ?? [],
       );
-      plan = await planMailAction(msg, deps.chat, { userAddrs: deps.userAddrs, readTool: deps.readTool, relatedOpenActions });
+      plan = await planMailAction(msg, deps.chat, {
+        userAddrs: deps.userAddrs,
+        readTool: deps.readTool,
+        relatedOpenActions,
+        flowSearch: async (query, limit) => deps.actions.searchFlows(query, await embedFlowText(query), limit),
+        now: new Date(now * 1000),
+      });
     } catch (err) {
       recordDeferred(result, err instanceof Error ? err.message : String(err));
       plan = null;

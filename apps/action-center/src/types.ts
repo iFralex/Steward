@@ -43,7 +43,32 @@ export interface ContextSnapshot {
   contacts?: Record<string, unknown>;
   wiki?: Record<string, unknown>;
   toolContext?: Record<string, unknown>;
+  flows?: FlowMatch[];
   reasoning?: string;
+}
+
+export interface Flow {
+  id: number;
+  name: string;
+  when: string;
+  guidance: string;
+  exclusions: string;
+  enabled: boolean;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface FlowMatch extends Flow {
+  score: number;
+}
+
+export interface UpsertFlow {
+  name: string;
+  when: string;
+  guidance: string;
+  exclusions?: string;
+  enabled?: boolean;
 }
 
 export interface ActionItem {

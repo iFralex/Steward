@@ -2,6 +2,24 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ActionStore } from "../src/store.ts";
 
+test("flows are versioned, searchable, disableable and deletable", () => {
+  const s = ActionStore.open(":memory:");
+  const flow = s.createFlow({
+    name: "Train accessibility follow-up",
+    when: "A train purchase confirmation for a future journey needs accessibility assistance",
+    guidance: "Contact the assistance desk with the journey details, then create a calendar reminder.",
+    exclusions: "Do not use for cancellations or journeys already departed.",
+  }, [1, 0]);
+  assert.equal(flow.version, 1);
+  assert.equal(s.searchFlows("future train purchase accessibility", [1, 0], 2)[0]?.id, flow.id);
+  assert.equal(s.updateFlow(flow.id, { guidance: "Ask for assistance and set a reminder." })?.version, 2);
+  assert.equal(s.setFlowEnabled(flow.id, false)?.enabled, false);
+  assert.deepEqual(s.searchFlows("future train purchase", [1, 0], 2), []);
+  assert.equal(s.deleteFlow(flow.id), true);
+  assert.equal(s.getFlow(flow.id), null);
+  s.close();
+});
+
 test("Action automation defaults on and records a fresh cutoff when re-enabled", () => {
   const s = ActionStore.open(":memory:");
   assert.deepEqual(s.getAutomationSettings(), { enabled: true, enabledAt: null, updatedAt: null });
