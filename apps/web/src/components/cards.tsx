@@ -194,6 +194,10 @@ export function cardForTool(tool: string, input: unknown, output: unknown): { ty
     const messages = (output as Dict).messages;
     if (Array.isArray(messages)) return { type: "search", data: messages };
   }
+  if (name === "get_thread" && output && typeof output === "object" && !Array.isArray(output)) {
+    const messages = (output as Dict).messages;
+    if (Array.isArray(messages)) return { type: "search", data: messages };
+  }
   if ((name === "search_messages" || name === "get_thread") && Array.isArray(output)) return { type: "search", data: output };
   if ((name === "create_event" || name === "update_event") && input && typeof input === "object") {
     const uid = (output as Dict)?.uid;

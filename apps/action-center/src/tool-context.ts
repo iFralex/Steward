@@ -16,7 +16,7 @@ export interface ReadToolObservation extends ReadToolCall {
 export type ReadToolExecutor = (tool: string, input: Record<string, unknown>) => Promise<unknown>;
 
 export const READ_TOOL_SPECS = [
-  "mcp__mail__get_thread with {threadId? number, messageId? string, id? string}",
+  "mcp__mail__get_thread with {threadId? number, messageId? string, id? string, limit? number, offset? number}",
   "mcp__mail__read_message with {messageId? string, id? string}",
   "mcp__mail__search_messages with {query? string, subject? string, sender? string, recipient? string, cc? string, senderDomain? string, mailbox? string, anyMailbox? boolean, dateFrom? ISO string, dateTo? ISO string, fromName? string, fromAddr? string, toName? string, subjectContains? string, bodyContains? string, sort? 'date'|'size', sortDir? 'asc'|'desc', limit? number (max 6 here), offset? number, perMessage? boolean}",
   "mcp__calendar__list_calendars with {}",
@@ -41,6 +41,7 @@ Rules:
 - Call tools only when they can materially validate or enrich the proposed action.
 - Prefer precise calls: exact threadId/messageId, concrete calendar ranges, concrete contact names/domains.
 - Mail searches are paginated and capped at six results in this context. Request another offset only when the first page shows that more results are materially necessary.
+- Mail threads return the latest messages first as a chronological page. Follow page.earlierOffset only when older context is materially necessary; follow page.laterOffset when returning from an earlier page.
 - For scheduling, availability, absences, deadlines, events, or reminders, use calendar tools when useful.
 - For sender identity or recipient ambiguity, use contacts tools when useful.
 - For project/document/personal-memory context, use LLM Wiki tools when useful.
@@ -138,7 +139,7 @@ function seedToolCalls(message: Record<string, unknown>, analyzed: Record<string
     calls.push({
       tool: "mcp__mail__get_thread",
       input: { threadId },
-      reason: "Read the full current thread before drafting an administrative reply.",
+      reason: "Read the latest page of the current thread before drafting an administrative reply; fetch earlier history only if the page indicates it is materially necessary.",
     });
   }
   const sender = extractEmail(typeof message.from === "string" ? message.from : "");

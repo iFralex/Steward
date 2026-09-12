@@ -18,6 +18,7 @@ import { enrichmentReady } from "./capabilities.ts";
 import { usesAdvancedFilters } from "./advanced-args.ts";
 import { WriteOpsStore } from "@steward/write-ops";
 import { buildSearchPage, normalizeSearchPage } from "./search-page.ts";
+import { buildThreadPage } from "./thread-page.ts";
 
 // Open the read-only Store once at startup if the DB exists.
 // send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.
@@ -189,13 +190,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_thread",
-      description: "Return every message in a conversation, oldest first. Pass a threadId from a search result, or a message id/messageId.",
+      description: "Return a compact page of a conversation in chronological order. By default returns the latest 10 messages; use page.earlierOffset or page.laterOffset only when more history is materially needed. Pass a threadId from a search result, or a message id/messageId.",
       inputSchema: {
         type: "object",
         properties: {
           threadId: { type: "number" },
           id: { type: "string", description: "Mail native id from a search result" },
           messageId: { type: "string", description: "RFC Message-ID" },
+          limit: { type: "number", description: "Page size; defaults to 10 and is capped at 30." },
+          offset: { type: "number", description: "Pagination offset from page.earlierOffset or page.laterOffset." },
         },
         additionalProperties: false,
       },
@@ -261,7 +264,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "get_thread": {
         const check = dbEmptyCheck();
         if (check.empty) return text({ error: check.message });
-        return text(await mail.getThread(args as { threadId?: number; id?: string; messageId?: string }));
+        const threadArgs = args as { threadId?: number; id?: string; messageId?: string; limit?: number; offset?: number };
+        return text(buildThreadPage(await mail.getThread(threadArgs), threadArgs));
       }
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${req.params.name}`);
