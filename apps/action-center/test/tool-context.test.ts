@@ -54,3 +54,38 @@ test("normalizes LLM Wiki file pagination and caps Action content at 5000 charac
     content_limit: 5_000,
   });
 });
+
+test("caps paginated calendar searches at ten events", async () => {
+  let executedInput: Record<string, unknown> | undefined;
+  await collectReadToolContext({
+    chat: async () => JSON.stringify({
+      toolCalls: [{
+        tool: "mcp__calendar__search_events",
+        input: {
+          query: "appointments",
+          start: "2026-09-01T00:00:00+02:00",
+          end: "2026-10-01T00:00:00+02:00",
+          limit: 100,
+          offset: 10,
+          ignored: true,
+        },
+        reason: "Check the next page of appointments.",
+      }],
+    }),
+    execute: async (_tool, input) => {
+      executedInput = input;
+      return { events: [] };
+    },
+    message: { subject: "Question" },
+    analyzed: { kind: "informational" },
+    maxCalls: 1,
+  });
+
+  assert.deepEqual(executedInput, {
+    query: "appointments",
+    start: "2026-09-01T00:00:00+02:00",
+    end: "2026-10-01T00:00:00+02:00",
+    limit: 10,
+    offset: 10,
+  });
+});

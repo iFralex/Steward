@@ -20,7 +20,7 @@ export const READ_TOOL_SPECS = [
   "mcp__mail__read_message with {messageId? string, id? string, bodyOffset? number, bodyLimit? number}",
   "mcp__mail__search_messages with {query? string, subject? string, sender? string, recipient? string, cc? string, senderDomain? string, mailbox? string, anyMailbox? boolean, dateFrom? ISO string, dateTo? ISO string, fromName? string, fromAddr? string, toName? string, subjectContains? string, bodyContains? string, sort? 'date'|'size', sortDir? 'asc'|'desc', limit? number (max 6 here), offset? number, perMessage? boolean}",
   "mcp__calendar__list_calendars with {}",
-  "mcp__calendar__search_events with {query? string, start? ISO string, end? ISO string, calendar? string, limit? number}",
+  "mcp__calendar__search_events with {query? string, start? ISO string, end? ISO string, account? string, calendar? string, limit? number (max 10 here), offset? number}",
   "mcp__calendar__read_event with {uid: string}",
   "mcp__contacts__search_contacts with {query: string, limit? number}",
   "mcp__contacts__read_contact with {uid: string}",
@@ -44,6 +44,7 @@ Rules:
 - Mail threads return the latest messages first as a chronological page. Follow page.earlierOffset only when older context is materially necessary; follow page.laterOffset when returning from an earlier page.
 - Mail message bodies are exact, paginated character ranges. Follow bodyPage.nextOffset only when the current page indicates that omitted content is materially necessary.
 - For scheduling, availability, absences, deadlines, events, or reminders, use calendar tools when useful.
+- Calendar searches are paginated and capped at ten events in this context. Follow page.nextOffset only when more events are materially necessary; use read_event for an unabridged description.
 - For sender identity or recipient ambiguity, use contacts tools when useful.
 - For project/document/personal-memory context, use LLM Wiki tools when useful.
 - For thread ambiguity, use mail thread/message tools when useful.
@@ -190,6 +191,18 @@ function extractEmail(value: string): string | null {
 }
 
 function sanitizeReadToolInput(tool: string, input: Record<string, unknown>): Record<string, unknown> {
+  if (tool === "mcp__calendar__search_events") {
+    const normalized = { ...input };
+    const requestedLimit = typeof normalized.limit === "number" && Number.isFinite(normalized.limit)
+      ? Math.floor(normalized.limit)
+      : 10;
+    normalized.limit = Math.min(Math.max(requestedLimit, 1), 10);
+    if (typeof normalized.offset === "number" && Number.isFinite(normalized.offset)) {
+      normalized.offset = Math.max(0, Math.floor(normalized.offset));
+    }
+    const allowed = new Set(["query", "start", "end", "account", "calendar", "limit", "offset"]);
+    return Object.fromEntries(Object.entries(normalized).filter(([key]) => allowed.has(key)));
+  }
   if (tool === "mcp__llm-wiki__llm_wiki_read_file") {
     const normalized = { ...input };
     if (typeof normalized.contentOffset === "number" && typeof normalized.content_offset !== "number") normalized.content_offset = normalized.contentOffset;

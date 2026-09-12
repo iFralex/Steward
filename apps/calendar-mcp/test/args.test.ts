@@ -5,7 +5,9 @@ import { parseSearchArgs, parseCreateArgs } from "../src/args.ts";
 test("parseSearchArgs defaults the range and limit", () => {
   const a = parseSearchArgs({ query: "dentist" });
   assert.equal(a.query, "dentist");
-  assert.equal(a.limit, 20);
+  assert.equal(a.limit, 10);
+  assert.equal(a.offset, 0);
+  assert.equal(a.fetchLimit, 11);
   assert.ok(Date.parse(a.start) < Date.parse(a.end));
 });
 

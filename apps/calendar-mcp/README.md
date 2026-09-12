@@ -68,7 +68,8 @@ All parameters are optional and ANDed:
 - `end` (ISO string) — end of time range (default: 90 days from now)
 - `account` (string) — filter by account name
 - `calendar` (string) — filter by calendar name
-- `limit` (number) — max results, default 20, max 100
+- `limit` (number) — page size, default 10, max 20
+- `offset` (number) — rank offset returned as `page.nextOffset`
 
 ### create_event parameters
 

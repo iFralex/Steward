@@ -13,6 +13,7 @@ import { createEvent, updateEvent, deleteEvent } from "./applescript.ts";
 import { parseSearchArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { applePath, indexDbPath } from "./paths.ts";
 import { WriteOpsStore } from "@steward/write-ops";
+import { buildEventSearchPage } from "./event-page.ts";
 
 let store: AppleStore | null = null;
 let storeError: string | null = null;
@@ -41,9 +42,10 @@ const server = new Server({ name: "calendar", version: "0.0.0" }, { capabilities
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     { name: "list_calendars", description: "List calendars with their account.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-    { name: "search_events", description: "Search events (hybrid keyword+semantic). All filters optional and ANDed.", inputSchema: { type: "object", properties: {
+    { name: "search_events", description: "Search a compact page of events (hybrid keyword+semantic). All filters are optional and ANDed. Defaults to 10 events; follow page.nextOffset only when more are materially needed. Use read_event for a full description.", inputSchema: { type: "object", properties: {
       query: { type: "string" }, start: { type: "string", description: "ISO start of range" }, end: { type: "string", description: "ISO end of range" },
-      account: { type: "string" }, calendar: { type: "string" }, limit: { type: "number" } }, additionalProperties: false } },
+      account: { type: "string" }, calendar: { type: "string" }, limit: { type: "number", description: "Page size; defaults to 10 and is capped at 20." },
+      offset: { type: "number", description: "Rank offset from page.nextOffset." } }, additionalProperties: false } },
     { name: "read_event", description: "Read one event by uid.", inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
     { name: "create_event", description: "Create a calendar event.", inputSchema: { type: "object", properties: {
       calendar: { type: "string" }, summary: { type: "string" }, start: { type: "string" }, end: { type: "string" },
@@ -90,7 +92,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           // Keyword/semantic search applies the date window only when the caller
           // gave one explicitly — defaulting it would silently hurt recall.
           const dateExplicit = typeof raw.start === "string" || typeof raw.end === "string";
-          uids = await hybridSearch({ index, embedQuery }, a.query, a.limit, {
+          uids = await hybridSearch({ index, embedQuery }, a.query, a.fetchLimit, {
             account: a.account,
             calendar: a.calendar,
             ...(dateExplicit ? { startISO: a.start, endISO: a.end } : {}),
@@ -99,8 +101,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           uids = liveStore.eventsInRange({ startISO: a.start, endISO: a.end, account: a.account, calendar: a.calendar }).map((e) => e.uid);
         }
         // Both paths already applied the account/calendar/date filters; just resolve live detail.
-        const events = uids.map((u) => liveStore.getEvent(u)).filter((e): e is CalEvent => !!e).slice(0, a.limit);
-        return ok(events);
+        const events = uids.slice(a.offset, a.offset + a.limit + 1)
+          .map((u) => liveStore.getEvent(u)).filter((e): e is CalEvent => !!e);
+        return ok(buildEventSearchPage(events, a.limit, a.offset));
       }
       case "read_event": {
         return ok(requireStore().getEvent(requireString(raw, "uid")) ?? null);

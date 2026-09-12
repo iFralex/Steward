@@ -32,13 +32,16 @@ function validIso(raw: Raw, field: string, required: boolean): string | undefine
   return v;
 }
 
-export function parseSearchArgs(raw: Raw): { query?: string; start: string; end: string; account?: string; calendar?: string; limit: number } {
+export function parseSearchArgs(raw: Raw): { query?: string; start: string; end: string; account?: string; calendar?: string; limit: number; offset: number; fetchLimit: number } {
   const now = Date.now();
   const start = validIso(raw, "start", false) ?? new Date(now - 30 * 86400_000).toISOString();
   const end = validIso(raw, "end", false) ?? new Date(now + 90 * 86400_000).toISOString();
   const limitRaw = raw.limit;
-  const limit = typeof limitRaw === "number" && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 100) : 20;
-  return { query: optString(raw, "query"), start, end, account: optString(raw, "account"), calendar: optString(raw, "calendar"), limit };
+  const limit = typeof limitRaw === "number" && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 20) : 10;
+  const offsetRaw = raw.offset;
+  const offset = typeof offsetRaw === "number" && Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
+  const fetchLimit = Math.min(offset + limit + 1, 100);
+  return { query: optString(raw, "query"), start, end, account: optString(raw, "account"), calendar: optString(raw, "calendar"), limit, offset, fetchLimit };
 }
 
 export function parseCreateArgs(raw: Raw): CreateArgs {
