@@ -180,6 +180,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.autoresizingMask = [.width, .height]
         webView.uiDelegate = self
+        webView.navigationDelegate = self
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
@@ -564,6 +565,25 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 // anything — they work in a real phone browser but are invisible here
 // unless we implement the native panels ourselves.
 extension LauncherDelegate: WKUIDelegate {
+    // `target="_blank"` asks WKWebView to create another web view. Steward has
+    // only one, so open safe external links with their system application and
+    // keep internal Steward navigation in the existing view.
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        guard navigationAction.targetFrame == nil,
+              let url = navigationAction.request.url else { return nil }
+        if isInternalAppURL(url) {
+            webView.load(navigationAction.request)
+        } else {
+            _ = openExternalURL(url)
+        }
+        return nil
+    }
+
     func webView(
         _ webView: WKWebView,
         runJavaScriptAlertPanelWithMessage message: String,
@@ -609,6 +629,43 @@ extension LauncherDelegate: WKUIDelegate {
 
         let response = alert.runModal()
         completionHandler(response == .alertFirstButtonReturn ? field.stringValue : nil)
+    }
+}
+
+extension LauncherDelegate: WKNavigationDelegate {
+    // Links without target="_blank" (including message:// links on mail cards)
+    // arrive here. Never hand arbitrary schemes to Launch Services.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard navigationAction.navigationType == .linkActivated,
+              let url = navigationAction.request.url,
+              !isInternalAppURL(url) else {
+            decisionHandler(.allow)
+            return
+        }
+        decisionHandler(openExternalURL(url) ? .cancel : .allow)
+    }
+}
+
+private extension LauncherDelegate {
+    func isInternalAppURL(_ url: URL) -> Bool {
+        [appURL, hostURL, webDevURL].contains { base in
+            url.scheme?.lowercased() == base.scheme?.lowercased()
+                && url.host?.lowercased() == base.host?.lowercased()
+                && url.port == base.port
+        }
+    }
+
+    @discardableResult
+    func openExternalURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              ["http", "https", "mailto", "message"].contains(scheme) else {
+            return false
+        }
+        return NSWorkspace.shared.open(url)
     }
 }
 
