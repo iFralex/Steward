@@ -138,6 +138,8 @@ The scheduler scans recent mail and creates action items such as:
 
 Each item stores the source thread, summary, status, proposed steps and diagnostics. The web UI shows new/read/done items. Selecting an item marks it read, opens the detail pane, and lets the agent refine or execute the proposal through the same approval flow used in chat.
 
+Steward also supports explicit, reusable **flows** for personal procedures that the model could not reliably infer on its own. Ask in chat to create a flow from the steps you just described; Steward presents a dedicated approval card where you can edit its name, triggering situation, guidance and exclusions before saving it. Flows are never learned silently and never execute writes automatically. They can be listed, searched, updated, disabled or deleted through the Action Center tools.
+
 The Action Center can also send Web Push notifications to a paired phone when something needs approval.
 
 ![Opening an Action Center item in chat, ready to refine or execute its proposal](docs/images/action-center-open-in-chat.png)
@@ -709,7 +711,8 @@ Action Center and mail-to-wiki promotion consume some of the same mail mirror, b
 ```mermaid
 flowchart TD
     A[Recent mirrored threads] --> B[Candidate filtering]
-    B --> C[LLM action analysis]
+    B --> R[Retrieve up to two relevant user flows]
+    R --> C[LLM action analysis]
     C --> D{Actionable?}
     D -->|No| E[Record seen / no item]
     D -->|Yes| F[Persist structured action]
@@ -730,7 +733,9 @@ An action item stores source identity, title, summary, status, proposed steps an
 - a **manual step**, for work Steward cannot automate safely, with explanatory links instead of invented tool calls;
 - a confidence level and summary explaining the proposed alternative.
 
-The item separately retains a context snapshot with the triggering mail, relevant calendar/contact/wiki context, read-tool observations and planning rationale. That snapshot lets chat refinement continue without silently reinterpreting the original trigger.
+The item separately retains a context snapshot with the triggering mail, relevant calendar/contact/wiki context, read-tool observations, planning rationale and the exact ID/version of any applied flow. That snapshot lets chat refinement continue without silently reinterpreting the original trigger or a later edit to the flow.
+
+Flow retrieval combines local embeddings with a lexical fallback and returns at most two enabled candidates. Retrieval happens before the actionable/not-actionable decision, so an explicit procedure can turn an otherwise informational signal—such as a purchase confirmation—into useful proposed work. The planner must still verify that the flow's trigger matches and no exclusion applies. Historical examples may supply stable recipients or message structure, but cannot override current dates, stations, booking identifiers or other case-specific facts. During historical replay, mail searches are capped at the simulated current time to prevent future information leaking into the plan.
 
 Generating a plan does not authorize it. Executing an Action Center step reuses the host's deterministic tool policy and approval UI. A prepared email reply still becomes a gated mail write.
 
@@ -746,10 +751,11 @@ The scanner also has deliberate backlog and thread semantics:
 4. Fresh messages are grouped by the mirror's canonical `thread_id`.
 5. The planner receives a chronological rendering of the whole thread, not just the latest sentence.
 6. A representative external/request-like message anchors sender and source identity while the latest trigger controls recency.
-7. Action analysis determines kind, priority, deadline, scheduling slots and draft responses.
-8. Read-only context gathering can consult related mail, contacts, calendar and wiki before the second planning step produces executable alternatives.
-9. Read observations become part of the context snapshot; the final proposal does not include redundant read steps.
-10. Successfully considered message IDs are recorded incrementally, so a crash midway through a scan preserves completed progress.
+7. Local hybrid retrieval selects at most two enabled flows whose triggering situations may match the message.
+8. Action analysis determines kind, priority, deadline, scheduling slots and draft responses, taking strong flow matches and exclusions into account.
+9. Read-only context gathering can consult related mail, contacts, calendar and wiki before the second planning step produces executable alternatives.
+10. Read observations and applied flow versions become part of the context snapshot; the final proposal does not include redundant read steps.
+11. Successfully considered message IDs are recorded incrementally, so a crash midway through a scan preserves completed progress.
 
 Handled actions are sticky. Repeated scans do not resurrect a `done` or `dismissed` item unless a genuinely newer message arrives on that same source thread.
 
@@ -1097,7 +1103,7 @@ Most Steward data lives under `~/Library/Application Support/`:
 | `Steward/config.env` | Packaged launcher/service overrides and secrets. |
 | `mail-mirror/mail.db` and `mail-mirror/blobs/` | Mirrored mail messages, threads, indexes, embedding state and attachment blobs. |
 | `mail-promoter/` | Mail promotion state and note tracking. |
-| `action-center/actions.db` | Action items, seen ledger and scan metadata. |
+| `action-center/actions.db` | Action items, explicit reusable flows, seen ledger and scan metadata. |
 | `steward/calendar-index.sqlitedb` | Calendar search index. |
 | `steward/contacts-index.sqlitedb` | Contacts search index. |
 | `write-ops/ops.db` | Journal for AppleScript writes and confirmation/retry status. |
