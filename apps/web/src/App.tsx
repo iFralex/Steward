@@ -110,13 +110,25 @@ function App() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const followLatestRef = useRef(true);
+  const scrollChatToBottom = useCallback(() => {
+    followLatestRef.current = true;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
   // Stable callback ref: scrolls to the bottom only when the scroller actually
   // (re)mounts. An inline ref re-attaches on every render and would re-scroll
   // on each swipe touchmove / keystroke (one of the two yank mechanisms; the
   // other was the auto-scroll effect firing on unmemoized approvals/questions).
   const attachChatScroller = useCallback((el: HTMLDivElement | null) => {
     scrollRef.current = el;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) scrollChatToBottom();
+  }, [scrollChatToBottom]);
+  const trackChatScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    followLatestRef.current = distanceFromBottom <= 32;
   }, []);
   useEffect(() => () => streamSafeStop(recorderRef.current), []);
   const focusComposer = () => document.getElementById("composer-input")?.focus();
@@ -212,8 +224,12 @@ function App() {
   };
 
   useEffect(() => {
+    scrollChatToBottom();
+  }, [host.activeChatId, scrollChatToBottom]);
+
+  useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && followLatestRef.current) el.scrollTop = el.scrollHeight;
   }, [host.messages, host.approvals, host.questions, host.state]);
 
   // Tapping a push notification: the service worker forwards the payload here so
@@ -252,6 +268,7 @@ function App() {
     }
     if (host.activeChatId !== p.from) {
       pendingSendRef.current = null;
+      scrollChatToBottom();
       host.sendMessage(p.text);
       setTab("chat");
       setPane("chat");
@@ -278,6 +295,7 @@ function App() {
 
   const doSend = () => {
     if (!draft.trim() && attachments.length === 0) return;
+    scrollChatToBottom();
     host.sendMessage(draft, attachments);
     setDraft("");
     setAttachments([]);
@@ -291,6 +309,7 @@ function App() {
     setTranscribing(true);
     try {
       const text = await host.transcribeAudio(blob);
+      scrollChatToBottom();
       host.sendMessage(text, attachments);
       setDraft("");
       setAttachments([]);
@@ -463,7 +482,7 @@ function App() {
 
   const chatPane = (
     <>
-      <div ref={attachChatScroller} className="flex-1 overflow-y-auto p-4">
+      <div ref={attachChatScroller} onScroll={trackChatScroll} className="flex-1 overflow-y-auto p-4">
         {chatEmpty ? (
           <EmptyChat
             newActionCount={newActionCount}
