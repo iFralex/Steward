@@ -90,7 +90,7 @@ The chat UI is not a generic chatbot. It is connected to local tools:
 - Shell tools for safe file discovery and read-only command execution.
 - Action Center tools for inspecting and executing pending proposed work.
 
-Messages stream in the UI. Tool calls appear as visible cards, including status, inputs, outputs, duration and errors. Links written by the assistant open through the operating system, so web URLs reach the default browser and app-specific links reach their registered application. During generation the transcript follows new output only while the reader remains at the bottom; scrolling upward detaches auto-scroll, and returning to the bottom reattaches it. The transcript can be copied as JSON for debugging.
+Messages stream in the UI. Tool calls appear as visible cards, including status, inputs, outputs, duration and errors. The transcript can be copied as JSON for debugging.
 
 ![A mail search tool card, expanded to show the matched messages](docs/images/chat-tool-card-mail-search.png)
 
@@ -571,7 +571,7 @@ If the embedding endpoint is disabled or unavailable, `vecIds` is empty and the 
 
 ### Reading A Mail Result
 
-Search returns a compact, paginated page rather than a fixed batch of full messages. Each summary retains the identifiers and stable `message://` URL needed to read the message, open it in Mail, preserve provenance or attach the source link to a later calendar proposal. A separate read resolves the selected message:
+Search returns a compact, paginated page rather than a fixed batch of full messages. A separate read resolves the selected message:
 
 1. Reject rows that have been soft-deleted.
 2. Load subject, sender, date, mirrored body and attachment metadata from SQLite.
@@ -756,7 +756,7 @@ The scanner also has deliberate backlog and thread semantics:
 5. The planner receives a chronological rendering of the whole thread, not just the latest sentence.
 6. A representative external/request-like message anchors sender and source identity while the latest trigger controls recency.
 7. Local hybrid retrieval selects at most two enabled flows whose triggering situations may match the message.
-8. Action analysis determines kind, priority, deadline, scheduling slots and draft responses, taking strong flow matches and exclusions into account. Relative dates and proposed calendar times use the computer's current local time and system time zone.
+8. Action analysis determines kind, priority, deadline, scheduling slots and draft responses, taking strong flow matches and exclusions into account.
 9. Read-only context gathering can consult related mail, contacts, calendar and wiki before the second planning step produces executable alternatives.
 10. Read observations and applied flow versions become part of the context snapshot; the final proposal does not include redundant read steps.
 11. Successfully considered message IDs are recorded incrementally, so a crash midway through a scan preserves completed progress.
@@ -875,7 +875,7 @@ Local-first does not mean unbounded. Several limits keep cold starts, model cont
 | Ranked mail search | 50 lexical + 50 vector candidates | Ranking stays fast before RRF and final filtering. |
 | Trigram search | Up to 500 candidates per field | Substring filters drive selection without scanning all inline bodies. |
 | Unranked mail browse | 500-row window; final API limit max 100 | Supports sorting/pagination without materializing the entire archive. |
-| Action-planner mail page | Up to 6 compact results; threads and large bodies expose continuation offsets | Preserves actionable IDs/links while avoiding full-message context by default. |
+| Action-planner mail page | Up to 6 compact results; threads and large bodies expose continuation offsets | Avoids full-message context by default. |
 | Action-planner calendar/contact/wiki pages | Up to 10 events, 8 contacts and 5 wiki results; wiki file pages max 5,000 characters | Keeps read-tool context proportional to the decision while allowing explicit continuation. |
 | Mail embedding input | First 2,000 characters by default | Bounds embedding cost and latency while retaining subject and leading body context. |
 | Embedding batches | 32 by default, with per-item recovery | Amortizes gateway overhead without allowing one input to poison the queue. |
