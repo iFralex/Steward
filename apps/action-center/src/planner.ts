@@ -84,7 +84,7 @@ Rules:
 - Financial, security, legal, and account actions may be proposed when the source explicitly supports them. Keep consequential actions conditional on first verifying the current state through an official channel; never turn an unverified alert into an unconditional transfer, trade, credential change, or account operation.
 - Use exact facts from the message and validated context. Never invent event hours, deadlines, amounts, accessibility needs, or personal preferences. When material information is missing, a distinct option may ask the sender only for the concrete details needed to decide or execute; prepare a concise editable email. Otherwise say what is unknown and avoid a tool action that requires it.
 - For an event or commitment, if the date, time, location, registration deadline, or other material logistics are missing and could change the decision, include a distinct clarification option with a concise editable email. A provisional all-day calendar hold may coexist with that option; do not present the hold as confirmed event timing.
-- currentTime is authoritative and includes Alessio's Europe/Rome local time. Never create or suggest a calendar event whose start is before currentTime. If a previously sensible reminder time has passed, choose a future suggestion or omit the reminder; never rewrite the source deadline or call a local-today time "tomorrow" because its UTC date differs.
+- currentTime is authoritative and includes the computer's current local time and system time zone. Never create or suggest a calendar event whose start is before currentTime. If a previously sensible reminder time has passed, choose a future suggestion or omit the reminder; never rewrite the source deadline or call a local-today time "tomorrow" because its UTC date differs.
 - Keep labels concise and put supporting detail in the proposal summary or tool input. Prefer roughly 1-3 proposals and 1-3 steps per proposal, but completeness is more important than a rigid count.
 - Read-only tool observations, if present in contextSnapshot.toolContext, have already been executed. Do not propose read-only steps merely to gather that same data; use those observations to produce validated write actions or explain uncertainty.
 - Proposed action steps must be executable user actions only. Do not include read-only tools in proposedActions.
@@ -300,15 +300,15 @@ async function planActions(
 
 function currentTimeContext(): { iso: string; local: string; timeZone: string } {
   const now = new Date();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return {
     iso: now.toISOString(),
     local: new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Rome",
       dateStyle: "short",
       timeStyle: "medium",
       hour12: false,
     }).format(now),
-    timeZone: "Europe/Rome",
+    timeZone,
   };
 }
 

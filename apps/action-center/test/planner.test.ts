@@ -19,6 +19,7 @@ function msg(): PlanningMessage {
 
 test("planMailAction stores executable scheduling proposals", async () => {
   let calls = 0;
+  let planningPayload: { currentTime?: { iso?: string; local?: string; timeZone?: string } } = {};
   const card = await planMailAction(msg(), async (system, prompt) => {
     calls++;
     if (system.includes("Analyze")) {
@@ -43,6 +44,7 @@ test("planMailAction stores executable scheduling proposals", async () => {
         reasoning: "Scheduling request.",
       });
     }
+    planningPayload = JSON.parse(prompt) as typeof planningPayload;
     return JSON.stringify({
       title: "Call con Marco",
       summary: "Marco chiede una call domani alle 15.",
@@ -67,6 +69,9 @@ test("planMailAction stores executable scheduling proposals", async () => {
   assert.equal(eventStep.input.calendar, "Work");
   assert.deepEqual(eventStep.input.alarms, [60]);
   assert.equal(card.contextSnapshot.mail?.messageId, "m1");
+  assert.equal(planningPayload.currentTime?.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
+  assert.ok(planningPayload.currentTime?.iso);
+  assert.ok(planningPayload.currentTime?.local);
 });
 
 test("planMailAction can enrich context through generic read-only tools", async () => {
