@@ -129,7 +129,7 @@ export class Mail {
       sortDir: args.sortDir,
       limit: args.limit,
       offset: args.offset,
-      perMessage: undefined,
+      perMessage: args.perMessage,
     };
     return searchDb(this.store, dbArgs, this.embedQuery);
   }

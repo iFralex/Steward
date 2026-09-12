@@ -17,6 +17,7 @@ import type { ReadArgs, ReplyArgs, SaveAttachmentArgs, SearchArgs, SendArgs } fr
 import { enrichmentReady } from "./capabilities.ts";
 import { usesAdvancedFilters } from "./advanced-args.ts";
 import { WriteOpsStore } from "@steward/write-ops";
+import { buildSearchPage, normalizeSearchPage } from "./search-page.ts";
 
 // Open the read-only Store once at startup if the DB exists.
 // send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.
@@ -60,7 +61,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "search_messages",
       description:
-        "Search mail across any mailbox/account (Inbox, Sent, Drafts, …). All filters optional and combined with AND. Advanced filters (toName, fromName, fromAddr, subjectContains, bodyContains, cc, senderDomain, attachmentType, attachmentName, minSize, maxSize, answeredOnly, junkOnly, sort) require `mail-mirror migrate` to have run once.",
+        "Search mail across any mailbox/account (Inbox, Sent, Drafts, …). Returns a compact page ordered by relevance when query is present, otherwise by the requested sort. Follow page.nextOffset only when more results are materially needed. All filters are optional and combined with AND. Advanced filters (toName, fromName, fromAddr, subjectContains, bodyContains, cc, senderDomain, attachmentType, attachmentName, minSize, maxSize, answeredOnly, junkOnly, sort) require `mail-mirror migrate` to have run once.",
       inputSchema: {
         type: "object",
         properties: {
@@ -94,8 +95,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           bodyContains: { type: "string", description: "Substring match against body text (trigram)" },
           sort: { type: "string", enum: ["date", "size"], description: "Sort field (default: date)" },
           sortDir: { type: "string", enum: ["asc", "desc"], description: "Sort direction (default: desc)" },
-          limit: { type: "number" },
-          offset: { type: "number" },
+          limit: { type: "number", description: "Page size; defaults to 8 and is capped at 12. Prefer the default, then use page.nextOffset only if needed." },
+          offset: { type: "number", description: "Pagination offset from page.nextOffset." },
+          perMessage: { type: "boolean", description: "Return individual messages instead of grouping the best result from each thread." },
         },
         additionalProperties: false,
       },
@@ -202,7 +204,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 function text(value: unknown) {
-  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+  // Tool results are consumed by a model, not displayed as source text. Compact
+  // JSON avoids paying for indentation on every result while preserving the
+  // exact same structure.
+  return { content: [{ type: "text", text: JSON.stringify(value) }] };
 }
 
 function dbEmptyCheck(): { empty: boolean; message: string } {
@@ -228,7 +233,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (!enriched && usesAdvancedFilters(args as SearchArgs)) {
           return text({ error: "Advanced filters (account/role, flags, attachments, size, sort, field-scoped) require the enriched mirror. Run: mail-mirror migrate" });
         }
-        return text(await mail.search(args as SearchArgs));
+        const page = normalizeSearchPage(args as SearchArgs);
+        return text(buildSearchPage(await mail.search(page.fetchArgs), page.limit, page.offset));
       }
       case "read_message": {
         const check = dbEmptyCheck();

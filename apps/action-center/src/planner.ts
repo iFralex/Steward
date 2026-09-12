@@ -233,7 +233,7 @@ function extractMailSummaries(value: unknown): Record<string, unknown>[] {
     if (typeof v !== "object") return;
     const obj = v as Record<string, unknown>;
     if (typeof obj.text === "string") visit(obj.text);
-    if (typeof obj.messageId === "string" || typeof obj.mailUrl === "string") out.push(obj);
+    if (typeof obj.id === "string" || typeof obj.messageId === "string" || typeof obj.mailUrl === "string") out.push(obj);
     for (const item of Object.values(obj)) {
       if (item !== obj.text) visit(item);
     }

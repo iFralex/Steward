@@ -71,6 +71,7 @@ export interface SearchArgs {
   sortDir?: "asc" | "desc";
   limit?: number;
   offset?: number;
+  perMessage?: boolean;
 }
 
 export interface ReadArgs extends MessageRef {}

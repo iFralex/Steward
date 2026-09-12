@@ -386,13 +386,13 @@ test("planMailAction seeds cross-thread sent-mail search for administrative repl
     readTool: async (tool, input) => {
       executed.push({ tool, input });
       return tool === "mcp__mail__search_messages"
-        ? [{
-            subject: "Re: Weekly report",
-            from: "Me <me@example.com>",
-            date: "2026-06-26T09:55:29.000Z",
-            mailUrl: "message://%3Cweekly-report@example.com%3E",
-            snippet: "Nothing to report this week.",
-          }]
+        ? { messages: [{
+              id: "weekly-report@example.com",
+              subject: "Re: Weekly report",
+              from: "Me <me@example.com>",
+              date: "2026-06-26T09:55:29.000Z",
+              snippet: "Nothing to report this week.",
+            }], page: { offset: 0, returned: 1, hasMore: false, nextOffset: null } }
         : [{ subject: "Monthly status update needed" }];
     },
   });
@@ -406,6 +406,7 @@ test("planMailAction seeds cross-thread sent-mail search for administrative repl
   assert.equal(executed[1].input.mailbox, undefined);
   assert.equal(executed[1].input.anyMailbox, true);
   assert.equal(executed[1].input.perMessage, true);
+  assert.equal(executed[1].input.limit, 6);
 
   // Requirement extraction now belongs to the LLM/prompt, not to case-specific regexes.
   assert.deepEqual(planPayload.contextSnapshot?.mail?.replyRequirements, []);

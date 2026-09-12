@@ -18,7 +18,7 @@ export type ReadToolExecutor = (tool: string, input: Record<string, unknown>) =>
 export const READ_TOOL_SPECS = [
   "mcp__mail__get_thread with {threadId? number, messageId? string, id? string}",
   "mcp__mail__read_message with {messageId? string, id? string}",
-  "mcp__mail__search_messages with {query? string, subject? string, sender? string, recipient? string, cc? string, senderDomain? string, mailbox? string, anyMailbox? boolean, dateFrom? ISO string, dateTo? ISO string, fromName? string, fromAddr? string, toName? string, subjectContains? string, bodyContains? string, sort? 'date'|'size', sortDir? 'asc'|'desc', limit? number, offset? number, perMessage? boolean}",
+  "mcp__mail__search_messages with {query? string, subject? string, sender? string, recipient? string, cc? string, senderDomain? string, mailbox? string, anyMailbox? boolean, dateFrom? ISO string, dateTo? ISO string, fromName? string, fromAddr? string, toName? string, subjectContains? string, bodyContains? string, sort? 'date'|'size', sortDir? 'asc'|'desc', limit? number (max 6 here), offset? number, perMessage? boolean}",
   "mcp__calendar__list_calendars with {}",
   "mcp__calendar__search_events with {query? string, start? ISO string, end? ISO string, calendar? string, limit? number}",
   "mcp__calendar__read_event with {uid: string}",
@@ -30,6 +30,7 @@ export const READ_TOOL_SPECS = [
 ] as const;
 
 const ALLOWED_READ_TOOLS = new Set(READ_TOOL_SPECS.map((s) => s.split(" ")[0]));
+const ACTION_MAIL_SEARCH_PAGE_SIZE = 6;
 
 const TOOL_CONTEXT_SYSTEM = `You decide which read-only tools should be called before creating an Action Center item.
 Return ONLY JSON:
@@ -39,6 +40,7 @@ ${READ_TOOL_SPECS.map((s) => `- ${s}`).join("\n")}
 Rules:
 - Call tools only when they can materially validate or enrich the proposed action.
 - Prefer precise calls: exact threadId/messageId, concrete calendar ranges, concrete contact names/domains.
+- Mail searches are paginated and capped at six results in this context. Request another offset only when the first page shows that more results are materially necessary.
 - For scheduling, availability, absences, deadlines, events, or reminders, use calendar tools when useful.
 - For sender identity or recipient ambiguity, use contacts tools when useful.
 - For project/document/personal-memory context, use LLM Wiki tools when useful.
@@ -154,7 +156,7 @@ function seedToolCalls(message: Record<string, unknown>, analyzed: Record<string
         dateTo,
         sort: "date",
         sortDir: "desc",
-        limit: 10,
+        limit: ACTION_MAIL_SEARCH_PAGE_SIZE,
         perMessage: true,
       },
       reason: "Check recent mail involving the same person for related facts already communicated in another thread. Do not restrict to a Sent mailbox because localized/account-specific sent folders may not be role-classified.",
@@ -190,6 +192,10 @@ function sanitizeReadToolInput(tool: string, input: Record<string, unknown>): Re
   if (typeof normalized.until === "string" && typeof normalized.dateTo !== "string") normalized.dateTo = normalized.until;
   if (typeof normalized.from === "string" && typeof normalized.sender !== "string") normalized.sender = normalized.from;
   if (typeof normalized.to === "string" && typeof normalized.recipient !== "string") normalized.recipient = normalized.to;
+  const requestedLimit = typeof normalized.limit === "number" && Number.isFinite(normalized.limit)
+    ? Math.floor(normalized.limit)
+    : ACTION_MAIL_SEARCH_PAGE_SIZE;
+  normalized.limit = Math.min(Math.max(requestedLimit, 1), ACTION_MAIL_SEARCH_PAGE_SIZE);
   const allowed = new Set([
     "query", "subject", "sender", "recipient", "cc", "senderDomain", "account", "mailbox", "anyMailbox",
     "dateFrom", "dateTo", "unreadOnly", "flaggedOnly", "answeredOnly", "junkOnly", "hasAttachments",
