@@ -17,7 +17,7 @@ export type ReadToolExecutor = (tool: string, input: Record<string, unknown>) =>
 
 export const READ_TOOL_SPECS = [
   "mcp__mail__get_thread with {threadId? number, messageId? string, id? string, limit? number, offset? number}",
-  "mcp__mail__read_message with {messageId? string, id? string}",
+  "mcp__mail__read_message with {messageId? string, id? string, bodyOffset? number, bodyLimit? number}",
   "mcp__mail__search_messages with {query? string, subject? string, sender? string, recipient? string, cc? string, senderDomain? string, mailbox? string, anyMailbox? boolean, dateFrom? ISO string, dateTo? ISO string, fromName? string, fromAddr? string, toName? string, subjectContains? string, bodyContains? string, sort? 'date'|'size', sortDir? 'asc'|'desc', limit? number (max 6 here), offset? number, perMessage? boolean}",
   "mcp__calendar__list_calendars with {}",
   "mcp__calendar__search_events with {query? string, start? ISO string, end? ISO string, calendar? string, limit? number}",
@@ -42,6 +42,7 @@ Rules:
 - Prefer precise calls: exact threadId/messageId, concrete calendar ranges, concrete contact names/domains.
 - Mail searches are paginated and capped at six results in this context. Request another offset only when the first page shows that more results are materially necessary.
 - Mail threads return the latest messages first as a chronological page. Follow page.earlierOffset only when older context is materially necessary; follow page.laterOffset when returning from an earlier page.
+- Mail message bodies are exact, paginated character ranges. Follow bodyPage.nextOffset only when the current page indicates that omitted content is materially necessary.
 - For scheduling, availability, absences, deadlines, events, or reminders, use calendar tools when useful.
 - For sender identity or recipient ambiguity, use contacts tools when useful.
 - For project/document/personal-memory context, use LLM Wiki tools when useful.

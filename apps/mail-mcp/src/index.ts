@@ -19,6 +19,7 @@ import { usesAdvancedFilters } from "./advanced-args.ts";
 import { WriteOpsStore } from "@steward/write-ops";
 import { buildSearchPage, normalizeSearchPage } from "./search-page.ts";
 import { buildThreadPage } from "./thread-page.ts";
+import { buildMessagePage } from "./message-page.ts";
 
 // Open the read-only Store once at startup if the DB exists.
 // send/reply/listMailboxes/saveAttachment are AppleScript-backed and work without it.
@@ -105,12 +106,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "read_message",
-      description: "Read a message body and attachment list. Pass the `id` from a search_messages result. Results include `mailUrl`, a clickable Apple Mail deep link (message://…) that opens the message in Mail — useful e.g. in a calendar event's url/description.",
+      description: "Read an exact page of a message body and its attachment list. The first 5000 characters are returned by default; follow bodyPage.nextOffset only when the remaining body is materially needed. Pass the `id` from a search_messages result. Results include `mailUrl`, a clickable Apple Mail deep link (message://…) that opens the message in Mail — useful e.g. in a calendar event's url/description.",
       inputSchema: {
         type: "object",
         properties: {
           id: { type: "string", description: "the message's `id` from a search result — pass it back as-is" },
           messageId: { type: "string", description: "RFC Message-ID — alternative to `id`" },
+          bodyOffset: { type: "number", description: "Character offset from bodyPage.nextOffset or bodyPage.earlierOffset." },
+          bodyLimit: { type: "number", description: "Body characters to return; defaults to 5000 and is capped at 12000." },
         },
         additionalProperties: false,
       },
@@ -242,7 +245,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "read_message": {
         const check = dbEmptyCheck();
         if (check.empty) return text({ error: check.message });
-        return text(await mail.read(args as ReadArgs));
+        const readArgs = args as ReadArgs & { bodyOffset?: number; bodyLimit?: number };
+        return text(buildMessagePage(await mail.read(readArgs), readArgs));
       }
       case "save_attachment":
         return text(await mail.saveAttachment(args as unknown as SaveAttachmentArgs));
