@@ -4,7 +4,23 @@ import { Session } from "../src/core/session.ts";
 import type { ServerEvent } from "@steward/protocol";
 
 type QReq = Extract<ServerEvent, { type: "question_request" }>;
+type AReq = Extract<ServerEvent, { type: "approval_request" }>;
 const firstQuestion = (events: ServerEvent[]) => events.find((e) => e.type === "question_request") as QReq | undefined;
+
+test("approval preview is emitted separately from executable input", async () => {
+  const events: ServerEvent[] = [];
+  const s = new Session((e) => events.push(e), 60_000);
+  const pending = s.requestApproval({
+    tool: "mcp__calendar__delete_event",
+    input: { uid: "UID-9" },
+    preview: { uid: "UID-9", summary: "Deep learning" },
+  });
+  const req = events.find((event) => event.type === "approval_request") as AReq;
+  assert.deepEqual(req.input, { uid: "UID-9" });
+  assert.deepEqual(req.preview, { uid: "UID-9", summary: "Deep learning" });
+  s.resolveApproval(req.requestId, { decision: "allow" });
+  assert.deepEqual(await pending, { decision: "allow" });
+});
 
 test("askQuestion emits a question_request and resolves on question_response", async () => {
   const events: ServerEvent[] = [];

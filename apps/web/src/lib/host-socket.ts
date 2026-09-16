@@ -48,6 +48,8 @@ export interface PendingApproval {
   requestId: string;
   tool: string;
   input: unknown;
+  /** Read-only context for a rich card; not part of the executable arguments. */
+  preview?: unknown;
   /** Chat this approval belongs to (routes the card; survives chat switches). */
   chatId?: string;
 }
@@ -234,7 +236,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
           case "approval_request":
             setApprovals((prev) => [
               ...prev,
-              { requestId: msg.requestId, tool: msg.tool, input: msg.input, chatId: msg.chatId },
+              { requestId: msg.requestId, tool: msg.tool, input: msg.input, preview: msg.preview, chatId: msg.chatId },
             ]);
             break;
           case "question_request":

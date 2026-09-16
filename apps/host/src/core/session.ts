@@ -62,6 +62,7 @@ export class Session {
         requestId,
         tool: req.tool,
         input: req.input,
+        ...(req.preview ? { preview: req.preview } : {}),
       });
       recordAudit({
         actor: "host",

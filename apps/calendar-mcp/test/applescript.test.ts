@@ -32,7 +32,11 @@ test("buildUpdate replaces alarms (deletes existing, adds new); [] clears all", 
 });
 
 test("buildDelete locates by uid", () => {
-  assert.match(buildDelete("UID-9"), /whose uid is "UID-9"/);
+  const s = buildDelete("UID-9");
+  assert.match(s, /whose uid is "UID-9"/);
+  assert.match(s, /delete theEvent/);
+  assert.match(s, /\n  save\n/);
+  assert.match(s, /Calendar did not remove the event/);
 });
 
 test("mapCalendarError explains automation denial", () => {

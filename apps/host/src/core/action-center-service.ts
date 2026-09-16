@@ -21,6 +21,7 @@ import type { PushRegistry } from "./push.ts";
 import { getNotificationLang } from "./notification-lang.ts";
 import { notificationCopy } from "./notification-copy.ts";
 import { recordAudit } from "@steward/audit-log";
+import { buildApprovalPreview } from "./approval-preview.ts";
 
 /**
  * Push registry for the action-center → phone hook (mobile-access M2/M3), set
@@ -227,7 +228,8 @@ export async function executeActionProposal(args: {
 
     let input = step.input ?? {};
     if (decision === "gate") {
-      const approved = await args.session.requestApproval({ tool: step.tool, input, chatId: args.chatId });
+      const preview = await buildApprovalPreview(step.tool, input, bridge.callTool);
+      const approved = await args.session.requestApproval({ tool: step.tool, input, preview, chatId: args.chatId });
       if (shouldRetryWithRevision(approved)) {
         throw new ActionRevisionRequestedError(buildRevisionPrompt(action, proposal, step, approved.note));
       }

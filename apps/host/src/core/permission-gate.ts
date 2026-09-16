@@ -12,6 +12,8 @@ import { decideTool, type ToolPolicy } from "./tool-policy.ts";
 export interface ApprovalRequest {
   tool: string;
   input: Record<string, unknown>;
+  /** Read-only display context; never forwarded to the tool executor. */
+  preview?: Record<string, unknown>;
   /** Chat whose turn requested this approval (routes the card in the UI). */
   chatId?: string;
 }

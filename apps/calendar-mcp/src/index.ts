@@ -149,8 +149,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         });
         try {
           await deleteEvent(uid);
-          writeOps.scriptReturned(operationId, { uid });
-          return ok({ ok: true, operationId });
+          // deleteEvent verifies the event is absent from Calendar.app before
+          // returning, so this write can be confirmed immediately instead of
+          // exposing a misleading `ok` while reconciliation is still pending.
+          writeOps.markConfirmed(operationId, { uid });
+          return ok({ ok: true, status: "deleted", uid, operationId });
         } catch (err) {
           writeOps.failed(operationId, err);
           throw err;

@@ -125,6 +125,8 @@ export type ServerEvent =
       requestId: string;
       tool: string;
       input: unknown;
+      /** Optional read-only context used only to render a richer approval card. */
+      preview?: unknown;
     }
   | {
       /**

@@ -212,7 +212,7 @@ export function ApprovalCard({
   const input = (approval.input ?? {}) as Record<string, unknown>;
   const fields = FORMS[bareName(approval.tool)];
   const isClipboardApproval = bareName(approval.tool) === "copy_to_clipboard";
-  const isFlowApproval = ["create_flow", "update_flow"].includes(bareName(approval.tool));
+  const isFlowApproval = ["create_flow", "update_flow", "set_flow_enabled", "delete_flow"].includes(bareName(approval.tool));
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -236,8 +236,15 @@ export function ApprovalCard({
     } catch (e) { jsonError = e instanceof Error ? e.message : t("approval.invalidJson"); }
   }
 
-  const edited = fields ? buildEdited(input, fields, vals) : input;
-  const card = fields ? cardForApproval(approval.tool, edited) : null;
+  const edited = fields ? buildEdited(input, fields, vals) : (jsonParsed ?? input);
+  const preview = approval.preview && typeof approval.preview === "object" && !Array.isArray(approval.preview)
+    ? approval.preview as Record<string, unknown>
+    : {};
+  const displayInput = { ...preview, ...edited };
+  // Some typed previews (notably delete_event) are read-only and therefore do
+  // not have an edit form. They should still render as rich approval cards.
+  const card = cardForApproval(approval.tool, displayInput);
+  const hasCustomPreview = isClipboardApproval || isFlowApproval || !!card;
   const set = (key: string, value: string | boolean) => setVals((p) => ({ ...p, [key]: value }));
 
   const approve = async () => {
@@ -273,7 +280,7 @@ export function ApprovalCard({
         <CardTitle className="flex items-center gap-2 text-sm">
           <Badge variant="outline" className="border-amber-500/60 text-amber-600 shrink-0">{t("approval.approvalRequested")}</Badge>
           <span className="min-w-0 flex-1 truncate font-mono">{approval.tool}</span>
-          {fields && (
+          {(fields || hasCustomPreview) && (
             <button type="button" className="text-muted-foreground hover:text-foreground shrink-0 text-xs underline" onClick={() => setEditing(true)}>
               {t("approval.edit")}
             </button>
@@ -282,9 +289,9 @@ export function ApprovalCard({
       </CardHeader>
       <CardContent className="space-y-2">
         {isClipboardApproval ? (
-          <ClipboardApprovalPreview input={edited} />
+          <ClipboardApprovalPreview input={displayInput} />
         ) : isFlowApproval ? (
-          <FlowApprovalPreview input={edited} />
+          <FlowApprovalPreview input={displayInput} />
         ) : card ? (
           <CardView type={card.type} data={card.data} fileApi={fileApi} />
         ) : (
@@ -306,13 +313,13 @@ export function ApprovalCard({
         <Button size="sm" variant="destructive" onClick={() => onDecision(approval.requestId, "deny", note || undefined)}>{t("approval.reject")}</Button>
       </CardFooter>
 
-      {fields && (
+      {(fields || hasCustomPreview) && (
         <Dialog open={editing} onOpenChange={setEditing}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>{t("approval.editDialogTitle", { name: bareName(approval.tool) })}</DialogTitle>
             </DialogHeader>
-            <div className="space-y-3">
+            {fields ? <div className="space-y-3">
               {fields.map((f) => (
                 <label key={f.key} className="block">
                   <span className="text-muted-foreground mb-1 block text-xs font-medium">{t(`approval.fields.${f.labelKey}`)}</span>
@@ -333,7 +340,15 @@ export function ApprovalCard({
                   )}
                 </label>
               ))}
-            </div>
+            </div> : (
+              <textarea
+                className="border-input bg-muted min-h-64 w-full resize-y rounded-md border p-3 font-mono text-xs outline-none"
+                value={jsonDraft}
+                onChange={(e) => setJsonDraft(e.target.value)}
+                spellCheck={false}
+              />
+            )}
+            {!fields && jsonError && <p className="text-xs text-red-500">{jsonError}</p>}
             <div className="flex justify-end">
               <Button size="sm" onClick={() => setEditing(false)}>{t("approval.confirmDone")}</Button>
             </div>

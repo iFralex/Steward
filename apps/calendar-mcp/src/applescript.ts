@@ -110,13 +110,25 @@ export function buildUpdate(a: UpdateArgs): string {
 export function buildDelete(uid: string): string {
   return [
     'tell application "Calendar"',
+    "  set theEvent to missing value",
+    "  set theCalendar to missing value",
     "  repeat with c in calendars",
     "    try",
-    `      delete (first event of c whose uid is "${esc(uid)}")`,
-    '      return "ok"',
+    `      set theEvent to (first event of c whose uid is "${esc(uid)}")`,
+    "      set theCalendar to c",
+    "      exit repeat",
     "    end try",
     "  end repeat",
-    '  error "-1728"',
+    '  if theEvent is missing value then error number -1728',
+    "  delete theEvent",
+    // Calendar's standard `delete` command may return before the backing
+    // calendar has committed the mutation. Force a save, then verify through
+    // Calendar's own scripting view so callers never receive a false success.
+    "  save",
+    "  delay 1",
+    `  set remaining to count of (every event of theCalendar whose uid is "${esc(uid)}")`,
+    '  if remaining is not 0 then error "Calendar did not remove the event" number -10000',
+    '  return "ok"',
     "end tell",
   ].join("\n");
 }

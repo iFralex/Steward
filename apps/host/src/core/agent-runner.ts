@@ -23,6 +23,7 @@ import { usageLedger } from "@steward/usage-ledger";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 import type { ChannelFile } from "@steward/protocol";
+import { buildApprovalPreview } from "./approval-preview.ts";
 
 let sharedBridge: Promise<McpBridge> | undefined;
 /** One set of MCP connector child processes for the whole host process. Built
@@ -203,7 +204,11 @@ export class ChatManager {
         gateToolDefinition(
           def,
           this.config.policy,
-          (req) => this.session.requestApproval({ ...req, chatId }),
+          async (req) => this.session.requestApproval({
+            ...req,
+            chatId,
+            preview: await buildApprovalPreview(req.tool, req.input, b.bridge.callTool),
+          }),
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
           () => ({ sessionId: this.session.id, chatId }),
         ),
