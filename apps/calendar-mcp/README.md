@@ -61,6 +61,14 @@ overridden with the `CALENDAR_INDEX_DB` environment variable.
 
 ### search_events parameters
 
+All `start` and `end` values accepted by calendar tools are instants in RFC 3339
+format with an explicit timezone (`Z` or `±HH:MM`). Inputs are normalized to UTC
+internally. Event results are rendered in the Mac's local timezone with the
+date-specific explicit offset, matching the wall-clock time shown by Calendar.app.
+Floating date-times and date-only strings are rejected because their meaning
+changes with the Mac's timezone. For all-day events, pass local-midnight
+boundaries with the applicable explicit offset.
+
 All parameters are optional and ANDed:
 
 - `query` (string) — free-text search; uses hybrid search when the index is built, otherwise falls back to `eventsInRange`

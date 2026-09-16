@@ -14,6 +14,7 @@ import { parseSearchArgs, parseCreateArgs, parseUpdateArgs, requireString } from
 import { applePath, indexDbPath } from "./paths.ts";
 import { WriteOpsStore } from "@steward/write-ops";
 import { buildEventSearchPage } from "./event-page.ts";
+import { eventForTool } from "./tool-event.ts";
 
 let store: AppleStore | null = null;
 let storeError: string | null = null;
@@ -39,21 +40,24 @@ const writeOps = WriteOpsStore.open();
 
 const server = new Server({ name: "calendar", version: "0.0.0" }, { capabilities: { tools: {} } });
 
+const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const instantDescription = `RFC 3339 date-time with explicit timezone (Z or ±HH:MM). User-facing wall-clock times are in this Mac's ${localTimeZone} timezone; inputs are normalized internally and event outputs include the date-specific local offset.`;
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     { name: "list_calendars", description: "List calendars with their account.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-    { name: "search_events", description: "Search a compact page of events (hybrid keyword+semantic). All filters are optional and ANDed. Defaults to 10 events; follow page.nextOffset only when more are materially needed. Use read_event for a full description.", inputSchema: { type: "object", properties: {
-      query: { type: "string" }, start: { type: "string", description: "ISO start of range" }, end: { type: "string", description: "ISO end of range" },
+    { name: "search_events", description: `Search a compact page of events (hybrid keyword+semantic). All filters are optional and ANDed. Defaults to 10 events; follow page.nextOffset only when more are materially needed. Use read_event for a full description. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: {
+      query: { type: "string" }, start: { type: "string", description: `Inclusive range start. ${instantDescription}` }, end: { type: "string", description: `Inclusive range end. ${instantDescription}` },
       account: { type: "string" }, calendar: { type: "string" }, limit: { type: "number", description: "Page size; defaults to 10 and is capped at 20." },
       offset: { type: "number", description: "Rank offset from page.nextOffset." } }, additionalProperties: false } },
-    { name: "read_event", description: "Read one event by uid.", inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
+    { name: "read_event", description: `Read one event by uid. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
     { name: "create_event", description: "Create a calendar event.", inputSchema: { type: "object", properties: {
-      calendar: { type: "string" }, summary: { type: "string" }, start: { type: "string" }, end: { type: "string" },
-      allDay: { type: "boolean" }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
+      calendar: { type: "string" }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
+      allDay: { type: "boolean", description: "Marks an all-day event. Pass start/end at local midnight with an explicit offset so the civil dates remain unambiguous." }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
       alarms: { type: "array", items: { type: "number" }, description: "alerts in minutes before the event, e.g. [15, 1440] = 15 min + 1 day before" } },
       required: ["calendar", "summary", "start", "end"], additionalProperties: false } },
     { name: "update_event", description: "Update fields of an event by uid.", inputSchema: { type: "object", properties: {
-      uid: { type: "string" }, summary: { type: "string" }, start: { type: "string" }, end: { type: "string" },
+      uid: { type: "string" }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
       location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
       alarms: { type: "array", items: { type: "number" }, description: "replaces the event's alerts; minutes before start; [] clears all" } },
       required: ["uid"], additionalProperties: false } },
@@ -103,10 +107,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         // Both paths already applied the account/calendar/date filters; just resolve live detail.
         const events = uids.slice(a.offset, a.offset + a.limit + 1)
           .map((u) => liveStore.getEvent(u)).filter((e): e is CalEvent => !!e);
-        return ok(buildEventSearchPage(events, a.limit, a.offset));
+        return ok(buildEventSearchPage(events.map(eventForTool), a.limit, a.offset));
       }
       case "read_event": {
-        return ok(requireStore().getEvent(requireString(raw, "uid")) ?? null);
+        const event = requireStore().getEvent(requireString(raw, "uid"));
+        return ok(event ? eventForTool(event) : null);
       }
       case "create_event": {
         const args = parseCreateArgs(raw);

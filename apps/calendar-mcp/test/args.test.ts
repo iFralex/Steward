@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseSearchArgs, parseCreateArgs } from "../src/args.ts";
+import { parseSearchArgs, parseCreateArgs, parseUpdateArgs } from "../src/args.ts";
 
 test("parseSearchArgs defaults the range and limit", () => {
   const a = parseSearchArgs({ query: "dentist" });
@@ -26,4 +26,26 @@ test("parseCreateArgs accepts a valid alarms array and rejects bad ones", () => 
   assert.throws(() => parseCreateArgs({ ...base, alarms: [-5] }), /non-negative/);
   assert.throws(() => parseCreateArgs({ ...base, alarms: ["15"] }), /non-negative/);
   assert.throws(() => parseCreateArgs({ ...base, alarms: 15 }), /array/);
+});
+
+test("calendar date inputs require an explicit timezone", () => {
+  const base = { calendar: "Casa", summary: "x", end: "2026-06-25T11:00:00Z" };
+  assert.throws(() => parseCreateArgs({ ...base, start: "2026-06-25T10:00:00" }), /explicit timezone/);
+  assert.throws(() => parseCreateArgs({ ...base, start: "2026-06-25" }), /explicit timezone/);
+  assert.throws(() => parseSearchArgs({ start: "2026-06-25T00:00:00", end: "2026-06-26T00:00:00Z" }), /explicit timezone/);
+  assert.throws(() => parseUpdateArgs({ uid: "U1", start: "2026-06-25T10:00:00" }), /explicit timezone/);
+});
+
+test("calendar date inputs are normalized to UTC", () => {
+  const created = parseCreateArgs({
+    calendar: "Casa",
+    summary: "x",
+    start: "2026-06-25T10:00:00+02:00",
+    end: "2026-06-25T11:30:00+02:00",
+  });
+  assert.equal(created.start, "2026-06-25T08:00:00.000Z");
+  assert.equal(created.end, "2026-06-25T09:30:00.000Z");
+
+  const updated = parseUpdateArgs({ uid: "U1", start: "2026-12-25T10:00:00+01:00" });
+  assert.equal(updated.start, "2026-12-25T09:00:00.000Z");
 });

@@ -2,6 +2,11 @@ import type { CreateArgs, UpdateArgs } from "./applescript.ts";
 
 type Raw = Record<string, unknown>;
 
+// Calendar tools exchange instants, not floating wall-clock values. Requiring
+// an explicit offset prevents the same input from meaning different instants
+// on Macs in different time zones (and across daylight-saving transitions).
+const RFC3339_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
+
 export function requireString(raw: Raw, field: string): string {
   const v = raw[field];
   if (typeof v !== "string" || v.trim() === "") throw new Error(`"${field}" is required and must be a non-empty string`);
@@ -27,9 +32,13 @@ function optMinutesArray(raw: Raw, field: string): number[] | undefined {
 
 function validIso(raw: Raw, field: string, required: boolean): string | undefined {
   const v = optString(raw, field);
-  if (v === undefined) { if (required) throw new Error(`"${field}" is required (ISO date)`); return undefined; }
-  if (Number.isNaN(Date.parse(v))) throw new Error(`"${field}" must be an ISO date`);
-  return v;
+  if (v === undefined) { if (required) throw new Error(`"${field}" is required (RFC 3339 date-time with an explicit timezone)`); return undefined; }
+  if (!RFC3339_INSTANT.test(v) || Number.isNaN(Date.parse(v))) {
+    throw new Error(`"${field}" must be an RFC 3339 date-time with an explicit timezone (Z or ±HH:MM)`);
+  }
+  // One canonical representation across search, create, update, persistence,
+  // previews, and tool results. Calendar.app still displays it in local time.
+  return new Date(v).toISOString();
 }
 
 export function parseSearchArgs(raw: Raw): { query?: string; start: string; end: string; account?: string; calendar?: string; limit: number; offset: number; fetchLimit: number } {

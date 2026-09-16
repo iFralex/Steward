@@ -25,6 +25,13 @@ function fmtDate(v: unknown): string {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString(currentLocale(), { dateStyle: "medium", timeStyle: "short" });
 }
 
+function fmtEventDate(v: unknown, allDay: boolean): string {
+  if (!allDay) return fmtDate(v);
+  if (v == null) return "";
+  const d = typeof v === "number" ? new Date(v * (v < 1e12 ? 1000 : 1)) : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString(currentLocale(), { dateStyle: "medium" });
+}
+
 type Dict = Record<string, unknown>;
 const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
 const present = (v: unknown): boolean => v != null && (Array.isArray(v) ? v.length > 0 : String(v).trim().length > 0);
@@ -97,11 +104,12 @@ function EmailCard({ data, files, fileApi }: { data: Dict; files?: ChannelFile[]
 
 function EventCard({ data }: { data: Dict }) {
   const { t } = useTranslation();
+  const allDay = data.allDay === true;
   return (
     <div className="bg-card my-1 space-y-0.5 rounded-md border px-3 py-2 text-xs">
       <div className="font-medium">📅 {str(data.summary) || t("cards.noEventTitle")}</div>
       {(present(data.start) || present(data.end)) && (
-        <Row label={t("cards.eventFields.when")}>{fmtDate(data.start)}{data.end ? ` → ${fmtDate(data.end)}` : ""}</Row>
+        <Row label={t("cards.eventFields.when")}>{fmtEventDate(data.start, allDay)}{data.end ? ` → ${fmtEventDate(data.end, allDay)}` : ""}</Row>
       )}
       {present(data.location) && <Row label={t("cards.eventFields.location")}>{str(data.location)}</Row>}
       {present(data.calendar) && <Row label={t("cards.eventFields.calendar")}>{str(data.calendar)}</Row>}
