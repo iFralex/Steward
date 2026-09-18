@@ -125,6 +125,10 @@ const DEFAULT_SYSTEM_PROMPT = [
   "`guidance`, and exceptions in `exclusions`. Flow writes require approval and",
   "remain editable. Use list/search/update/enable/delete tools to manage them.",
   "For email, use ONLY Apple Mail (mcp__mail__*) — search, read, send, reply.",
+  "For Italian train information, use mcp__trains__find_next_train and report",
+  "whether the platform is confirmed, scheduled-only, or unknown, plus the data",
+  "update time. Never present a scheduled platform as confirmed. Use train_status",
+  "to refresh a returned trainRef.",
   "To find files on the user's disk (e.g. to attach to an email), use",
   "mcp__shell__find_files, then pass the returned absolute paths to send_email/",
   "reply `attachments`. mcp__shell__run_command runs a read-only command line in",
@@ -168,6 +172,8 @@ export function loadConfig(): HostConfig {
     process.env.ACTION_CENTER_MCP_ENTRY ?? fileURLToPath(new URL("../../action-center/src/index.ts", import.meta.url));
   const shellMcpEntry =
     process.env.SHELL_MCP_ENTRY ?? fileURLToPath(new URL("../../shell-mcp/src/index.ts", import.meta.url));
+  const trainMcpEntry =
+    process.env.TRAIN_MCP_ENTRY ?? fileURLToPath(new URL("../../train-mcp/src/index.ts", import.meta.url));
 
   const vapid = loadVapidKeys();
   // Apple's push service (web.push.apple.com) VALIDATES the VAPID subject and
@@ -197,7 +203,7 @@ export function loadConfig(): HostConfig {
       enabled: process.env.STEWARD_SPEECH_ENABLED !== "0",
       whisperBin: process.env.STEWARD_WHISPER_BIN,
       whisperModel: process.env.STEWARD_WHISPER_MODEL,
-      language: process.env.STEWARD_SPEECH_LANGUAGE ?? "en",
+      language: process.env.STEWARD_SPEECH_LANGUAGE ?? "it",
       timeoutMs: Number(process.env.STEWARD_SPEECH_TIMEOUT_MS ?? 120_000),
       convertTimeoutMs: Number(process.env.STEWARD_AUDIO_CONVERT_TIMEOUT_MS ?? 30_000),
     },
@@ -208,6 +214,7 @@ export function loadConfig(): HostConfig {
       contacts: { command: node, args: nodeArgs(contactsMcpEntry) },
       "action-center": { command: node, args: nodeArgs(actionCenterMcpEntry) },
       shell: { command: node, args: nodeArgs(shellMcpEntry) },
+      trains: { command: node, args: nodeArgs(trainMcpEntry) },
     },
   };
 }

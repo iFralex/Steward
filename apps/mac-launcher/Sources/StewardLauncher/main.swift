@@ -482,6 +482,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             env["CONTACTS_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/contacts.js").path
             env["ACTION_CENTER_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/action-center.js").path
             env["SHELL_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/shell.js").path
+            env["TRAIN_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/trains.js").path
             env["MAIL_MIRROR_CLI"] = servicesRoot.appendingPathComponent("cli/mail-mirror.js").path
             env["MAIL_PROMOTER_CLI"] = servicesRoot.appendingPathComponent("cli/mail-promoter.js").path
             env["ACTION_CENTER_CLI"] = servicesRoot.appendingPathComponent("cli/action-center.js").path

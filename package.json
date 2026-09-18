@@ -18,6 +18,7 @@
     "apps/calendar-mcp",
     "apps/contacts-mcp",
     "apps/shell-mcp",
+    "apps/train-mcp",
     "apps/scheduler",
     "apps/wiki-add",
     "apps/llm-wiki",
