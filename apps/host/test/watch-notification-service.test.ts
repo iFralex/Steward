@@ -12,4 +12,5 @@ test("watch event prompt delegates wording to the LLM without delegating actions
   assert.match(prompt, /positionRelativeToDestination/);
   assert.match(prompt, /non chiamare tool di scrittura/);
   assert.match(prompt, /confermato, soltanto programmato e non comunicato/);
+  assert.match(prompt, /massimo 180 caratteri/);
 });

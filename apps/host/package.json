@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"test/**/*.test.ts\""
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "smoke:trains": "node --import tsx scripts/train-chat-smoke.mts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.2",

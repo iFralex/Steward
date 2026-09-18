@@ -13,6 +13,7 @@ function createWatchTool(chatId: string): ToolDefinition {
     description:
       "Create a persistent, read-only event watch that returns future matching events to Steward, which writes an accessible notification and sends it by PWA push. " +
       "Currently source='train' is supported. Train events: train.platform_announced, train.platform_confirmed, train.platform_changed, train.departed, train.stop_arrived, train.stop_departed, train.delay_changed, train.cancelled, train.arrived. " +
+      "If a scheduled-only platform is already present, watch train.platform_confirmed and train.platform_changed rather than platform_announced. " +
       "For stop events, where.positionRelativeToDestination=-1 means the stop immediately before the user's destination and 0 means the destination. Use once=true for one-shot milestones. " +
       "This tool only observes and notifies; it cannot perform sensitive actions, so it runs automatically.",
     parameters: {

@@ -136,6 +136,8 @@ const DEFAULT_SYSTEM_PROMPT = [
   "train.platform_confirmed, train.platform_changed, train.departed,",
   "train.stop_arrived, train.cancelled and train.arrived; a stop event with",
   "positionRelativeToDestination -1 is the preceding stop and 0 the destination.",
+  "If the train already has a scheduled-only platform, watch confirmation and",
+  "changes rather than waiting for platform_announced, which has already happened.",
   "To find files on the user's disk (e.g. to attach to an email), use",
   "mcp__shell__find_files, then pass the returned absolute paths to send_email/",
   "reply `attachments`. mcp__shell__run_command runs a read-only command line in",
