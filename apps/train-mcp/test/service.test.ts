@@ -7,6 +7,7 @@ const now = Date.parse("2026-09-18T16:00:00+02:00");
 
 class FakeSource implements TrainDataSource {
   searches: string[] = [];
+  serviceDays: Array<number | undefined> = [];
   async searchStations(query: string): Promise<Station[]> {
     this.searches.push(query);
     if (query.toLowerCase().includes("milano")) return [
@@ -16,10 +17,12 @@ class FakeSource implements TrainDataSource {
     return [{ id: "S06421", name: "FIRENZE SANTA MARIA NOVELLA", label: "Firenze Santa Maria Novella" }];
   }
   async departures(): Promise<Record<string, unknown>[]> {
-    return [{ numeroTreno: 9515, codOrigine: "S01700", orarioPartenza: now + 10 * 60_000, ritardo: 5,
+    return [{ numeroTreno: 9515, codOrigine: "S01700", dataPartenzaTreno: now - 16 * 60 * 60_000,
+      orarioPartenza: now + 10 * 60_000, ritardo: 5,
       categoriaDescrizione: "FR", binarioProgrammatoPartenzaDescrizione: "4", binarioEffettivoPartenzaDescrizione: "7" }];
   }
-  async trainStatus(): Promise<Record<string, unknown>> {
+  async trainStatus(_origin: string, _number: string, serviceDay?: number): Promise<Record<string, unknown>> {
+    this.serviceDays.push(serviceDay);
     return {
       numeroTreno: 9515, categoria: "FR", origine: "MILANO CENTRALE", destinazione: "NAPOLI CENTRALE", ritardo: 5,
       fermate: [
@@ -40,7 +43,8 @@ test("stationSimilarity tolerates spacing and dictation errors", () => {
 });
 
 test("findNextTrain resolves fuzzy station names and distinguishes confirmed platform", async () => {
-  const service = new TrainService(new FakeSource());
+  const source = new FakeSource();
+  const service = new TrainService(source);
   const train = await service.findNextTrain("Milano rogo redo", "Firenze santa maria novella", new Date(now).toISOString());
   assert.equal(train.trainNumber, "9515");
   assert.equal(train.from, "Milano Rogoredo");
@@ -50,6 +54,16 @@ test("findNextTrain resolves fuzzy station names and distinguishes confirmed pla
   assert.equal(train.delayMinutes, 5);
   assert.equal(train.stops.at(-2)?.positionRelativeToDestination, 0);
   assert.match(train.trainRef, /^vt1_/);
+  assert.equal(source.serviceDays[0], now - 16 * 60 * 60_000);
+});
+
+test("station resolution broadens a failed autocomplete query without personal history", async () => {
+  const source = new FakeSource();
+  const original = source.searchStations.bind(source);
+  source.searchStations = async (query) => query === "Milano rogo redo" ? [] : original(query);
+  const train = await new TrainService(source).findNextTrain("Milano rogo redo", "Firenze santa maria novella", new Date(now).toISOString());
+  assert.equal(train.from, "Milano Rogoredo");
+  assert.ok(source.searches.includes("milano"));
 });
 
 test("trainStatus keeps scheduled platform explicitly unconfirmed", async () => {
@@ -66,4 +80,5 @@ test("trainStatus keeps scheduled platform explicitly unconfirmed", async () => 
   assert.equal(train.platform, "4");
   assert.equal(train.platformStatus, "scheduled");
   assert.equal(train.actualPlatform, undefined);
+  assert.equal((await new TrainService(source).status(train.trainRef)).departed, false);
 });

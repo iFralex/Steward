@@ -26,7 +26,7 @@ export class TrainService {
       const originId = text(row.codOrigine) ?? text(row.idOrigine);
       if (!trainNumber || !originId) return null;
       try {
-        const serviceDay = millis(row.dataPartenza);
+        const serviceDay = firstMillis(row.dataPartenzaTreno, row.millisDataPartenza, row.dataPartenza);
         const raw = await this.source.trainStatus(originId, trainNumber, serviceDay);
         if (!Object.keys(raw).length) return null;
         const ref: TrainRefData = {
@@ -55,12 +55,27 @@ export class TrainService {
   }
 
   private async resolveStation(query: string): Promise<Station> {
-    const candidates = await this.source.searchStations(query);
+    let candidates = await this.source.searchStations(query);
+    if (!candidates.length) {
+      // ViaggiaTreno autocomplete is prefix-based and returns nothing for many
+      // otherwise recognisable dictation errors. Broaden only after the exact
+      // query failed; this stays stateless and never consults personal memory.
+      const tokens = normalizeName(query).split(" ").filter((token) => token.length >= 3);
+      const fallbacks = [...new Set(tokens.flatMap((token) => [token, token.slice(0, 3)]))]
+        .filter((value) => value !== normalizeName(query));
+      const groups = await Promise.all(fallbacks.map((value) => this.source.searchStations(value).catch(() => [])));
+      const unique = new Map<string, Station>();
+      for (const station of groups.flat()) unique.set(station.id, station);
+      candidates = [...unique.values()];
+    }
     if (!candidates.length) throw new Error(`Station "${query}" was not found.`);
     const wanted = normalizeName(query);
-    const exact = candidates.filter((station) => stationNames(station)
+    const canonicalExact = candidates.filter((station) => [station.name, station.shortName].filter((name): name is string => !!name)
       .some((name) => normalizeName(name) === wanted || compactName(name) === compactName(query)));
-    if (exact.length === 1) return exact[0];
+    if (canonicalExact.length === 1) return canonicalExact[0];
+    const labelExact = candidates.filter((station) => station.label
+      && (normalizeName(station.label) === wanted || compactName(station.label) === compactName(query)));
+    if (!canonicalExact.length && labelExact.length === 1) return labelExact[0];
     const ranked = candidates
       .map((station) => ({ station, score: Math.max(...stationNames(station).map((name) => stationSimilarity(query, name))) }))
       .sort((a, b) => b.score - a.score);
@@ -86,9 +101,9 @@ function normalizeStatus(raw: Record<string, unknown>, ref: TrainRefData, depart
   const actualArrivalMs = firstMillis(toStop.arrivoReale, toStop.effettiva);
   const normalizedStops: TrainStopSnapshot[] = stops.map((stop, index) => {
     const scheduledArrivalMs = firstMillis(stop.arrivo_teorico, stop.programmata);
-    const actualArrivalMs = firstMillis(stop.arrivoReale, stop.effettiva);
+    const actualArrivalMs = firstMillis(stop.arrivoReale, stop.partenza_teorica ? undefined : stop.effettiva);
     const scheduledDepartureMs = firstMillis(stop.partenza_teorica, stop.programmata);
-    const actualDepartureMs = firstMillis(stop.partenzaReale, stop.effettiva);
+    const actualDepartureMs = firstMillis(stop.partenzaReale, stop.arrivo_teorico ? undefined : stop.effettiva);
     return compact({
       id: stationId(stop), name: firstText(stop.stazione) ?? `Fermata ${index + 1}`, index,
       scheduledArrival: formatRome(scheduledArrivalMs), actualArrival: formatRome(actualArrivalMs),
@@ -108,7 +123,7 @@ function normalizeStatus(raw: Record<string, unknown>, ref: TrainRefData, depart
   );
   const platformStatus: PlatformStatus = actualPlatform ? "confirmed" : scheduledPlatform ? "scheduled" : "unknown";
   const cancelled = ["ST", "SI", "SF"].includes(text(raw.tipoTreno) ?? "") || bool(raw.provvedimento) || integer(fromStop.actualFermataType) === 3 || bool(fromStop.soppressa);
-  const departed = bool(departureRow?.nonPartito) === false || actualDepartureMs !== undefined || (fromIndex >= 0 && lastDetectedIndex(raw, stops) > fromIndex);
+  const departed = departureRow?.nonPartito === false || actualDepartureMs !== undefined || (fromIndex >= 0 && lastDetectedIndex(raw, stops) > fromIndex);
   const arrived = bool(raw.arrivato) || actualArrivalMs !== undefined;
   const trainRef = encodeTrainRef({
     trainNumber: ref.trainNumber, originId: ref.originId, serviceDay: ref.serviceDay,
@@ -142,7 +157,9 @@ function lastDetectedIndex(raw: Record<string, unknown>, stops: Record<string, u
 }
 
 function stationId(stop: Record<string, unknown>): string | undefined { return firstText(stop.id, stop.codiceStazione); }
-function displayName(station: Station): string { return station.label ?? station.shortName ?? station.name; }
+function displayName(station: Station): string {
+  return station.label && compactName(station.label) === compactName(station.name) ? station.label : station.name;
+}
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function text(value: unknown): string | undefined { return typeof value === "string" || typeof value === "number" ? String(value).trim() || undefined : undefined; }
 function firstText(...values: unknown[]): string | undefined { for (const value of values) { const found = text(value); if (found && found !== "--") return found; } return undefined; }
