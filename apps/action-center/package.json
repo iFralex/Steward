@@ -16,6 +16,7 @@
     "@steward/mcp-bridge": "*",
     "@steward/protocol": "*",
     "@steward/search": "*",
+    "@steward/usage-ledger": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0"
   },

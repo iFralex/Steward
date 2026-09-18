@@ -21,6 +21,7 @@ import type { PushRegistry } from "./push.ts";
 import { getNotificationLang } from "./notification-lang.ts";
 import { notificationCopy } from "./notification-copy.ts";
 import { recordAudit } from "@steward/audit-log";
+import { usageLedger } from "@steward/usage-ledger";
 import { buildApprovalPreview } from "./approval-preview.ts";
 
 /**
@@ -76,6 +77,12 @@ export async function notifyNewProposals(store: ActionStore, items: ActionCenter
         tag: `action-${item.id}`,
         actionId: item.id,
         type: "approval",
+      }).then(() => {
+        recordAudit({
+          actor: "host", eventType: "action.notification_dispatched", risk: "low",
+          summary: `Dispatched notification for action ${item.id}`, actionId: item.id, ok: true,
+          payload: { type: "approval", tag: `action-${item.id}` },
+        });
       }));
     }
     if (changed) store.setMeta(PUSH_NOTIFIED_META_KEY, [...notified]);
@@ -228,7 +235,9 @@ export async function executeActionProposal(args: {
 
     let input = step.input ?? {};
     if (decision === "gate") {
-      const preview = await buildApprovalPreview(step.tool, input, bridge.callTool);
+      const preview = await buildApprovalPreview(step.tool, input, bridge.callTool, {
+        sessionId: args.session.id, chatId: args.chatId, actionId: args.actionId,
+      });
       const approved = await args.session.requestApproval({ tool: step.tool, input, preview, chatId: args.chatId });
       if (shouldRetryWithRevision(approved)) {
         throw new ActionRevisionRequestedError(buildRevisionPrompt(action, proposal, step, approved.note));
@@ -259,6 +268,7 @@ export async function executeActionProposal(args: {
       const output = extractToolOutput(result);
       const files = filesFromOutput(output);
       const durationMs = Date.now() - startedAt;
+      try { usageLedger().recordTool({ ts: Date.now(), sessionId: args.chatId ?? args.session.id, tool: step.tool, durationMs, ok: true }); } catch { /* optional */ }
       recordAudit({
         actor: "tool",
         eventType: "tool.completed",
@@ -284,6 +294,7 @@ export async function executeActionProposal(args: {
     } catch (err) {
       const durationMs = Date.now() - startedAt;
       const error = err instanceof Error ? err.message : String(err);
+      try { usageLedger().recordTool({ ts: Date.now(), sessionId: args.chatId ?? args.session.id, tool: step.tool, durationMs, ok: false }); } catch { /* optional */ }
       recordAudit({
         actor: "tool",
         eventType: "tool.failed",
@@ -328,6 +339,7 @@ export async function reviseActionProposal(args: {
     endpoint: `${args.config.gateway.baseUrl.replace(/\/$/, "")}/chat/completions`,
     model: args.config.gateway.tier,
     apiKey: args.config.gateway.apiKey,
+    usageAction: "revision",
   });
   const raw = await chat(REVISE_PROPOSAL_SYSTEM, JSON.stringify({
     userInstruction: instruction,

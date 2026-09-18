@@ -9,6 +9,7 @@ import { scanMailForActions } from "./mail.ts";
 import { scanCalendarForActions } from "./calendar.ts";
 import type { ActionStatus } from "./types.ts";
 import { isAllowedReadTool } from "./tool-context.ts";
+import { executeObservedReadTool } from "./observed-read-tool.ts";
 
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const cmd = argv[0] ?? "status";
@@ -48,7 +49,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
             readTool: bridgeForReadTools
               ? (tool, input) => {
                   if (!isAllowedReadTool(tool)) throw new Error(`read tool not allowed: ${tool}`);
-                  return bridgeForReadTools.callTool(tool, input);
+                  return executeObservedReadTool(bridgeForReadTools.callTool, tool, input);
                 }
               : undefined,
           });

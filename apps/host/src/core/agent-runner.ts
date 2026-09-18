@@ -218,7 +218,7 @@ export class ChatManager {
           async (req) => this.session.requestApproval({
             ...req,
             chatId,
-            preview: await buildApprovalPreview(req.tool, req.input, b.bridge.callTool),
+            preview: await buildApprovalPreview(req.tool, req.input, b.bridge.callTool, { sessionId: this.session.id, chatId }),
           }),
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
           () => ({ sessionId: this.session.id, chatId }),

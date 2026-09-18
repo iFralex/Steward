@@ -95,7 +95,11 @@ export class ActionStore {
         risk: input.priority === "high" ? "medium" : "low",
         summary: input.title,
         actionId: id,
-        payload: { sourceKey: input.sourceKey, sourceKind: input.sourceKind, kind: input.kind, priority: input.priority, summary: input.summary, dueAt: input.dueAt },
+        payload: {
+          sourceKey: input.sourceKey, sourceKind: input.sourceKind, kind: input.kind,
+          priority: input.priority, summary: input.summary, dueAt: input.dueAt,
+          appliedFlowIds: appliedFlowIds(payloadObject),
+        },
       });
       return { id, inserted: true, updated: false };
     }
@@ -137,7 +141,19 @@ export class ActionStore {
         risk: "low",
         summary: input.title,
         actionId: existing.id,
-        payload: { sourceKey: input.sourceKey, sourceKind: input.sourceKind, kind: input.kind, reason: "new activity on a previously handled thread" },
+        payload: {
+          sourceKey: input.sourceKey, sourceKind: input.sourceKind, kind: input.kind,
+          reason: "new activity on a previously handled thread", appliedFlowIds: appliedFlowIds(payloadObject),
+        },
+      });
+    } else {
+      recordAudit({
+        actor: "scheduler", eventType: "action.updated", risk: "low", summary: input.title,
+        actionId: existing.id,
+        payload: {
+          sourceKey: input.sourceKey, sourceKind: input.sourceKind, kind: input.kind,
+          summary: input.summary, appliedFlowIds: appliedFlowIds(payloadObject),
+        },
       });
     }
     return { id: existing.id, inserted: false, updated: true };
@@ -353,6 +369,16 @@ export class ActionStore {
   }
 
   close(): void { this.raw.close(); }
+}
+
+function appliedFlowIds(payload: Record<string, unknown>): number[] {
+  const snapshot = payload.contextSnapshot;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return [];
+  const flows = (snapshot as Record<string, unknown>).flows;
+  if (!Array.isArray(flows)) return [];
+  return flows
+    .map((flow) => flow && typeof flow === "object" ? Number((flow as Record<string, unknown>).id) : NaN)
+    .filter(Number.isSafeInteger);
 }
 
 function normalizeFlowInput(input: UpsertFlow): Required<UpsertFlow> {

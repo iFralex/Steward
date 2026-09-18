@@ -149,7 +149,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       case "create_flow": {
         const input = flowInput(args, false);
-        const embedding = await embedFlowText(flowEmbeddingText(input));
+        const embedding = await embedFlowText(flowEmbeddingText(input), "flow-index");
         return text({ ok: true, flow: store.createFlow(input, embedding) });
       }
       case "update_flow": {
@@ -159,7 +159,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const input = flowInput(args, true);
         const next = { ...current, ...input };
         const semanticChanged = input.name !== undefined || input.when !== undefined;
-        const embedding = semanticChanged ? await embedFlowText(flowEmbeddingText(next)) : undefined;
+        const embedding = semanticChanged ? await embedFlowText(flowEmbeddingText(next), "flow-index") : undefined;
         return text({ ok: true, flow: store.updateFlow(id, input, embedding) });
       }
       case "set_flow_enabled": {

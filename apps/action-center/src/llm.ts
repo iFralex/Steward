@@ -4,7 +4,7 @@ import { usageHeaders } from "@steward/protocol";
 export type Chat = (system: string, user: string) => Promise<string>;
 
 export function gatewayChat(
-  cfg: { endpoint?: string; model?: string; apiKey?: string } = {},
+  cfg: { endpoint?: string; model?: string; apiKey?: string; usageAction?: string } = {},
   fetchImpl: typeof fetch = fetch,
 ): Chat {
   const endpoint = cfg.endpoint ?? process.env.ACTION_CENTER_LLM_ENDPOINT ?? "http://127.0.0.1:4000/v1/chat/completions";
@@ -16,7 +16,7 @@ export function gatewayChat(
       headers: {
         "content-type": "application/json",
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        ...usageHeaders("action-center", "scan"),
+        ...usageHeaders("action-center", cfg.usageAction ?? "scan"),
       },
       body: JSON.stringify({
         model,
