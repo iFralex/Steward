@@ -76,6 +76,39 @@ test("doRunTurn does not resurrect a deleted/nonexistent chat", async () => {
   assert.deepEqual(chatStore().getMessages(missingChatId), []);
 });
 
+test("an automatic watch turn persists only the user-facing notification", async () => {
+  const session = new Session(() => {}, 1000);
+  const cm = new ChatManager(
+    {
+      port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
+      gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      mcpServers: {},
+    } as any,
+    session,
+    () => {},
+  );
+  const chat = chatStore().createChat("automatic notification");
+  const runtime = {
+    chatId: chat.id,
+    session: {
+      prompt: async () => { runtime.assistantBuffer = "Binario 4 confermato."; },
+      getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    },
+    unsub: () => {}, lastCostUsd: 0,
+    lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
+  };
+  (cm as any).ensureChat = async () => runtime;
+
+  await cm.runTurn(chat.id, "internal structured event", undefined, {
+    origin: "watch", correlationId: "watch-1", auditPayload: { eventType: "train.platform_changed" },
+  });
+
+  const messages = chatStore().getMessages(chat.id);
+  assert.deepEqual(messages.map((message) => message.role), ["assistant"]);
+  assert.equal(messages[0].text, "Binario 4 confermato.");
+});
+
 test("doRunTurn marks the chat running for the shared running-chats registry while in flight, and idle once it finishes", async () => {
   const session = new Session(() => {}, 1000);
   const cm = new ChatManager(

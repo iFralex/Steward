@@ -53,3 +53,15 @@ export interface WatchAdapter {
   defaultExpiry(snapshot: unknown): number;
   isTerminal(snapshot: unknown): boolean;
 }
+
+/** Optional lifecycle hooks. The engine stays storage/domain-only; hosts can
+ * attach audit, metrics or tracing without coupling those concerns here. */
+export interface WatchEngineObserver {
+  watchCreated?(watch: WatchRecord): void;
+  watchStopped?(watch: WatchRecord): void;
+  watchExpired?(watch: WatchRecord): void;
+  eventQueued?(watch: WatchRecord, rule: WatchRule, event: DomainEvent): void;
+  pollCompleted?(watch: WatchRecord, result: { durationMs: number; queued: number; terminal: boolean }): void;
+  pollFailed?(watch: WatchRecord, error: string, durationMs: number): void;
+  watchCompleted?(watch: WatchRecord): void;
+}

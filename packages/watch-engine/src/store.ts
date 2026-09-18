@@ -68,8 +68,15 @@ export class WatchStore {
     return this.get(id);
   }
 
-  active(now = Date.now()): WatchRecord[] {
+  expireDue(now = Date.now()): WatchRecord[] {
+    const due = (this.raw.prepare("SELECT * FROM watches WHERE status='active' AND expires_at<=? ORDER BY created_at").all(now) as WatchRow[])
+      .map(watchFromRow);
+    if (!due.length) return [];
     this.raw.prepare("UPDATE watches SET status='expired', updated_at=? WHERE status='active' AND expires_at<=?").run(now, now);
+    return due.map((watch) => ({ ...watch, status: "expired", updatedAt: now }));
+  }
+
+  active(): WatchRecord[] {
     return (this.raw.prepare("SELECT * FROM watches WHERE status='active' ORDER BY created_at").all() as WatchRow[]).map(watchFromRow);
   }
 

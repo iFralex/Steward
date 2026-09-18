@@ -140,6 +140,21 @@ function getQuickRunner(config: HostConfig): ChatManager {
   return quickRunner;
 }
 
+/** Separate provider registration gives automatic notification generations a
+ * distinct Usage action instead of charging them to an apparent user turn. */
+let watchRunner: ChatManager | null = null;
+function getWatchRunner(config: HostConfig): ChatManager {
+  if (!watchRunner) {
+    const noop: Emit = () => {};
+    const watchConfig: HostConfig = {
+      ...config,
+      gateway: { ...config.gateway, usageService: "host", usageAction: "watch-notification" },
+    };
+    watchRunner = new ChatManager(watchConfig, new Session(noop, config.approvalTimeoutMs), noop);
+  }
+  return watchRunner;
+}
+
 function readRequestBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -667,7 +682,7 @@ export function startServer(config: HostConfig): WebSocketServer {
   const actionPushPollMs = Math.max(1_000, Number(process.env.ACTION_PUSH_POLL_MS ?? 15_000));
   const actionPushTimer = setInterval(pollNewActionNotifications, actionPushPollMs);
   actionPushTimer.unref();
-  const pollWatches = () => pollAndDeliverWatchEvents({ engine: sharedWatchEngine(), runner: getQuickRunner(config), push: pushRegistry });
+  const pollWatches = () => pollAndDeliverWatchEvents({ engine: sharedWatchEngine(), runner: getWatchRunner(config), push: pushRegistry });
   void pollWatches();
   const watchPollMs = Math.max(15_000, Number(process.env.WATCH_POLL_MS ?? 45_000));
   const watchTimer = setInterval(() => void pollWatches(), watchPollMs);

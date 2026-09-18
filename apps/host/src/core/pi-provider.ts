@@ -15,6 +15,8 @@ export interface GatewayConfig {
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
   contextWindow?: number;
   maxTokens?: number;
+  usageService?: string;
+  usageAction?: string;
 }
 
 export function registerGatewayModel(cfg: GatewayConfig): { modelRegistry: ModelRegistry; model: Model<any> } {
@@ -24,7 +26,7 @@ export function registerGatewayModel(cfg: GatewayConfig): { modelRegistry: Model
     name: "LLM Gateway",
     baseUrl: cfg.baseUrl,
     apiKey: cfg.apiKey,
-    headers: usageHeaders("host", "agent-turn"),
+    headers: usageHeaders(cfg.usageService ?? "host", cfg.usageAction ?? "agent-turn"),
     api: "openai-completions",
     streamSimple: openAICompletionsStreamSimple as any,
     models: [{

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { WatchEngine, WatchStore, type DomainEvent, type WatchAdapter } from "../src/index.ts";
+import { WatchEngine, WatchStore, type DomainEvent, type WatchAdapter, type WatchEngineObserver } from "../src/index.ts";
 
 interface Snapshot { step: number; terminal?: boolean }
 
@@ -29,14 +29,14 @@ class FakeAdapter implements WatchAdapter {
   }
 }
 
-function fixture(): { engine: WatchEngine; store: WatchStore; adapter: FakeAdapter; cleanup(): void } {
+function fixture(observer?: WatchEngineObserver): { engine: WatchEngine; store: WatchStore; adapter: FakeAdapter; cleanup(): void } {
   const dir = mkdtempSync(join(tmpdir(), "steward-watch-"));
   const store = WatchStore.open(join(dir, "watches.db"));
   const adapter = new FakeAdapter();
   return {
     store,
     adapter,
-    engine: new WatchEngine(store).register(adapter),
+    engine: new WatchEngine(store, observer).register(adapter),
     cleanup() { store.close(); rmSync(dir, { recursive: true, force: true }); },
   };
 }
@@ -59,6 +59,48 @@ test("poll translates a state change into a durable matching event", async () =>
     assert.equal(await fx.engine.poll(), 0, "the same state must not enqueue twice");
     fx.adapter.current = { step: 2 };
     assert.equal(await fx.engine.poll(), 0, "a once rule must not fire a second time");
+  } finally { fx.cleanup(); }
+});
+
+test("lifecycle observer receives durable transitions and remains best-effort", async () => {
+  const seen: string[] = [];
+  const fx = fixture({
+    watchCreated: () => seen.push("created"),
+    eventQueued: () => seen.push("queued"),
+    pollCompleted: (_watch, result) => seen.push(`polled:${result.queued}`),
+    watchCompleted: () => seen.push("completed"),
+  });
+  try {
+    await fx.engine.create({
+      source: "fake", resourceRef: "observed", chatId: "chat", instruction: "x",
+      rules: [{ id: "change", event: "fake.changed" }],
+    });
+    fx.adapter.current = { step: 1, terminal: true };
+    await fx.engine.poll();
+    assert.deepEqual(seen, ["created", "queued", "polled:1", "completed"]);
+  } finally { fx.cleanup(); }
+
+  const throwing = fixture({ pollCompleted: () => { throw new Error("observer failed"); } });
+  try {
+    await throwing.engine.create({
+      source: "fake", resourceRef: "safe", chatId: "chat", instruction: "x",
+      rules: [{ id: "change", event: "fake.changed" }],
+    });
+    await assert.doesNotReject(() => throwing.engine.poll());
+  } finally { throwing.cleanup(); }
+});
+
+test("expired watches are surfaced without being polled", async () => {
+  const expired: string[] = [];
+  const fx = fixture({ watchExpired: (watch) => expired.push(watch.id) });
+  try {
+    const watch = await fx.engine.create({
+      source: "fake", resourceRef: "expired", chatId: "chat", instruction: "x", expiresAt: Date.now() - 1,
+      rules: [{ id: "change", event: "fake.changed" }],
+    });
+    assert.equal(await fx.engine.poll(), 0);
+    assert.deepEqual(expired, [watch.id]);
+    assert.equal(fx.store.get(watch.id)?.status, "expired");
   } finally { fx.cleanup(); }
 });
 
