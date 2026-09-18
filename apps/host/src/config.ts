@@ -212,7 +212,7 @@ export function loadConfig(): HostConfig {
       enabled: process.env.STEWARD_SPEECH_ENABLED !== "0",
       whisperBin: process.env.STEWARD_WHISPER_BIN,
       whisperModel: process.env.STEWARD_WHISPER_MODEL,
-      language: process.env.STEWARD_SPEECH_LANGUAGE ?? "it",
+      language: process.env.STEWARD_SPEECH_LANGUAGE ?? "en",
       timeoutMs: Number(process.env.STEWARD_SPEECH_TIMEOUT_MS ?? 120_000),
       convertTimeoutMs: Number(process.env.STEWARD_AUDIO_CONVERT_TIMEOUT_MS ?? 30_000),
     },

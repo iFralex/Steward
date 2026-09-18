@@ -22,6 +22,7 @@ Everything important runs locally. Your data is stored on your machine. Network 
 
 - [What Steward Does](#what-steward-does) — product-level capabilities and examples.
 - [Main Workflows](#main-workflows) — the user-visible chat, memory, Action Center, mobile, usage and audit experiences.
+- [Live Trains And Event Monitors](#live-trains-and-event-monitors) — live Italian train data and reusable background notifications.
 - [Architecture](#architecture) — services and the three operating planes.
 - [End-To-End Data Journeys](#end-to-end-data-journeys) — complete chat, mail ingestion, threading, embedding and wiki-promotion flows.
 - [Retrieval Internals](#retrieval-internals) — mail, calendar, contacts, wiki and local-file search algorithms.
@@ -48,6 +49,8 @@ You can ask things like:
 - "What did we decide about the solar-panel certification?"
 - "Show me the latest file in Downloads and attach it to an email."
 - "Remind me what this client asked for in the last thread."
+- "Qual è il prossimo treno da Milano Rogoredo a Bologna e da che binario parte?"
+- "Avvisami quando parte, quando manca una fermata e quando devo scendere."
 
 Steward can then:
 
@@ -59,6 +62,7 @@ Steward can then:
 - let you approve, edit, deny, or ask for a revised proposal;
 - keep a background Action Center of things that may need your attention;
 - notify your phone when there is an action waiting for you;
+- look up live Italian trains and notify you as their state changes;
 - keep a personal wiki of durable facts, decisions, commitments and source links.
 
 The assistant does not silently send mail or mutate your files. It can propose those actions, but the host gates them with deterministic code and waits for your confirmation.
@@ -70,7 +74,7 @@ Steward is a monorepo of local services:
 - `apps/web` is the browser/PWA client.
 - `apps/host` serves the web app, owns sessions, runs the agent, gates tools, stores chat history, exposes usage/system routes, and bridges UI events over WebSocket.
 - `apps/llm-gateway` exposes one OpenAI-compatible endpoint with model capability tiers.
-- MCP servers expose Mail, Calendar, Contacts, Shell, LLM Wiki and Action Center tools.
+- MCP servers expose Mail, Calendar, Contacts, Shell, Trains, LLM Wiki and Action Center tools.
 - `apps/scheduler` runs periodic background jobs.
 - local SQLite stores mirror mail, calendar/contact indexes, action items, write-operation journals, chats and usage.
 - `apps/mac-launcher` packages all of this as a menu-bar macOS app.
@@ -89,6 +93,8 @@ The chat UI is not a generic chatbot. It is connected to local tools:
 - Contacts tools for resolving people from names, emails and AddressBook records.
 - Shell tools for safe file discovery and read-only command execution.
 - Action Center tools for inspecting and executing pending proposed work.
+- Train tools for live direct-train lookup, status refresh and platform confidence.
+- Generic watch tools for persistent, event-driven notifications composed by the agent.
 
 Messages stream in the UI. Tool calls appear as visible cards, including status, inputs, outputs, duration and errors. The transcript can be copied as JSON for debugging.
 
@@ -259,7 +265,59 @@ The host can transcribe uploaded audio through local `whisper.cpp` when configur
 - `STEWARD_SPEECH_LANGUAGE`;
 - optional timeout variables.
 
+`STEWARD_SPEECH_LANGUAGE` falls back to `en`. Set it explicitly to `it` in
+`apps/host/.env` during development or in
+`~/Library/Application Support/Steward/config.env` for the packaged app. The
+repository's `.env.example` shows the Italian setting. The macOS bundle includes
+the Whisper runtime and model; the launcher passes the configured language to
+`whisper.cpp` with `-l`.
+
 There is also a `/quick-send` path for shortcuts such as an iPhone Action Button. It can send text or audio into a headless chat runner. Gated writes still require approval; unattended sensitive actions time out rather than silently executing.
+
+### Live Trains And Event Monitors
+
+`apps/train-mcp` reads live Italian railway data from ViaggiaTreno and exposes
+two read-only MCP tools:
+
+- `mcp__trains__find_next_train` finds the next direct train in the current
+  departure-board window and returns an opaque `trainRef`, route stops,
+  scheduled and estimated times, delay, cancellation state and departure
+  platform;
+- `mcp__trains__train_status` refreshes that same train through its `trainRef`.
+
+Platform confidence is explicit: `confirmed` means an effective platform was
+published, `scheduled` means it is only programmed, and `unknown` means it has
+not been communicated. The agent is instructed never to present a programmed
+platform as confirmed. This connector is a live direct-train lookup, not a
+connection planner or ticketing API. It consumes ViaggiaTreno's JSON endpoints
+rather than scraping HTML; those endpoints are not treated as a contractual
+public API, so failures remain explicit and isolated inside the connector.
+
+Station resolution is designed for voice dictation. It first tries the supplied
+name, then—only if autocomplete returns nothing—broadens the query with token
+and prefix candidates and ranks the results using normalized edit/trigram
+similarity. Ambiguous matches are returned to the agent for clarification. The
+resolver is stateless: it does not load habitual stations, LLM Wiki memory or
+other personal context.
+
+Background monitoring is intentionally domain-independent. The host-native
+`create_watch` tool stores a resource reference, the user's instruction and a
+set of semantic event rules; `stop_watch` stops it. Both are automatically
+allowed because they only observe or reduce background work. A source adapter
+turns snapshot changes into domain events, and matching events are placed in a
+durable SQLite queue. The event is then returned to the LLM, which writes a
+short accessible notification in Italian; the same message is persisted in the
+chat and sent through Web Push. If the LLM repeatedly fails, a deterministic
+fallback notification is delivered.
+
+The train adapter currently emits platform announcement/confirmation/change,
+departure, arrival, cancellation, delay change and per-stop arrival/departure
+events. For stop rules, `positionRelativeToDestination: -1` means the stop
+immediately before the requested destination and `0` means the destination
+itself. Rules can be one-shot, watches expire automatically after the journey,
+and event keys prevent duplicate delivery across restarts. Future domains can
+reuse the engine by registering another adapter rather than adding another
+train-specific scheduler.
 
 ### Usage & Cost
 
@@ -306,13 +364,14 @@ The host exposes the ledger at `/audit` (filterable by actor, event type, risk, 
 │ shortcut, service  │    │ tool policy, approvals, chat store, │
 │ health/startup     │    │ usage ledger, file registry, push,  │
 └────────────────────┘    │ speech, Action Center executor      │
+                          │ watch engine, event queue           │
                           └───────┬────────────────────▲────────┘
                                   │ MCP stdio bridge    │ OpenAI-compatible
                                   │                     │
         ┌─────────────────────────┴──────────┐  ┌──────┴──────────────────┐
         │ MCP connectors                      │  │ apps/llm-gateway :4000  │
         │ llm-wiki, mail, calendar, contacts, │  │ tier-1..tier-6,         │
-        │ shell, action-center                │  │ local-embed, rates      │
+        │ shell, trains, action-center        │  │ local-embed, rates      │
         └──────────────▲──────────────────────┘  └─────────▲───────────────┘
                        │ local DB / AppleScript / files       │
         ┌──────────────┴──────────────────────────────────────┴────┐
@@ -325,7 +384,7 @@ The host exposes the ledger at `/audit` (filterable by actor, event type, risk, 
 There are three operating planes:
 
 1. **Interactive plane** — the user chats in the web UI; the host runs an agent and exposes tools through MCP. Read actions can run directly. Writes become approval cards.
-2. **Background plane** — the scheduler keeps local indexes fresh, embeds mail, distills durable knowledge into the wiki, scans for action items and confirms write operations.
+2. **Background plane** — the scheduler keeps local indexes fresh, embeds mail, distills durable knowledge into the wiki, scans for action items and confirms write operations; the host watch engine polls active resource monitors and delivers matching events.
 3. **Reliability plane** — writes are journaled before execution, confirmed against local mirrors afterwards, and retried safely if they did not actually land.
 
 ## End-To-End Data Journeys
@@ -654,7 +713,7 @@ Every Pi tool definition is wrapped by the host before being exposed to the agen
 - `gate` — emit an approval request and wait;
 - `deny` — return a blocked result without asking.
 
-The default is `gate`. Known mail/calendar/contact/wiki reads and safe file operations are explicitly allow-listed. Write tools fall through to the gated default. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
+The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic watch creation and stopping are also allowed automatically because a watch can only observe a registered resource and enqueue notifications; it cannot perform a downstream write. Other write tools fall through to the gated default. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
 
 ### Approval Lifecycle
 
@@ -835,6 +894,7 @@ Not every SQLite database has the same authority. Some are disposable indexes ov
 | Action items | Steward analysis and user state | `action-center/actions.db` | No; status and review history are primary Steward state. |
 | Write operations | Attempt/confirmation lifecycle | `write-ops/ops.db` | No; required for safe confirmation and retry. |
 | Chats | User/assistant/tool transcript | `steward-chats/chats.db` and session files | No; this is primary conversation state. |
+| Active watches and events | User-authored watch rules and observed event delivery state | `Steward/watches.db` | No; required for restart-safe monitoring and deduplication. |
 | Usage | Gateway and tool-call accounting | `steward-usage/usage.db` | Not fully; provider history may not be available later. |
 | Audit | Redacted event stream | `steward-audit/audit.db` | No; the redacted record is intentionally primary. |
 
@@ -861,6 +921,8 @@ Steward is designed to retain narrower functionality when a dependent service is
 | No UI is attached to a gated request | Approval times out to deny. Quick Send cannot silently execute writes. |
 | AppleScript returns but the change is not observed | The write remains unconfirmed and enters bounded confirmation/retry handling. |
 | Push subscription is expired | The dead subscription is pruned; the Action Center item remains available in the UI. |
+| ViaggiaTreno is unavailable or has no live board result | Train tools return an explicit error; existing watches retain their last snapshot and record the polling error for a later retry. |
+| LLM notification generation repeatedly fails | The durable event remains pending during bounded retries, then Steward sends the adapter's deterministic fallback message. |
 | Gateway rates unavailable | Usage display falls back to configured static rates; raw tokens remain recorded. |
 
 This degradation model is deliberate: a missing probabilistic or remote capability should not make deterministic local data inaccessible.
@@ -873,6 +935,8 @@ Local-first does not mean unbounded. Several limits keep cold starts, model cont
 |---|---|---|
 | Mail SQLite | WAL mode, best-effort 2 GiB mmap and 64 MiB page cache | Multiple readers can search while ingestion writes; large local archives avoid repeated cold-page reads. |
 | Ranked mail search | 50 lexical + 50 vector candidates | Ranking stays fast before RRF and final filtering. |
+| Train lookup | Current departure-board candidates, direct services only | Bounds live API calls and avoids pretending to be a full journey planner. |
+| Watch polling | 45 s by default, minimum 15 s, no overlapping poll/delivery loop | Keeps mobile updates timely without creating concurrent duplicate work. |
 | Trigram search | Up to 500 candidates per field | Substring filters drive selection without scanning all inline bodies. |
 | Unranked mail browse | 500-row window; final API limit max 100 | Supports sorting/pagination without materializing the entire archive. |
 | Action-planner mail page | Up to 6 compact results; threads and large bodies expose continuation offsets | Avoids full-message context by default. |
@@ -1060,7 +1124,9 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 | [apps/calendar-mcp](apps/calendar-mcp/) | Calendar connector. Reads Calendar data, builds hybrid search index and performs approved event writes through AppleScript/write-ops. |
 | [apps/contacts-mcp](apps/contacts-mcp/) | Contacts connector. Reads AddressBook data, deduplicates, labels, indexes and resolves recipients. |
 | [apps/shell-mcp](apps/shell-mcp/) | Safe shell/files connector. Finds files, runs constrained read-only commands, and gates write commands. |
+| [apps/train-mcp](apps/train-mcp/) | Read-only live Italian train connector. Resolves dictated station names, finds the next direct service and refreshes route, delay and platform state through an opaque `trainRef`. |
 | [apps/scheduler](apps/scheduler/) | Background daemon. Runs periodic CLI jobs with no-overlap scheduling, timeouts and isolated errors. |
+| [packages/watch-engine](packages/watch-engine/) | Generic persistent event-monitor engine. Stores resource snapshots and rules, matches semantic adapter events, deduplicates them and maintains a durable delivery queue. |
 | [packages/write-ops](packages/write-ops/) | Journal and confirm/retry state machine for AppleScript writes such as mail sends/replies/scheduled sends and calendar CRUD. |
 | [packages/audit-log](packages/audit-log/) | Shared, redacted SQLite audit ledger used by the host, write-ops, action-center and mail-promoter; queried by the host's `/audit` endpoint and the web Audit page. |
 | [packages/usage-ledger](packages/usage-ledger/) | Per-turn usage ledger. Stores tokens, cost, per-tier cost attribution and tool timings/errors for the Usage page. |
@@ -1107,6 +1173,7 @@ Most Steward data lives under `~/Library/Application Support/`:
 | `Steward/vapid.json` | Persisted VAPID keys for Web Push. |
 | `Steward/push-subscriptions.json` | Registered browser/PWA push subscriptions. |
 | `Steward/config.env` | Packaged launcher/service overrides and secrets. |
+| `Steward/watches.db` | Persistent generic watch definitions, resource snapshots and queued/delivered events. |
 | `mail-mirror/mail.db` and `mail-mirror/blobs/` | Mirrored mail messages, threads, indexes, embedding state and attachment blobs. |
 | `mail-promoter/` | Mail promotion state and note tracking. |
 | `action-center/actions.db` | Action items, explicit reusable flows, seen ledger and scan metadata. |
@@ -1262,6 +1329,7 @@ The bundle includes:
 - Node runtime;
 - required native dependencies such as `better-sqlite3` and `sqlite-vec`;
 - bundled speech runtime files when present.
+- the live train MCP connector and generic watch engine used by the host.
 
 Production overrides and secrets go in:
 
@@ -1297,8 +1365,12 @@ Logs go in:
 | `STEWARD_PUSH_CONTACT` | VAPID contact URI for Web Push. |
 | `STEWARD_WHISPER_BIN` | Path to `whisper.cpp` binary for transcription. |
 | `STEWARD_WHISPER_MODEL` | Path to local Whisper model file. |
-| `STEWARD_SPEECH_LANGUAGE` | Speech language, default `en`. |
+| `STEWARD_SPEECH_LANGUAGE` | Whisper language code, default `en`; set `it` explicitly for Italian dictation. |
 | `STEWARD_SPEECH_ENABLED` | Set `0` to disable transcription. |
+| `TRAIN_MCP_ENTRY` | Override the train MCP entrypoint; normally set automatically by the packaged launcher. |
+| `VIAGGIATRENO_BASE_URL` | Override the ViaggiaTreno endpoint, primarily for testing or a compatible proxy. |
+| `WATCH_DB` | Override the generic watch SQLite path; defaults to `Steward/watches.db`. |
+| `WATCH_POLL_MS` | Watch polling interval, default `45000` ms with a 15-second minimum. |
 | `SCHED_*_MIN` | Override scheduler intervals. |
 | `LLM_WIKI_BUNDLED_SERVICES` / `STEWARD_BUNDLED_SERVICES` | Tell services they are running from the packaged bundle. |
 
@@ -1324,6 +1396,8 @@ Useful workspace names include:
 - `@steward/calendar-mcp`
 - `@steward/contacts-mcp`
 - `@steward/shell-mcp`
+- `@steward/train-mcp`
+- `@steward/watch-engine`
 - `@steward/scheduler`
 - `@steward/wiki-add`
 - `@steward/llm-wiki`

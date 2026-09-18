@@ -474,7 +474,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             if FileManager.default.fileExists(atPath: whisperBin.path), FileManager.default.fileExists(atPath: whisperModel.path) {
                 env["STEWARD_WHISPER_BIN"] = whisperBin.path
                 env["STEWARD_WHISPER_MODEL"] = whisperModel.path
-                env["STEWARD_SPEECH_LANGUAGE"] = env["STEWARD_SPEECH_LANGUAGE"] ?? "it"
+                env["STEWARD_SPEECH_LANGUAGE"] = env["STEWARD_SPEECH_LANGUAGE"] ?? "en"
             }
             env["LLM_WIKI_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/llm-wiki.js").path
             env["MAIL_MCP_ENTRY"] = servicesRoot.appendingPathComponent("mcp/mail.js").path
