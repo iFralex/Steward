@@ -323,8 +323,9 @@ train-specific scheduler.
 
 Every LLM call the platform makes — the host's chat agent, mail-mirror's embeddings, mail-promoter's triage/distillation, calendar-mcp's embeddings, or anywhere else — goes through the shared `apps/llm-gateway` and is logged once per call into `packages/usage-ledger`. Callers attribute their own spend with `x-usage-service` / `x-usage-action` HTTP headers; a call that forgets to label itself is recorded as `unknown` rather than silently disappearing, and the Usage page calls that out explicitly so unlabeled spend never goes unnoticed.
 
-Automatic work is attributed separately from interactive chat. Watch-event
-wording uses `host / watch-notification`; Action Center distinguishes scans,
+Non-interactive work is attributed separately from WebSocket chat. Quick Send
+uses `host / quick-send`, watch-event wording uses
+`host / watch-notification`, and Action Center distinguishes scans,
 proposal revisions, flow indexing and flow retrieval. Non-LLM operations use
 the same tool ledger: watch polling/delivery, approval-preview lookups,
 planner-selected background reads and directly executed Action steps all record

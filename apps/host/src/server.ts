@@ -135,7 +135,11 @@ let quickRunner: ChatManager | null = null;
 function getQuickRunner(config: HostConfig): ChatManager {
   if (!quickRunner) {
     const noop: Emit = () => {};
-    quickRunner = new ChatManager(config, new Session(noop, config.approvalTimeoutMs), noop);
+    const quickConfig: HostConfig = {
+      ...config,
+      gateway: { ...config.gateway, usageService: "host", usageAction: "quick-send" },
+    };
+    quickRunner = new ChatManager(quickConfig, new Session(noop, config.approvalTimeoutMs), noop);
   }
   return quickRunner;
 }
@@ -434,6 +438,12 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
           tag: `chat-${chat.id}`,
           chatId: chat.id,
           type: "chat-open",
+        }).then(() => {
+          recordAudit({
+            actor: "host", eventType: "quick_send.notification_dispatched", risk: "low",
+            summary: "Dispatched new-chat notification", chatId: chat.id, ok: true,
+            payload: { type: "chat-open" },
+          });
         }).catch(() => { /* best-effort */ });
         return;
       }
@@ -447,6 +457,12 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
             tag: `chat-${chat.id}`,
             chatId: chat.id,
             type: "chat-reply",
+          }).then(() => {
+            recordAudit({
+              actor: "host", eventType: "quick_send.notification_dispatched", risk: "low",
+              summary: "Dispatched quick-send reply notification", chatId: chat.id, ok: true,
+              payload: { type: "chat-reply", hadReply: !!reply },
+            });
           });
         })
         .catch(() => { /* best-effort: the chat + transcript persist regardless */ });
