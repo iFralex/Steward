@@ -24,6 +24,7 @@ import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 import type { ChannelFile } from "@steward/protocol";
 import { buildApprovalPreview } from "./approval-preview.ts";
+import { buildWatchTools } from "./watch-tools.ts";
 
 let sharedBridge: Promise<McpBridge> | undefined;
 /** One set of MCP connector child processes for the whole host process. Built
@@ -100,6 +101,9 @@ export async function buildPiRuntime(config: HostConfig, hostSession: Session): 
       hostSession.requestApproval,
       () => ({ followUp: (t: string) => piSession.followUp(t) }),
       () => ({ sessionId: hostSession.id }),
+    ),
+    ...buildWatchTools(hostSession.id).map((def) =>
+      gateToolDefinition(def, config.policy, hostSession.requestApproval, () => ({ followUp: (t: string) => piSession.followUp(t) }), () => ({ sessionId: hostSession.id })),
     ),
     buildAskUserTool(hostSession.askQuestion),
   ];
@@ -219,6 +223,14 @@ export class ChatManager {
         (req) => this.session.requestApproval({ ...req, chatId }),
         () => ({ followUp: (t: string) => piSession.followUp(t) }),
         () => ({ sessionId: this.session.id, chatId }),
+      ),
+      ...buildWatchTools(chatId).map((def) =>
+        gateToolDefinition(
+          def, this.config.policy,
+          (req) => this.session.requestApproval({ ...req, chatId }),
+          () => ({ followUp: (t: string) => piSession.followUp(t) }),
+          () => ({ sessionId: this.session.id, chatId }),
+        ),
       ),
       buildAskUserTool((q) => this.session.askQuestion(q, chatId)),
     ];

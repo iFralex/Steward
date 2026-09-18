@@ -44,3 +44,10 @@ test("mail read tools are allowed; mail send tools are gated", () => {
   assert.equal(decideTool(defaultPolicy, "mcp__mail__send_email"), "gate");
   assert.equal(decideTool(defaultPolicy, "mcp__mail__reply"), "gate");
 });
+
+test("train reads and generic watch lifecycle are automatic", () => {
+  assert.equal(decideTool(defaultPolicy, "mcp__trains__find_next_train"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__trains__train_status"), "allow");
+  assert.equal(decideTool(defaultPolicy, "create_watch"), "allow");
+  assert.equal(decideTool(defaultPolicy, "stop_watch"), "allow");
+});

@@ -18,6 +18,7 @@
     "@steward/protocol": "*",
     "@steward/sensitive-path": "*",
     "@steward/usage-ledger": "*",
+    "@steward/watch-engine": "*",
     "web-push": "^3.6.7",
     "ws": "^8.18.0",
     "zod": "^4.0.0"

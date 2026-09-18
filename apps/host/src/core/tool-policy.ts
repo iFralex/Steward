@@ -90,9 +90,12 @@ export const defaultPolicy: ToolPolicy = {
     // run_write_command falls through to the gated default (needs approval).
     "mcp__shell__find_files": "allow",
     "mcp__shell__run_command": "allow",
-    // Trains MCP — live lookups are read-only. Persistent watch creation and
-    // removal intentionally fall through to the gated default.
+    // Trains MCP — live lookups are read-only.
     "mcp__trains__find_next_train": "allow",
     "mcp__trains__train_status": "allow",
+    // Generic read-only background monitors. They can only observe and return
+    // an event to the agent; any later sensitive action remains separately gated.
+    "create_watch": "allow",
+    "stop_watch": "allow",
   },
 };

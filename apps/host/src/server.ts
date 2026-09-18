@@ -25,6 +25,8 @@ import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
 import { PushRegistry, type PushSubscriptionJSON } from "./core/push.ts";
 import { getNotificationLang, setNotificationLang } from "./core/notification-lang.ts";
 import { notificationCopy } from "./core/notification-copy.ts";
+import { sharedWatchEngine } from "./core/watch-runtime.ts";
+import { pollAndDeliverWatchEvents } from "./core/watch-notification-service.ts";
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 
@@ -665,6 +667,11 @@ export function startServer(config: HostConfig): WebSocketServer {
   const actionPushPollMs = Math.max(1_000, Number(process.env.ACTION_PUSH_POLL_MS ?? 15_000));
   const actionPushTimer = setInterval(pollNewActionNotifications, actionPushPollMs);
   actionPushTimer.unref();
+  const pollWatches = () => pollAndDeliverWatchEvents({ engine: sharedWatchEngine(), runner: getQuickRunner(config), push: pushRegistry });
+  void pollWatches();
+  const watchPollMs = Math.max(15_000, Number(process.env.WATCH_POLL_MS ?? 45_000));
+  const watchTimer = setInterval(() => void pollWatches(), watchPollMs);
+  watchTimer.unref();
   // Two listeners: plain HTTP on localhost (the Mac's own WebView — a secure
   // context anyway, auto-pairs, keeps native "open/reveal" actions), and — when a
   // TLS cert+key are provided (e.g. `tailscale cert`) — HTTPS on all interfaces
@@ -674,7 +681,10 @@ export function startServer(config: HostConfig): WebSocketServer {
   const tlsKey = process.env.STEWARD_TLS_KEY;
   const useTls = !!(tlsCert && tlsKey);
   const wss = new WebSocketServer({ noServer: true });
-  wss.once("close", () => clearInterval(actionPushTimer));
+  wss.once("close", () => {
+    clearInterval(actionPushTimer);
+    clearInterval(watchTimer);
+  });
   const acceptUpgrade = (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
     const ok =
       (isAllowedOrigin(req.headers.origin, config.port) || originMatchesHost(req.headers.origin, req.headers.host)) &&
