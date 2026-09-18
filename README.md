@@ -429,6 +429,113 @@ Each chat has its own Pi session and permission-gate context, so an approval is 
 
 The UI receives protocol events rather than provider-specific objects. Messages, tool starts/results/errors, questions, approval requests and Action Center state therefore remain portable across the browser, installed PWA, native WebKit window and future clients.
 
+### Live Train Lookup And Refresh
+
+The train flow keeps station interpretation, live-source access and agent wording
+separate. The model chooses the tool and explains its structured result; it does
+not invent platform confidence or parse ViaggiaTreno responses itself.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent as Pi Agent
+    participant Gate as Tool Policy
+    participant MCP as train-mcp
+    participant VT as ViaggiaTreno JSON
+
+    User->>Agent: Next train from dictated station A to B
+    Agent->>Gate: mcp__trains__find_next_train
+    Gate->>MCP: allow (read-only)
+    par Resolve departure
+        MCP->>VT: cercaStazione/from
+    and Resolve destination
+        MCP->>VT: cercaStazione/to
+    end
+    MCP->>VT: partenze/departure-station/time
+    loop At most ten chronological candidates
+        MCP->>VT: andamentoTreno/origin/number/service-day
+        MCP->>MCP: Keep only routes where from precedes to
+    end
+    MCP-->>Agent: TrainSnapshot + opaque trainRef
+    Agent-->>User: Times, delay and explicit platform confidence
+    User->>Agent: Refresh this train
+    Agent->>Gate: mcp__trains__train_status(trainRef)
+    Gate->>MCP: allow (read-only)
+    MCP->>VT: andamentoTreno from decoded identity
+    MCP-->>Agent: Fresh normalized snapshot
+```
+
+`find_next_train` accepts an optional ISO 8601 `departureAfter`. Otherwise it
+uses the current time. Departure rows older than two minutes are discarded,
+the remainder are sorted, and the first ten are checked concurrently. A train
+is direct for this connector only when both station IDs occur in its stop list
+and the destination index is greater than the departure index. The earliest
+matching scheduled departure wins. A missing match is reported explicitly;
+the connector does not silently synthesize a route with changes.
+
+The returned `trainRef` starts with `vt1_` and contains a versioned base64url
+JSON payload with the train number, origin station ID, service day and the
+requested from/to station IDs and names. It is opaque to the model but is not a
+secret or authorization token. Carrying the service day is essential because
+train numbers repeat; carrying the requested segment lets later status calls
+recompute the correct platform, stop positions and arrival state.
+
+### Watch Creation, Polling And Notification
+
+Creating a watch captures an initial snapshot immediately. Subsequent polls
+compare new snapshots with the stored one; this means a watch reacts to future
+transitions rather than replaying conditions that were already true when it was
+created. The agent should therefore answer the current state in chat and choose
+rules for what remains—for example, if a platform is already scheduled, watch
+`train.platform_confirmed` or `train.platform_changed`, not its earlier
+announcement.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent as Pi Agent
+    participant Tool as create_watch
+    participant Engine as WatchEngine
+    participant Adapter as Source Adapter
+    participant DB as watches.db
+    participant Push as Web Push
+
+    User->>Agent: Notify me at these milestones
+    Agent->>Tool: source + resourceRef + rules + instruction
+    Tool->>Engine: create definition
+    Engine->>Adapter: snapshot(resourceRef)
+    Adapter-->>Engine: initial source state
+    Engine->>DB: persist active watch + snapshot
+    Note over Engine,Adapter: Immediate startup poll, then every 45 s by default
+    loop Each non-overlapping poll
+        Engine->>DB: expire due watches; load active watches
+        Engine->>Adapter: fetch current snapshot
+        Adapter-->>Engine: semantic events(previous,current)
+        Engine->>Engine: match event type + where filters + once
+        Engine->>DB: INSERT OR IGNORE durable pending event
+        Engine->>DB: save current snapshot / terminal status
+    end
+    Engine->>Agent: user instruction + rule + structured event
+    Agent-->>DB: accessible notification in originating chat
+    Agent->>Push: notification tagged with watch/event IDs
+    Engine->>DB: mark event delivered
+```
+
+The host runs the combined poll-and-delivery loop immediately at startup and
+then every `WATCH_POLL_MS` (45 seconds by default, clamped to at least 15
+seconds). A process-local single-flight guard prevents overlapping executions.
+Pending events are read oldest-first in batches of at most 20. If the original
+chat was deleted, delivery creates a `Monitor automatici` chat rather than
+dropping the event.
+
+The notification prompt preserves the user's original instruction, identifies
+the matched rule and treats event fields as data rather than instructions. It
+forbids writes, asks for one Italian message of at most 180 characters and
+requires explicit platform confidence. The push body is capped at 240
+characters. On generation failure the event remains pending; after two failed
+delivery attempts, the third pass uses the adapter's deterministic
+`fallbackText`. A successful LLM or fallback delivery is recorded durably.
+
 ### Incoming Email: Apple Mail To Local Mirror
 
 A message does not arrive in the Steward client. It first lands in Apple Mail's local store. Steward then observes and reconciles that store:
@@ -571,6 +678,90 @@ The batch runner processes most-recently-active threads first and uses a bounded
 ## Retrieval Internals
 
 Steward does not treat “search” as one algorithm. Exact filters, lexical relevance, substring matching and semantic similarity solve different problems, so the connectors combine them while keeping deterministic filters separate from ranking.
+
+### Dictated Station Resolution And Direct-Train Selection
+
+ViaggiaTreno station autocomplete is prefix-oriented: a correct full name works
+well, while a transcription such as “Milano rogo redo” may return no candidates
+at all. Steward adds a bounded resolver above that source without learning a
+personal station history.
+
+```mermaid
+flowchart TD
+    Q[Dictated station string] --> A[Exact autocomplete request]
+    A --> B{Any candidates?}
+    B -->|No| C[Normalize into tokens of length >= 3]
+    C --> D[Query each token and its 3-character prefix]
+    D --> E[Deduplicate by station ID]
+    B -->|Yes| E
+    E --> F{Unique canonical exact match?}
+    F -->|Yes| G[Resolved station]
+    F -->|No| H{Unique label exact match?}
+    H -->|Yes| G
+    H -->|No| I[Rank names, short names and labels]
+    I --> J{Confidence and margin sufficient?}
+    J -->|Yes| G
+    J -->|No| K[Return up to 8 ambiguity candidates]
+```
+
+Normalization removes Unicode diacritics, replaces punctuation with spaces,
+lowercases and also produces a compact no-space form. The similarity score for
+each candidate name is the greater of:
+
+```text
+0.55 * normalized Levenshtein similarity
++ 0.35 * padded-trigram Dice similarity
++ 0.10 * query-token overlap
+
+or
+
+0.92 * containment ratio, when one compact string contains the other
+```
+
+A sole candidate is accepted at `>= 0.68`. With multiple candidates, the best
+score must be at least `0.86` and lead the runner-up by at least `0.08`.
+Otherwise the MCP result is `ambiguous_station`, allowing the agent to ask a
+short clarification instead of guessing. Canonical name/short-name exact
+matches take priority over generic labels: this prevents all stations whose
+label is simply “Monza” or “Modena” from looking equally exact. All fallback
+queries derive only from the current utterance; no habitual-station list, wiki
+lookup or conversation-memory expansion enters the resolver.
+
+After both stations resolve, direct-train selection uses live identifiers, not
+name comparison. For each departure candidate, the connector fetches the full
+run and locates `fromId` and `toId` in its stop array. Only `toIndex > fromIndex`
+qualifies. This also gives every normalized stop a stable
+`positionRelativeToDestination = stopIndex - toIndex`, which later powers
+“one stop before” and “get off here” rules without hard-coding station names.
+
+### Train Snapshot Normalization
+
+The ViaggiaTreno response shape varies between departure-board and train-status
+endpoints. `TrainService` collapses it into one `TrainSnapshot` contract:
+
+| Normalized field | Source precedence / invariant |
+|---|---|
+| Service identity | Train number + origin station + service-day milliseconds; status falls back from the three-component endpoint to the current-day two-component form only on `404`/`204`. |
+| Requested segment | Exact station IDs and indexes from the `trainRef`; destination must follow departure. |
+| Scheduled times | Stop-level theoretical/programmed values, then departure-board/run-level values; display formatting always uses `Europe/Rome`. |
+| Estimated times | Actual timestamp when present, otherwise scheduled timestamp plus normalized delay. |
+| Delay | Departure-stop delay, stop delay, run delay, then board delay; defaults to zero. |
+| Platform | Effective departure platform first, otherwise programmed platform. `platformStatus` is `confirmed`, `scheduled` or `unknown` accordingly. |
+| Cancellation | Train cancellation codes/provisions or a cancelled requested departure stop. |
+| Departed | Explicit board state, an actual departure timestamp, or the last detected station occurring after the requested departure index. |
+| Arrived | Run-level arrival state or an actual arrival timestamp at the requested destination. |
+| Stops | IDs, names, scheduled/actual arrival and departure, cancellation flag, index and relative position to the requested destination. |
+
+Missing values are omitted rather than converted into plausible-looking
+defaults. Programmed and effective platforms remain separate fields even when
+the convenience `platform` field chooses one. Every snapshot includes
+`lastUpdated`—the time Steward performed the normalization—and
+`source: "ViaggiaTreno"` so the agent can qualify freshness and provenance.
+
+The HTTP client uses a 10-second timeout and at most two attempts per request.
+It accepts both JSON and the pipe-separated station autocomplete form, treats
+`204` as no live data where appropriate, and makes endpoint substitution
+configurable through `VIAGGIATRENO_BASE_URL`.
 
 ### Mail Search: Structured, Lexical, Substring And Semantic
 
@@ -853,6 +1044,109 @@ These pipelines are independent. An email may be:
 - actionable without being durable enough for the wiki.
 
 No ordering assumption between independent jobs is required for correctness. Source hashes, seen ledgers and idempotent upserts make repeated runs safe.
+
+### Generic Watch Engine Internals
+
+`packages/watch-engine` contains no train-specific branching. It coordinates
+four source-neutral contracts:
+
+| Contract | Required meaning |
+|---|---|
+| `WatchDefinition` | `source`, opaque `resourceRef`, one or more rules, original user `instruction`, originating `chatId`, and optional expiry. |
+| `WatchRule` | Unique rule `id`, exact semantic event name, optional equality filters in `where`, and optional `once`. |
+| `DomainEvent` | Stable resource-relative `key`, semantic `type`, timestamp, structured `data`, previous/current state and deterministic `fallbackText`. |
+| `WatchAdapter` | A source name plus `snapshot`, `events`, `defaultExpiry` and `isTerminal` implementations. |
+
+A representative train watch is data, not new scheduler code:
+
+```json
+{
+  "source": "train",
+  "resourceRef": "vt1_...",
+  "instruction": "Avvisami in modo breve quando devo prepararmi e scendere",
+  "rules": [
+    { "id": "departed", "event": "train.departed", "once": true },
+    {
+      "id": "prepare",
+      "event": "train.stop_arrived",
+      "where": { "positionRelativeToDestination": -1 },
+      "once": true
+    },
+    {
+      "id": "get-off",
+      "event": "train.stop_arrived",
+      "where": { "positionRelativeToDestination": 0 },
+      "once": true
+    }
+  ]
+}
+```
+
+Rule matching first requires an exact event type. Every `where` entry is then
+compared for deep equality against `event.data`; dot-separated keys can address
+nested fields. `once` is stronger than delivery status: as soon as any event row
+exists for that watch/rule pair, the rule will not enqueue another event. This
+prevents a one-shot milestone from repeating while its first notification is
+still pending or being retried.
+
+The SQLite database uses WAL mode and two tables:
+
+| Table | Important columns | Role |
+|---|---|---|
+| `watches` | `source`, `resource_ref`, JSON `rules`, `instruction`, `chat_id`, `status`, JSON `snapshot`, expiry/check/error timestamps | Authoritative lifecycle and last observed state for each monitor. |
+| `watch_events` | unique `event_key`, `watch_id`, `rule_id`, JSON rule/event, `status`, `attempts`, delivery/error timestamps | Durable queue and delivery/deduplication history. |
+
+The database-level event key is
+`<watchId>:<ruleId>:<adapterEventKey>`. `INSERT OR IGNORE` makes replaying the
+same semantic transition harmless across polls and process restarts. Adapter
+event keys include the state that makes a transition distinct—for example a
+platform value/status, new delay, or stop plus actual timestamp.
+
+Watch lifecycle is deterministic:
+
+```mermaid
+stateDiagram-v2
+    [*] --> active: create + initial snapshot
+    active --> stopped: stop_watch
+    active --> expired: expires_at reached
+    active --> completed: adapter isTerminal(snapshot)
+    active --> active: successful snapshot update
+    active --> active: polling error recorded, old snapshot retained
+    stopped --> [*]
+    expired --> [*]
+    completed --> [*]
+```
+
+Polling iterates active watches in creation order. Unsupported adapters and
+source failures are recorded in `last_error`; the previous snapshot is kept so
+a later successful read still produces transitions from the last known state.
+Events are enqueued before a terminal snapshot marks the watch completed, so
+the final arrival/cancellation notification is not lost. Expiry is evaluated
+when active watches are loaded. `stop_watch` only moves an active monitor to
+`stopped`, making repeated stopping non-escalating and side-effect reducing.
+
+The train adapter maps snapshot transitions as follows:
+
+| Event | Transition condition | Key data exposed to rules/LLM |
+|---|---|---|
+| `train.platform_announced` | No previous platform; current snapshot has one | Platform, programmed/effective values and confidence. |
+| `train.platform_confirmed` | No previous effective platform; current snapshot has one | Confirmed platform and train identity. |
+| `train.platform_changed` | Previous and current platform both exist and differ | Previous/new platform and current confidence. |
+| `train.departed`, `train.arrived`, `train.cancelled` | Corresponding boolean changes from false to true | Train, segment, delay, platform and update time. |
+| `train.delay_changed` | Delay minutes differ | Old and new delay. |
+| `train.stop_arrived`, `train.stop_departed` | A stop gains the corresponding actual timestamp | Station ID/name/index, next stop and relative destination position. |
+
+Train watches are terminal when the requested train is arrived or cancelled.
+Default expiry is two hours after scheduled arrival, or scheduled departure
+when arrival is absent; if neither exists, the fallback effectively keeps the
+watch for eight hours from creation.
+
+Adding a future watchable domain requires implementing `WatchAdapter`, choosing
+stable semantic event keys and registering the adapter in the host runtime.
+The tool schema, SQLite queue, rule matcher, LLM handoff, Web Push delivery and
+stop lifecycle remain unchanged. A good adapter must keep snapshots
+serializable, make events deterministic from `(previous,current)`, provide
+truthful fallback text, define a bounded expiry and identify terminal state.
 
 ### LLM Gateway Request Lifecycle
 
@@ -1383,6 +1677,31 @@ Logs go in:
 - Run a workspace typecheck with `npm run typecheck -w @steward/<workspace>`.
 - `npm run build:web-host` builds the web UI and typechecks the host.
 - The LLM Wiki fork has its own Vite/Tauri/Vitest toolchain under [apps/llm-wiki](apps/llm-wiki/).
+
+Train and watch verification is split between deterministic tests and an
+explicit live smoke flow:
+
+```sh
+# Fuzzy station resolution, direct-route normalization and platform confidence.
+npm test -w @steward/train-mcp
+
+# Generic matching, once semantics, persistence, stop and terminal lifecycle.
+npm test -w @steward/watch-engine
+
+# Host policy, train event transitions and notification-prompt behavior.
+npm test -w @steward/host
+
+# Real gateway + real ViaggiaTreno through the same ChatManager/tool path as the PWA.
+npm run smoke:trains -w @steward/host
+```
+
+The smoke flow creates isolated temporary chat/watch/audit/usage databases. It
+asks the live agent to resolve a dictated station, find and refresh a real
+train, create one multi-rule watch and stop it. It then feeds deterministic
+platform/departure/preceding-stop/destination transitions through the real
+watch delivery path and requires four LLM-authored pushes with zero approval
+requests. Because it uses external live services and current railway data, it
+is manual rather than part of deterministic CI.
 
 Useful workspace names include:
 
