@@ -323,6 +323,13 @@ train-specific scheduler.
 
 Every LLM call the platform makes — the host's chat agent, mail-mirror's embeddings, mail-promoter's triage/distillation, calendar-mcp's embeddings, or anywhere else — goes through the shared `apps/llm-gateway` and is logged once per call into `packages/usage-ledger`. Callers attribute their own spend with `x-usage-service` / `x-usage-action` HTTP headers; a call that forgets to label itself is recorded as `unknown` rather than silently disappearing, and the Usage page calls that out explicitly so unlabeled spend never goes unnoticed.
 
+Automatic work is attributed separately from interactive chat. Watch-event
+wording uses `host / watch-notification`; Action Center distinguishes scans,
+proposal revisions, flow indexing and flow retrieval. Non-LLM operations use
+the same tool ledger: watch polling/delivery, approval-preview lookups,
+planner-selected background reads and directly executed Action steps all record
+duration and success/failure instead of disappearing behind their parent job.
+
 The web UI's **Usage** page is the observability view over that ledger: total cost and tokens for the selected period (7 days, 30 days or all-time), cost broken down by service, by action, by day, by model and by token type (input/output/cache read/cache write), plus per-tool call counts, error counts and timing (average/max/total), and a table of the most recent calls. Cost figures combine the ledger's raw token counts with the gateway's live `/rates` endpoint, so a pricing change is reflected immediately without re-ingesting old data.
 
 ![The Usage page: cost and token breakdowns by service, action, day and model](docs/images/usage-page.png)
@@ -338,6 +345,10 @@ Steward keeps a redacted, queryable audit log of what happened across chat, tool
 - approval requests and responses, including timeouts;
 - write-operation lifecycle (started, confirmed, retried, failed);
 - Action Center item creation, execution and revision, including background items created by the scheduler;
+- Action Center background reads, approval-preview lookups, flow provenance,
+  proposal-notification dispatch and direct tool execution;
+- watch creation, stopping, expiry, completion, polling failures, queued events,
+  notification generation, retries, fallback and final delivery;
 - mail-to-wiki promotion writes;
 - session, file and system events (connect, upload, open, autostart, ...).
 
@@ -526,7 +537,8 @@ then every `WATCH_POLL_MS` (45 seconds by default, clamped to at least 15
 seconds). A process-local single-flight guard prevents overlapping executions.
 Pending events are read oldest-first in batches of at most 20. If the original
 chat was deleted, delivery creates a `Monitor automatici` chat rather than
-dropping the event.
+dropping the event. Delivery waits when that chat already has an interactive
+turn in flight, so an automatic prompt cannot be interleaved with a user turn.
 
 The notification prompt preserves the user's original instruction, identifies
 the matched rule and treats event fields as data rather than instructions. It
@@ -535,6 +547,10 @@ requires explicit platform confidence. The push body is capped at 240
 characters. On generation failure the event remains pending; after two failed
 delivery attempts, the third pass uses the adapter's deterministic
 `fallbackText`. A successful LLM or fallback delivery is recorded durably.
+The internal structured prompt is not stored as a user-authored chat message;
+only the accessible notification is added to the transcript. Audit events use
+the watch ID as their correlation ID, while the LLM call, source polling and
+delivery are separately visible in Usage.
 
 ### Incoming Email: Apple Mail To Local Mirror
 
@@ -1122,7 +1138,8 @@ source failures are recorded in `last_error`; the previous snapshot is kept so
 a later successful read still produces transitions from the last known state.
 Events are enqueued before a terminal snapshot marks the watch completed, so
 the final arrival/cancellation notification is not lost. Expiry is evaluated
-when active watches are loaded. `stop_watch` only moves an active monitor to
+before active watches are loaded, and each expiry is emitted as a lifecycle
+event. `stop_watch` only moves an active monitor to
 `stopped`, making repeated stopping non-escalating and side-effect reducing.
 
 The train adapter maps snapshot transitions as follows:
