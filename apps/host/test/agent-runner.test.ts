@@ -76,39 +76,6 @@ test("doRunTurn does not resurrect a deleted/nonexistent chat", async () => {
   assert.deepEqual(chatStore().getMessages(missingChatId), []);
 });
 
-test("an automatic watch turn persists only the user-facing notification", async () => {
-  const session = new Session(() => {}, 1000);
-  const cm = new ChatManager(
-    {
-      port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
-      gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
-      mcpServers: {},
-    } as any,
-    session,
-    () => {},
-  );
-  const chat = chatStore().createChat("automatic notification");
-  const runtime = {
-    chatId: chat.id,
-    session: {
-      prompt: async () => { runtime.assistantBuffer = "Binario 4 confermato."; },
-      getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
-    },
-    unsub: () => {}, lastCostUsd: 0,
-    lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
-  };
-  (cm as any).ensureChat = async () => runtime;
-
-  await cm.runTurn(chat.id, "internal structured event", undefined, {
-    origin: "watch", correlationId: "watch-1", auditPayload: { eventType: "train.platform_changed" },
-  });
-
-  const messages = chatStore().getMessages(chat.id);
-  assert.deepEqual(messages.map((message) => message.role), ["assistant"]);
-  assert.equal(messages[0].text, "Binario 4 confermato.");
-});
-
 test("doRunTurn marks the chat running for the shared running-chats registry while in flight, and idle once it finishes", async () => {
   const session = new Session(() => {}, 1000);
   const cm = new ChatManager(
@@ -121,12 +88,26 @@ test("doRunTurn marks the chat running for the shared running-chats registry whi
     () => {},
   );
   const chat = chatStore().createChat("running-chats test");
+  let finishPrompt!: () => void;
+  const promptBlocked = new Promise<void>((resolve) => { finishPrompt = resolve; });
+  const runtime = {
+    chatId: chat.id,
+    session: {
+      prompt: async () => promptBlocked,
+      getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    },
+    unsub: () => {}, lastCostUsd: 0,
+    lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
+  };
+  (cm as any).ensureChat = async () => runtime;
   assert.equal(isRunning(chat.id), false, "must not be running before the turn starts");
 
   const turnPromise = cm.runTurn(chat.id, "Say hello in one short sentence.");
-  await new Promise((r) => setTimeout(r, 50)); // let doRunTurn reach its synchronous markRunning() call
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(isRunning(chat.id), true, "must be marked running while the turn is in flight");
 
+  finishPrompt();
   await turnPromise;
   assert.equal(isRunning(chat.id), false, "must be marked idle once the turn finishes");
 });

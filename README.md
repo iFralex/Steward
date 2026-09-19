@@ -305,8 +305,9 @@ Background monitoring is intentionally domain-independent. The host-native
 set of semantic event rules; `stop_watch` stops it. Both are automatically
 allowed because they only observe or reduce background work. A source adapter
 turns snapshot changes into domain events, and matching events are placed in a
-durable SQLite queue. The event is then returned to the LLM, which writes a
-short accessible notification in Italian; the same message is persisted in the
+durable SQLite queue. A stateless, tool-free gateway completion then writes a
+short accessible notification in Italian; it never opens or mutates the Pi
+session file of the originating chat. The message is persisted directly in the
 chat and sent through Web Push. If the LLM repeatedly fails, a deterministic
 fallback notification is delivered.
 

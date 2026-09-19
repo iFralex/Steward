@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { recordAudit } from "@steward/audit-log";
 import type { WatchEngine } from "@steward/watch-engine";
-import type { ChatManager } from "./agent-runner.ts";
 import { chatStore } from "./chat-store.ts";
 import type { PushDeliveryReport, PushRegistry } from "./push.ts";
 import { isRunning } from "./running-chats.ts";
 import { recordWatchDeliveryUsage } from "./watch-observability.ts";
+import type { WatchNotificationComposer } from "./watch-notification-composer.ts";
 
 let running = false;
 
 export async function pollAndDeliverWatchEvents(args: {
   engine: WatchEngine;
-  runner: ChatManager;
+  compose: WatchNotificationComposer;
   push: PushRegistry;
 }): Promise<void> {
   if (running) return;
@@ -29,19 +29,28 @@ export async function pollAndDeliverWatchEvents(args: {
       let body = pending.notificationText;
       let mode: "llm" | "cached" | "fallback" = body ? "cached" : "llm";
       if (!body) {
-        const previousAssistantIds = new Set(store.getMessages(chatId).filter((message) => message.role === "assistant").map((message) => message.id));
+        const auditPayload = { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleId: pending.rule.id };
+        recordAudit({
+          actor: "scheduler", eventType: "watch.notification_requested", risk: "low",
+          summary: "Requested an automatic watch notification", chatId,
+          correlationId: pending.watchId, payload: auditPayload,
+        });
         try {
-          await args.runner.runTurn(chatId, watchEventPrompt(pending.instruction, pending.rule, pending.event), undefined, {
-            origin: "watch",
-            correlationId: pending.watchId,
-            auditPayload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleId: pending.rule.id },
+          body = await args.compose(watchEventPrompt(pending.instruction, pending.rule, pending.event));
+          store.addMessage(chatId, { id: randomUUID(), role: "assistant", text: body });
+          recordAudit({
+            actor: "assistant", eventType: "watch.notification_generated", risk: "low",
+            summary: body.slice(0, 180), chatId, correlationId: pending.watchId,
+            payload: { text: body, ...auditPayload },
           });
-          body = [...store.getMessages(chatId)].reverse()
-            .find((message) => message.role === "assistant" && !previousAssistantIds.has(message.id))?.text?.trim();
-          if (!body) throw new Error("The notification agent produced no reply");
           args.engine.store.setNotificationText(pending.id, body);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          recordAudit({
+            actor: "host", eventType: "watch.notification_failed", risk: "medium",
+            summary: message, chatId, correlationId: pending.watchId, ok: false,
+            payload: { error: error instanceof Error ? error.stack ?? error.message : String(error), ...auditPayload },
+          });
           if (pending.attempts < 2) {
             recordDeliveryFailure(args.engine, pending, chatId, startedAt, message, true);
             continue;

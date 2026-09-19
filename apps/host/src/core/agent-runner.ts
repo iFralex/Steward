@@ -148,13 +148,6 @@ interface ChatRuntime {
   /** toolCallId → start time (for durations) and input (for the transcript). */
   starts: Map<string, number>;
   toolInputs: Map<string, unknown>;
-  turnContext?: TurnOptions;
-}
-
-export interface TurnOptions {
-  origin?: "user" | "watch";
-  correlationId?: string;
-  auditPayload?: Record<string, unknown>;
 }
 
 export class ChatManager {
@@ -275,7 +268,11 @@ export class ChatManager {
       const pendingText = runtime.assistantBuffer.trim();
       if (pendingText) {
         store.addMessage(runtime.chatId, { id: randomUUID(), role: "assistant", text: pendingText });
-        this.auditAssistantMessage(runtime, pendingText);
+        recordAudit({
+          actor: "assistant", eventType: "chat.assistant_message", risk: "low",
+          summary: pendingText.slice(0, 180), sessionId: this.session.id, chatId: runtime.chatId,
+          payload: { text: pendingText },
+        });
       }
       runtime.assistantBuffer = "";
       if (e.toolCallId) { runtime.starts.set(e.toolCallId, Date.now()); runtime.toolInputs.set(e.toolCallId, e.args ?? {}); }
@@ -288,7 +285,6 @@ export class ChatManager {
         chatId: runtime.chatId,
         toolName: e.toolName,
         toolCallId: e.toolCallId ?? "",
-        correlationId: runtime.turnContext?.correlationId,
         payload: { input: e.args ?? {} },
       });
       this.emit({ type: "tool_call", sessionId: this.session.id, chatId: runtime.chatId, toolCallId: e.toolCallId ?? "", tool: e.toolName, input: e.args ?? {} });
@@ -313,7 +309,6 @@ export class ChatManager {
         chatId: runtime.chatId,
         toolName: e.toolName,
         toolCallId: e.toolCallId ?? "",
-        correlationId: runtime.turnContext?.correlationId,
         ok,
         durationMs,
         payload: { input, output, error },
@@ -331,57 +326,34 @@ export class ChatManager {
     }
   }
 
-  private auditAssistantMessage(runtime: ChatRuntime, text: string, extra?: Record<string, unknown>): void {
-    const automatic = runtime.turnContext?.origin === "watch";
-    recordAudit({
-      actor: "assistant",
-      eventType: automatic ? "watch.notification_generated" : "chat.assistant_message",
-      risk: "low",
-      summary: text.slice(0, 180),
-      sessionId: this.session.id,
-      chatId: runtime.chatId,
-      correlationId: runtime.turnContext?.correlationId,
-      payload: { text, ...runtime.turnContext?.auditPayload, ...extra },
-    });
-  }
-
   /** Run one user turn against a chat, persisting the transcript + usage. */
-  async runTurn(chatId: string, prompt: string, attachments?: ChannelFile[], options: TurnOptions = {}): Promise<void> {
-    return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, attachments, options));
+  async runTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
+    return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, attachments));
   }
 
-  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[], options: TurnOptions = {}): Promise<void> {
+  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
     const store = chatStore();
     // A turn queued behind another can run after its chat was deleted; do not
     // resurrect a deleted chat (addMessage orphan row + ensureChat rebuilding a session).
     if (!store.exists(chatId)) return;
     const attached = (attachments ?? []).filter((a) => a.path);
-    if (options.origin === "watch") {
-      recordAudit({
-        actor: "scheduler", eventType: "watch.notification_requested", risk: "low",
-        summary: "Requested an automatic watch notification", sessionId: this.session.id, chatId,
-        correlationId: options.correlationId, payload: options.auditPayload,
-      });
-    } else {
-      store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
-      store.maybeAutoTitle(chatId, prompt);
-      recordAudit({
-        actor: "user",
-        eventType: "chat.user_message",
-        risk: "low",
-        summary: prompt.trim().slice(0, 180) || "User sent attachments",
-        sessionId: this.session.id,
-        chatId,
-        payload: { text: prompt, attachments: attached },
-        sourceRefs: attached.map((file) => ({ type: "file", path: file.path, id: file.token, label: file.name })),
-      });
-    }
+    store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
+    store.maybeAutoTitle(chatId, prompt);
+    recordAudit({
+      actor: "user",
+      eventType: "chat.user_message",
+      risk: "low",
+      summary: prompt.trim().slice(0, 180) || "User sent attachments",
+      sessionId: this.session.id,
+      chatId,
+      payload: { text: prompt, attachments: attached },
+      sourceRefs: attached.map((file) => ({ type: "file", path: file.path, id: file.token, label: file.name })),
+    });
 
     const runtime = await this.ensureChat(chatId);
     if (this.session.closed) return;
     runtime.assistantBuffer = "";
     runtime.aborted = false;
-    runtime.turnContext = options;
 
     // Surface user-attached files to the agent as absolute paths it can pass to
     // send_email/reply (which attach by path).
@@ -396,7 +368,11 @@ export class ChatManager {
       const text = runtime.assistantBuffer.trim();
       if (text) {
         store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
-        this.auditAssistantMessage(runtime, text);
+        recordAudit({
+          actor: "assistant", eventType: "chat.assistant_message", risk: "low",
+          summary: text.slice(0, 180), sessionId: this.session.id, chatId,
+          payload: { text },
+        });
       }
       this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
     } catch (err) {
@@ -405,7 +381,11 @@ export class ChatManager {
         const text = runtime.assistantBuffer.trim();
         if (text) {
           store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
-          this.auditAssistantMessage(runtime, text, { aborted: true });
+          recordAudit({
+            actor: "assistant", eventType: "chat.assistant_message", risk: "low",
+            summary: text.slice(0, 180), sessionId: this.session.id, chatId,
+            payload: { text, aborted: true },
+          });
         }
         recordAudit({
           actor: "user",
@@ -420,14 +400,13 @@ export class ChatManager {
       } else {
         recordAudit({
           actor: "host",
-          eventType: options.origin === "watch" ? "watch.notification_failed" : "chat.error",
+          eventType: "chat.error",
           risk: "medium",
           summary: err instanceof Error ? err.message : String(err),
           sessionId: this.session.id,
           chatId,
-          correlationId: options.correlationId,
           ok: false,
-          payload: { error: err instanceof Error ? err.stack ?? err.message : String(err), ...options.auditPayload },
+          payload: { error: err instanceof Error ? err.stack ?? err.message : String(err) },
         });
         this.emit({ type: "error", sessionId: this.session.id, chatId, message: err instanceof Error ? err.message : String(err) });
       }
@@ -447,7 +426,6 @@ export class ChatManager {
         this.emit({ type: "usage", sessionId: this.session.id, chatId, turnCostUsd, costUsd: stats.cost, tokens: stats.tokens });
       } catch { /* stats unavailable */ }
       markIdle(chatId);
-      runtime.turnContext = undefined;
       this.emit({ type: "status", sessionId: this.session.id, chatId, state: "idle" });
     }
   }
