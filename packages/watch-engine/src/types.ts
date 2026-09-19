@@ -34,6 +34,12 @@ export interface DomainEvent {
   previousState?: unknown;
   currentState: unknown;
   fallbackText: string;
+  /** Optional presentation hints owned by the source adapter. The generic
+   * engine stores and forwards them without interpreting the domain. */
+  notification?: {
+    title?: Record<string, string>;
+    guidance?: string | Record<string, string>;
+  };
 }
 
 export interface PendingWatchEvent {

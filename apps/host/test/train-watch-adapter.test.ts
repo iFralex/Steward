@@ -29,6 +29,9 @@ test("emits platform confidence, departure and delay changes", () => {
   ]);
   assert.match(events[0].fallbackText, /confermato/);
   assert.equal(events[0].data.platformStatus, "confirmed");
+  assert.equal(events[0].notification?.title?.it, "Aggiornamento treno");
+  const guidance = events[0].notification?.guidance;
+  assert.match(typeof guidance === "object" ? guidance.en : "", /scheduled-only/);
 });
 
 test("emits the preceding-stop and destination milestones with relative positions", () => {

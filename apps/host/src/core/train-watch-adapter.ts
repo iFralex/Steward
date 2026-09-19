@@ -3,6 +3,14 @@ import { ViaggiaTrenoClient } from "../../../train-mcp/src/client.ts";
 import { TrainService } from "../../../train-mcp/src/service.ts";
 import type { TrainSnapshot, TrainStopSnapshot } from "../../../train-mcp/src/types.ts";
 
+const TRAIN_NOTIFICATION = {
+  title: { en: "Train update", it: "Aggiornamento treno" },
+  guidance: {
+    en: "For railway platforms, always distinguish confirmed, scheduled-only, and not announced. State the last update time when available.",
+    it: "Per i binari distingui sempre confermato, soltanto programmato e non comunicato. Indica l'ora dell'ultimo aggiornamento se disponibile.",
+  },
+};
+
 export class TrainWatchAdapter implements WatchAdapter {
   readonly source = "train";
   constructor(private readonly service: Pick<TrainService, "status"> = new TrainService(new ViaggiaTrenoClient())) {}
@@ -24,7 +32,8 @@ export class TrainWatchAdapter implements WatchAdapter {
     const current = trainSnapshot(currentValue);
     const events: DomainEvent[] = [];
     const add = (type: string, key: string, data: Record<string, unknown>, fallbackText: string) => events.push({
-      type, key, data, fallbackText, timestamp: Date.now(), previousState: previous, currentState: current,
+      type, key, data, fallbackText, notification: TRAIN_NOTIFICATION,
+      timestamp: Date.now(), previousState: previous, currentState: current,
     });
 
     if (!previous.platform && current.platform) {
