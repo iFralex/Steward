@@ -58,7 +58,7 @@ export async function notifyNewProposals(store: ActionStore, items: ActionCenter
     const notified = new Set(saved);
     const stillNew = new Set(items.filter((i) => i.status === "new").map((i) => i.id));
     let changed = false;
-    const sends: Promise<void>[] = [];
+    const candidates: ActionCenterItem[] = [];
     for (const id of notified) {
       if (!stillNew.has(id)) {
         notified.delete(id); // left "new" (read/done/dismissed) — allow re-notifying if it ever reopens
@@ -69,39 +69,54 @@ export async function notifyNewProposals(store: ActionStore, items: ActionCenter
       if (item.status !== "new" || notified.has(item.id)) continue;
       const proposals = item.payload.proposedActions;
       if (!Array.isArray(proposals) || proposals.length === 0) continue;
-      notified.add(item.id);
-      changed = true;
-      sends.push(pushRegistry.sendAll({
+      candidates.push(item);
+    }
+    for (const item of candidates) {
+      const report = await pushRegistry.sendAll({
         title: "Steward",
         body: item.title || item.summary || notificationCopy(getNotificationLang()).newProposal,
         tag: `action-${item.id}`,
         actionId: item.id,
         type: "approval",
-      }).then(() => {
+      });
+      const dispatched = report.attempted === 0 || report.delivered > 0;
+      if (dispatched) {
+        notified.add(item.id);
+        changed = true;
         recordAudit({
           actor: "host", eventType: "action.notification_dispatched", risk: "low",
           summary: `Dispatched notification for action ${item.id}`, actionId: item.id, ok: true,
-          payload: { type: "approval", tag: `action-${item.id}` },
+          payload: { type: "approval", tag: `action-${item.id}`, push: report },
         });
-      }));
+      } else {
+        recordAudit({
+          actor: "host", eventType: "action.notification_failed", risk: "medium",
+          summary: `Failed to dispatch notification for action ${item.id}`, actionId: item.id, ok: false,
+          payload: { type: "approval", tag: `action-${item.id}`, push: report },
+        });
+      }
     }
     if (changed) store.setMeta(PUSH_NOTIFIED_META_KEY, [...notified]);
-    await Promise.allSettled(sends);
   } catch {
     /* best-effort — never break the caller */
   }
 }
 
 /** Check for newly-created Action proposals even while every UI is closed. */
-export function pollNewActionNotifications(): void {
-  if (!pushRegistry) return;
-  const store = ActionStore.open(actionDbPath());
+let actionNotificationPollRunning = false;
+export async function pollNewActionNotifications(): Promise<void> {
+  if (actionNotificationPollRunning || !pushRegistry) return;
+  actionNotificationPollRunning = true;
   try {
-    const items = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
-    void notifyNewProposals(store, items);
+    const store = ActionStore.open(actionDbPath());
+    try {
+      const items = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
+      await notifyNewProposals(store, items);
+    } finally {
+      store.close();
+    }
   } finally {
-    // notifyNewProposals performs all DB work before awaiting network delivery.
-    store.close();
+    actionNotificationPollRunning = false;
   }
 }
 
@@ -149,7 +164,6 @@ export function loadActionCenterState(opts: { includeDone?: boolean; hideExpired
   try {
     const items = store.list({ includeDone: opts.includeDone, hideExpired: opts.hideExpired, limit: opts.limit ?? 50 }) as ActionCenterItem[];
     const all = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
-    void notifyNewProposals(store, all);
     return { items, diagnostics: diagnostics(store, all) };
   } finally {
     store.close();

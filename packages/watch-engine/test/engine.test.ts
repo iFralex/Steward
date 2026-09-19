@@ -55,6 +55,8 @@ test("poll translates a state change into a durable matching event", async () =>
     assert.equal(pending.watchId, watch.id);
     assert.equal(pending.event.type, "fake.changed");
     assert.deepEqual(pending.rule.where, { position: -1 });
+    fx.store.setNotificationText(pending.id, "Already composed");
+    assert.equal(fx.store.pending()[0].notificationText, "Already composed", "composed text must survive a push retry");
 
     assert.equal(await fx.engine.poll(), 0, "the same state must not enqueue twice");
     fx.adapter.current = { step: 2 };

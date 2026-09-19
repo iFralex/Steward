@@ -118,3 +118,33 @@ test("new Action proposals are pushed once while pre-existing Actions only seed 
   assert.equal(sent[0].body, "Nuovo documento disponibile");
   assert.equal(sent[0].tag, `action-${fresh.id}`);
 });
+
+test("a completely failed Action push is retried instead of marked notified", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "action-push-retry-"));
+  t.after(() => {
+    setPushRegistry(null);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  let attempts = 0;
+  const registry = new PushRegistry(join(dir, "subscriptions.json"), async () => {
+    attempts++;
+    if (attempts === 1) throw Object.assign(new Error("temporary"), { statusCode: 503 });
+  });
+  registry.subscribe({ endpoint: "https://push.example/device", keys: { p256dh: "p", auth: "a" } });
+  setPushRegistry(registry);
+
+  const store = ActionStore.open(":memory:");
+  t.after(() => store.close());
+  store.setMeta("pushNotifiedIds", []);
+  store.upsert({
+    sourceKey: "mail:retry", sourceKind: "mail", kind: "admin-task", title: "Retry me", summary: "Retry",
+    payload: { proposedActions: [{ id: "retry", label: "Retry", summary: "Retry", steps: [] }] },
+  });
+  const items = store.list({ includeDone: true }) as ActionCenterItem[];
+
+  await notifyNewProposals(store, items);
+  await notifyNewProposals(store, items);
+  await notifyNewProposals(store, items);
+
+  assert.equal(attempts, 2, "first failure must retry once; success must then deduplicate");
+});

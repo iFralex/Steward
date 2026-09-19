@@ -20,9 +20,10 @@ test("sendAll fans out to every subscription", async () => {
   reg.subscribe(sub("https://a"));
   reg.subscribe(sub("https://b"));
 
-  await reg.sendAll({ title: "Steward", body: "hi" });
+  const report = await reg.sendAll({ title: "Steward", body: "hi" });
 
   assert.deepEqual(calls.sort(), ["https://a", "https://b"]);
+  assert.deepEqual(report, { attempted: 2, delivered: 2, failed: 0, pruned: 0 });
   rmSync(join(file, ".."), { recursive: true, force: true });
 });
 
@@ -35,9 +36,10 @@ test("a 410 Gone prunes that subscription; others survive", async () => {
   reg.subscribe(sub("https://live"));
   reg.subscribe(sub("https://dead"));
 
-  await reg.sendAll({ title: "Steward" });
+  const report = await reg.sendAll({ title: "Steward" });
 
   assert.deepEqual(reg.list().map((s) => s.endpoint), ["https://live"], "gone sub pruned, live kept");
+  assert.deepEqual(report, { attempted: 2, delivered: 1, failed: 1, pruned: 1 });
   rmSync(join(file, ".."), { recursive: true, force: true });
 });
 
@@ -47,9 +49,10 @@ test("a non-gone error is swallowed and does NOT prune (best-effort)", async () 
   const reg = new PushRegistry(file, send);
   reg.subscribe(sub("https://flaky"));
 
-  await reg.sendAll({ title: "Steward" }); // must not throw
+  const report = await reg.sendAll({ title: "Steward" }); // must not throw
 
   assert.equal(reg.size, 1, "transient failure keeps the subscription for a retry");
+  assert.deepEqual(report, { attempted: 1, delivered: 0, failed: 1, pruned: 0 });
   rmSync(join(file, ".."), { recursive: true, force: true });
 });
 
@@ -69,7 +72,8 @@ test("sendAll with no subscriptions is a no-op", async () => {
   const file = tmpFile();
   let called = false;
   const reg = new PushRegistry(file, async () => { called = true; });
-  await reg.sendAll({ title: "Steward" });
+  const report = await reg.sendAll({ title: "Steward" });
   assert.equal(called, false);
+  assert.deepEqual(report, { attempted: 0, delivered: 0, failed: 0, pruned: 0 });
   rmSync(join(file, ".."), { recursive: true, force: true });
 });

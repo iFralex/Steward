@@ -3,7 +3,7 @@ import { recordAudit } from "@steward/audit-log";
 import type { WatchEngine } from "@steward/watch-engine";
 import type { ChatManager } from "./agent-runner.ts";
 import { chatStore } from "./chat-store.ts";
-import type { PushRegistry } from "./push.ts";
+import type { PushDeliveryReport, PushRegistry } from "./push.ts";
 import { isRunning } from "./running-chats.ts";
 import { recordWatchDeliveryUsage } from "./watch-observability.ts";
 
@@ -25,72 +25,84 @@ export async function pollAndDeliverWatchEvents(args: {
       // Do not interleave an automatic prompt with a user turn. The durable
       // pending event will be picked up by the next poll.
       if (isRunning(chatId)) continue;
-      const previousAssistantIds = new Set(store.getMessages(chatId).filter((message) => message.role === "assistant").map((message) => message.id));
-      const prompt = watchEventPrompt(pending.instruction, pending.rule, pending.event);
       const startedAt = Date.now();
+      let body = pending.notificationText;
+      let mode: "llm" | "cached" | "fallback" = body ? "cached" : "llm";
+      if (!body) {
+        const previousAssistantIds = new Set(store.getMessages(chatId).filter((message) => message.role === "assistant").map((message) => message.id));
+        try {
+          await args.runner.runTurn(chatId, watchEventPrompt(pending.instruction, pending.rule, pending.event), undefined, {
+            origin: "watch",
+            correlationId: pending.watchId,
+            auditPayload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleId: pending.rule.id },
+          });
+          body = [...store.getMessages(chatId)].reverse()
+            .find((message) => message.role === "assistant" && !previousAssistantIds.has(message.id))?.text?.trim();
+          if (!body) throw new Error("The notification agent produced no reply");
+          args.engine.store.setNotificationText(pending.id, body);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (pending.attempts < 2) {
+            recordDeliveryFailure(args.engine, pending, chatId, startedAt, message, true);
+            continue;
+          }
+          body = pending.event.fallbackText;
+          mode = "fallback";
+          store.addMessage(chatId, { id: randomUUID(), role: "assistant", text: body });
+          args.engine.store.setNotificationText(pending.id, body);
+        }
+      }
+
       try {
-        await args.runner.runTurn(chatId, prompt, undefined, {
-          origin: "watch",
-          correlationId: pending.watchId,
-          auditPayload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleId: pending.rule.id },
-        });
-        const reply = [...store.getMessages(chatId)].reverse()
-          .find((message) => message.role === "assistant" && !previousAssistantIds.has(message.id))?.text?.trim();
-        if (!reply) throw new Error("The notification agent produced no reply");
-        await args.push.sendAll({
-          title: watchTitle(pending.event.type), body: reply.slice(0, 240), tag: `watch-${pending.watchId}-${pending.id}`,
+        const push = await args.push.sendAll({
+          title: watchTitle(pending.event.type), body: body.slice(0, 240), tag: `watch-${pending.watchId}-${pending.id}`,
           chatId, watchId: pending.watchId, type: "watch-event",
         });
+        if (!pushAccepted(push)) throw new Error(`Push failed for all ${push.attempted} subscription(s)`);
         args.engine.store.delivered(pending.id);
         recordWatchDeliveryUsage(pending.watchId, Date.now() - startedAt, true);
         recordAudit({
-          actor: "host", eventType: "watch.event_delivered", risk: "low", summary: `Delivered ${pending.event.type}`,
+          actor: "host", eventType: "watch.event_delivered", risk: mode === "fallback" ? "medium" : "low",
+          summary: `Delivered ${mode === "fallback" ? "fallback for " : ""}${pending.event.type}`,
           chatId, correlationId: pending.watchId, ok: true, durationMs: Date.now() - startedAt,
-          payload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleId: pending.rule.id, mode: "llm" },
+          payload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleId: pending.rule.id, mode, push },
           sourceRefs: [{ type: "watch", id: pending.watchId, label: pending.event.type }],
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (pending.attempts >= 2) {
-          try {
-            const fallback = pending.event.fallbackText;
-            store.addMessage(chatId, { id: randomUUID(), role: "assistant", text: fallback });
-            await args.push.sendAll({
-              title: watchTitle(pending.event.type), body: fallback.slice(0, 240), tag: `watch-${pending.watchId}-${pending.id}`,
-              chatId, watchId: pending.watchId, type: "watch-event",
-            });
-            args.engine.store.delivered(pending.id);
-            recordWatchDeliveryUsage(pending.watchId, Date.now() - startedAt, true);
-            recordAudit({
-              actor: "host", eventType: "watch.event_delivered", risk: "medium", summary: `Delivered fallback for ${pending.event.type}`,
-              chatId, correlationId: pending.watchId, ok: true, durationMs: Date.now() - startedAt,
-              payload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleId: pending.rule.id, mode: "fallback", generationError: message },
-              sourceRefs: [{ type: "watch", id: pending.watchId, label: pending.event.type }],
-            });
-          } catch (fallbackError) {
-            const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-            args.engine.store.deliveryFailed(pending.id, fallbackMessage, false);
-            recordWatchDeliveryUsage(pending.watchId, Date.now() - startedAt, false);
-            recordAudit({
-              actor: "host", eventType: "watch.delivery_failed", risk: "medium", summary: `Failed to deliver ${pending.event.type}`,
-              chatId, correlationId: pending.watchId, ok: false, durationMs: Date.now() - startedAt,
-              payload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, error: fallbackMessage },
-            });
-          }
-        } else {
-          args.engine.store.deliveryFailed(pending.id, message);
-          recordWatchDeliveryUsage(pending.watchId, Date.now() - startedAt, false);
-          recordAudit({
-            actor: "host", eventType: "watch.delivery_retry_scheduled", risk: "medium", summary: `Will retry ${pending.event.type}`,
-            chatId, correlationId: pending.watchId, ok: false, durationMs: Date.now() - startedAt,
-            payload: { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, attempt: pending.attempts + 1, error: message },
-          });
-        }
+        recordDeliveryFailure(
+          args.engine, pending, chatId, startedAt,
+          error instanceof Error ? error.message : String(error), pending.attempts < 2,
+        );
       }
     }
   } finally {
     running = false;
   }
+}
+
+function pushAccepted(report: PushDeliveryReport): boolean {
+  return report.attempted === 0 || report.delivered > 0;
+}
+
+function recordDeliveryFailure(
+  engine: WatchEngine,
+  pending: ReturnType<WatchEngine["store"]["pending"]>[number],
+  chatId: string,
+  startedAt: number,
+  error: string,
+  retry: boolean,
+): void {
+  engine.store.deliveryFailed(pending.id, error, retry);
+  recordWatchDeliveryUsage(pending.watchId, Date.now() - startedAt, false);
+  recordAudit({
+    actor: "host", eventType: retry ? "watch.delivery_retry_scheduled" : "watch.delivery_failed", risk: "medium",
+    summary: `${retry ? "Will retry" : "Failed to deliver"} ${pending.event.type}`,
+    chatId, correlationId: pending.watchId, ok: false, durationMs: Date.now() - startedAt,
+    payload: {
+      watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type,
+      attempt: pending.attempts + 1, error,
+    },
+  });
 }
 
 export function watchEventPrompt(instruction: string, rule: unknown, event: unknown): string {

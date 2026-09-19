@@ -547,7 +547,11 @@ forbids writes, asks for one Italian message of at most 180 characters and
 requires explicit platform confidence. The push body is capped at 240
 characters. On generation failure the event remains pending; after two failed
 delivery attempts, the third pass uses the adapter's deterministic
-`fallbackText`. A successful LLM or fallback delivery is recorded durably.
+`fallbackText`. If every registered push endpoint fails, the durable event is
+retried; its already composed notification text is stored and reused so the
+retry neither calls the LLM again nor duplicates the chat message. Delivery is
+complete when the chat copy exists and either no push endpoint is registered or
+at least one endpoint accepts the notification.
 The internal structured prompt is not stored as a user-authored chat message;
 only the accessible notification is added to the transcript. Audit events use
 the watch ID as their correlation ID, while the LLM call, source polling and
@@ -1111,7 +1115,7 @@ The SQLite database uses WAL mode and two tables:
 | Table | Important columns | Role |
 |---|---|---|
 | `watches` | `source`, `resource_ref`, JSON `rules`, `instruction`, `chat_id`, `status`, JSON `snapshot`, expiry/check/error timestamps | Authoritative lifecycle and last observed state for each monitor. |
-| `watch_events` | unique `event_key`, `watch_id`, `rule_id`, JSON rule/event, `status`, `attempts`, delivery/error timestamps | Durable queue and delivery/deduplication history. |
+| `watch_events` | unique `event_key`, `watch_id`, `rule_id`, JSON rule/event, composed notification text, `status`, `attempts`, delivery/error timestamps | Durable queue, retry payload and delivery/deduplication history. |
 
 The database-level event key is
 `<watchId>:<ruleId>:<adapterEventKey>`. `INSERT OR IGNORE` makes replaying the
@@ -1232,7 +1236,7 @@ Steward is designed to retain narrower functionality when a dependent service is
 | Wiki API unavailable | Promotion is deferred while the mail mirror remains usable. |
 | No UI is attached to a gated request | Approval times out to deny. Quick Send cannot silently execute writes. |
 | AppleScript returns but the change is not observed | The write remains unconfirmed and enters bounded confirmation/retry handling. |
-| Push subscription is expired | The dead subscription is pruned; the Action Center item remains available in the UI. |
+| Push subscription is expired | The dead subscription is pruned and the per-send delivery report records the failure; an all-failed watch or Action notification remains eligible for retry. The underlying chat/Action remains available in the UI. |
 | ViaggiaTreno is unavailable or has no live board result | Train tools return an explicit error; existing watches retain their last snapshot and record the polling error for a later retry. |
 | LLM notification generation repeatedly fails | The durable event remains pending during bounded retries, then Steward sends the adapter's deterministic fallback message. |
 | Gateway rates unavailable | Usage display falls back to configured static rates; raw tokens remain recorded. |

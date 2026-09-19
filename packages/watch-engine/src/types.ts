@@ -44,6 +44,7 @@ export interface PendingWatchEvent {
   rule: WatchRule;
   event: DomainEvent;
   attempts: number;
+  notificationText?: string;
 }
 
 export interface WatchAdapter {

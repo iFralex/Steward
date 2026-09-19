@@ -23,6 +23,13 @@ export interface PushPayload {
   [key: string]: unknown;
 }
 
+export interface PushDeliveryReport {
+  attempted: number;
+  delivered: number;
+  failed: number;
+  pruned: number;
+}
+
 /** Sends one push message to one subscription; rejects on delivery failure. */
 export type SendFn = (sub: PushSubscriptionJSON, payload: string) => Promise<unknown>;
 
@@ -92,21 +99,27 @@ export class PushRegistry {
    * failure is swallowed (and, on a 404/410 "gone" response, prunes that
    * subscription); a failing push must never break the caller's flow.
    */
-  async sendAll(payload: PushPayload): Promise<void> {
+  async sendAll(payload: PushPayload): Promise<PushDeliveryReport> {
     const body = JSON.stringify(payload);
     const subs = [...this.subs.values()];
-    if (subs.length === 0) return;
+    const report: PushDeliveryReport = { attempted: subs.length, delivered: 0, failed: 0, pruned: 0 };
+    if (subs.length === 0) return report;
     let changed = false;
     await Promise.all(
       subs.map(async (sub) => {
         try {
           await this.send(sub, body);
+          report.delivered++;
         } catch (err) {
-          if (isGoneStatus(err) && this.subs.delete(sub.endpoint)) changed = true;
-          // any other error: best-effort, swallow it.
+          report.failed++;
+          if (isGoneStatus(err) && this.subs.delete(sub.endpoint)) {
+            changed = true;
+            report.pruned++;
+          }
         }
       }),
     );
     if (changed) this.persist();
+    return report;
   }
 }

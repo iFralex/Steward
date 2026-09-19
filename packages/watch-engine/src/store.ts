@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS watch_events (
   attempts INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   delivered_at INTEGER,
-  last_error TEXT
+  last_error TEXT,
+  notification_text TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_watch_events_pending ON watch_events(status, created_at);
 `;
@@ -42,6 +43,7 @@ export class WatchStore {
     const db = new Database(path);
     db.pragma("journal_mode = WAL");
     db.exec(SCHEMA);
+    ensureColumn(db, "watch_events", "notification_text", "TEXT");
     return new WatchStore(db);
   }
 
@@ -111,7 +113,12 @@ export class WatchStore {
     return rows.map((row) => ({
       id: row.id, watchId: row.watch_id, chatId: row.chat_id, instruction: row.instruction,
       rule: JSON.parse(row.rule) as WatchRule, event: JSON.parse(row.event) as DomainEvent, attempts: row.attempts,
+      ...(row.notification_text ? { notificationText: row.notification_text } : {}),
     }));
+  }
+
+  setNotificationText(id: string, text: string): void {
+    this.raw.prepare("UPDATE watch_events SET notification_text=? WHERE id=?").run(text.slice(0, 1000), id);
   }
 
   delivered(id: string): void {
@@ -133,6 +140,12 @@ interface WatchRow {
 }
 interface EventRow {
   id: string; watch_id: string; rule: string; event: string; attempts: number; chat_id: string; instruction: string;
+  notification_text: string | null;
+}
+
+function ensureColumn(db: Database.Database, table: string, column: string, declaration: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${declaration}`);
 }
 function watchFromRow(row: WatchRow): WatchRecord {
   return {
