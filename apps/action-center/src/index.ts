@@ -32,7 +32,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "boolean",
             description: "When true, omit items whose dueAt is earlier than now. Items without a due date remain visible.",
           },
-          limit: { type: "number" },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "Maximum number of actions to return (default 20, hard limit 100).",
+          },
           includePayload: {
             type: "boolean",
             description: "Include each item's full contextSnapshot/proposedActions payload (large — tens of KB per item). Defaults to false; prefer read_action for a single item's detail instead.",
@@ -124,7 +129,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "list_actions": {
         const status = typeof args.status === "string" ? args.status : "open";
         const kind = typeof args.kind === "string" ? (args.kind as ActionKind) : undefined;
-        const limit = typeof args.limit === "number" ? args.limit : 20;
+        const limit = boundedLimit(args.limit, 20);
         const includeDone = status === "all";
         const hideExpired = args.hideExpired === true;
         const items = status === "open" || status === "all"
@@ -196,6 +201,11 @@ function safeId(value: unknown): number {
 
 function numberArg(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function boundedLimit(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(100, Math.trunc(value)));
 }
 
 function flowInput(args: Record<string, unknown>, partial: false): UpsertFlow;

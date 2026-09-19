@@ -213,7 +213,10 @@ export class ActionStore {
   }
 
   list(opts: { includeDone?: boolean; hideExpired?: boolean; status?: ActionStatus; kind?: ActionKind; limit?: number } = {}): ActionItem[] {
-    const limit = opts.limit ?? 50;
+    // Defence in depth: callers other than the MCP tool also use the store, so
+    // enforce the same cap here rather than trusting schema validation alone.
+    const requestedLimit = typeof opts.limit === "number" && Number.isFinite(opts.limit) ? Math.trunc(opts.limit) : 50;
+    const limit = Math.max(1, Math.min(100, requestedLimit));
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (opts.status) {

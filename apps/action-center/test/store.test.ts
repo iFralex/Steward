@@ -126,6 +126,20 @@ test("get(id) returns one action regardless of list limits", () => {
   s.close();
 });
 
+test("list enforces a hard limit of 100 even for direct store callers", () => {
+  const s = ActionStore.open(":memory:");
+  for (let i = 0; i < 120; i += 1) {
+    s.upsert({
+      sourceKey: `limit-${i}`, sourceKind: "mail", kind: "admin-task",
+      title: `Action ${i}`, summary: "limit test",
+    });
+  }
+
+  assert.equal(s.list({ limit: 10_000 }).length, 100);
+  assert.equal(s.list({ limit: 0 }).length, 1);
+  s.close();
+});
+
 test("list({status}) filters to that exact status, overriding includeDone", () => {
   const s = ActionStore.open(":memory:");
   const a = s.upsert({ sourceKey: "k1", sourceKind: "mail", kind: "reply-needed", title: "a", summary: "a" });
