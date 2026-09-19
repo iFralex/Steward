@@ -148,7 +148,12 @@ interface ChatRuntime {
   /** toolCallId → start time (for durations) and input (for the transcript). */
   starts: Map<string, number>;
   toolInputs: Map<string, unknown>;
+  turnAssistantMessages: Array<{ id: string; text: string }>;
 }
+
+export type TurnResult =
+  | { ok: true; messageId: string | null; text: string }
+  | { ok: false; error: string; aborted: boolean; messageId: string | null; text: string };
 
 export class ChatManager {
   private bridge?: BridgeRuntime;
@@ -243,7 +248,7 @@ export class ChatManager {
     const runtime: ChatRuntime = {
       chatId, session: piSession, unsub: () => {},
       lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
+      assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
     };
     runtime.unsub = piSession.subscribe((e: any) => this.onPiEvent(runtime, e));
     this.chats.set(chatId, runtime);
@@ -267,12 +272,7 @@ export class ChatManager {
       // messages — instead of only being flushed once at the end of the whole turn.
       const pendingText = runtime.assistantBuffer.trim();
       if (pendingText) {
-        store.addMessage(runtime.chatId, { id: randomUUID(), role: "assistant", text: pendingText });
-        recordAudit({
-          actor: "assistant", eventType: "chat.assistant_message", risk: "low",
-          summary: pendingText.slice(0, 180), sessionId: this.session.id, chatId: runtime.chatId,
-          payload: { text: pendingText },
-        });
+        this.persistAssistantMessage(runtime, pendingText);
       }
       runtime.assistantBuffer = "";
       if (e.toolCallId) { runtime.starts.set(e.toolCallId, Date.now()); runtime.toolInputs.set(e.toolCallId, e.args ?? {}); }
@@ -326,16 +326,37 @@ export class ChatManager {
     }
   }
 
+  private persistAssistantMessage(runtime: ChatRuntime, text: string, extra?: Record<string, unknown>): string {
+    const id = randomUUID();
+    chatStore().addMessage(runtime.chatId, { id, role: "assistant", text });
+    runtime.turnAssistantMessages.push({ id, text });
+    recordAudit({
+      actor: "assistant", eventType: "chat.assistant_message", risk: "low",
+      summary: text.slice(0, 180), sessionId: this.session.id, chatId: runtime.chatId,
+      payload: { text, ...extra },
+    });
+    return id;
+  }
+
+  private turnOutput(runtime: ChatRuntime): { messageId: string | null; text: string } {
+    return {
+      messageId: runtime.turnAssistantMessages.at(-1)?.id ?? null,
+      text: runtime.turnAssistantMessages.map((message) => message.text).join("\n\n"),
+    };
+  }
+
   /** Run one user turn against a chat, persisting the transcript + usage. */
-  async runTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
+  async runTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<TurnResult> {
     return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, attachments));
   }
 
-  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<void> {
+  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<TurnResult> {
     const store = chatStore();
     // A turn queued behind another can run after its chat was deleted; do not
     // resurrect a deleted chat (addMessage orphan row + ensureChat rebuilding a session).
-    if (!store.exists(chatId)) return;
+    if (!store.exists(chatId)) {
+      return { ok: false, error: `Chat not found: ${chatId}`, aborted: false, messageId: null, text: "" };
+    }
     const attached = (attachments ?? []).filter((a) => a.path);
     store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
     store.maybeAutoTitle(chatId, prompt);
@@ -350,10 +371,25 @@ export class ChatManager {
       sourceRefs: attached.map((file) => ({ type: "file", path: file.path, id: file.token, label: file.name })),
     });
 
-    const runtime = await this.ensureChat(chatId);
-    if (this.session.closed) return;
+    let runtime: ChatRuntime;
+    try {
+      runtime = await this.ensureChat(chatId);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      recordAudit({
+        actor: "host", eventType: "chat.error", risk: "medium", summary: error,
+        sessionId: this.session.id, chatId, ok: false,
+        payload: { error: err instanceof Error ? err.stack ?? err.message : String(err) },
+      });
+      this.emit({ type: "error", sessionId: this.session.id, chatId, message: error });
+      return { ok: false, error, aborted: false, messageId: null, text: "" };
+    }
+    if (this.session.closed) {
+      return { ok: false, error: "Session is closed", aborted: false, messageId: null, text: "" };
+    }
     runtime.assistantBuffer = "";
     runtime.aborted = false;
+    runtime.turnAssistantMessages = [];
 
     // Surface user-attached files to the agent as absolute paths it can pass to
     // send_email/reply (which attach by path).
@@ -366,27 +402,14 @@ export class ChatManager {
     try {
       await runtime.session.prompt(piPrompt);
       const text = runtime.assistantBuffer.trim();
-      if (text) {
-        store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
-        recordAudit({
-          actor: "assistant", eventType: "chat.assistant_message", risk: "low",
-          summary: text.slice(0, 180), sessionId: this.session.id, chatId,
-          payload: { text },
-        });
-      }
+      if (text) this.persistAssistantMessage(runtime, text);
       this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
+      return { ok: true, ...this.turnOutput(runtime) };
     } catch (err) {
       // A user-requested stop surfaces as an abort here — not a real error.
       if (runtime.aborted) {
         const text = runtime.assistantBuffer.trim();
-        if (text) {
-          store.addMessage(chatId, { id: randomUUID(), role: "assistant", text });
-          recordAudit({
-            actor: "assistant", eventType: "chat.assistant_message", risk: "low",
-            summary: text.slice(0, 180), sessionId: this.session.id, chatId,
-            payload: { text, aborted: true },
-          });
-        }
+        if (text) this.persistAssistantMessage(runtime, text, { aborted: true });
         recordAudit({
           actor: "user",
           eventType: "chat.stop",
@@ -397,18 +420,21 @@ export class ChatManager {
           ok: true,
         });
         this.emit({ type: "assistant_done", sessionId: this.session.id, chatId });
+        return { ok: false, error: "Generation stopped", aborted: true, ...this.turnOutput(runtime) };
       } else {
+        const error = err instanceof Error ? err.message : String(err);
         recordAudit({
           actor: "host",
           eventType: "chat.error",
           risk: "medium",
-          summary: err instanceof Error ? err.message : String(err),
+          summary: error,
           sessionId: this.session.id,
           chatId,
           ok: false,
           payload: { error: err instanceof Error ? err.stack ?? err.message : String(err) },
         });
-        this.emit({ type: "error", sessionId: this.session.id, chatId, message: err instanceof Error ? err.message : String(err) });
+        this.emit({ type: "error", sessionId: this.session.id, chatId, message: error });
+        return { ok: false, error, aborted: false, ...this.turnOutput(runtime) };
       }
     } finally {
       try {

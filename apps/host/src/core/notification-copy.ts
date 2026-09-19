@@ -6,12 +6,14 @@ const COPY = {
     testPush: "Push test — notifications work ✅",
     newChatReady: "New chat ready — tap to write ✍️",
     replyReady: "Reply ready",
+    replyFailed: "I couldn't prepare the reply — tap to try again",
     newProposal: "New proposal to approve",
   },
   it: {
     testPush: "Notifica di test — le push funzionano ✅",
     newChatReady: "Nuova chat pronta — tocca per scrivere ✍️",
     replyReady: "Risposta pronta",
+    replyFailed: "Non sono riuscito a preparare la risposta — tocca per riprovare",
     newProposal: "Nuova proposta da approvare",
   },
 } as const satisfies Record<NotificationLang, Record<string, string>>;

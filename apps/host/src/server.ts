@@ -435,19 +435,23 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       }
       void getQuickRunner(config)
         .runTurn(chat.id, text)
-        .then(() => {
-          const reply = [...chatStore().getMessages(chat.id)].reverse().find((m) => m.role === "assistant")?.text ?? "";
+        .then((result) => {
+          const reply = result.text;
           return pushRegistry.sendAll({
             title: "Steward",
-            body: reply ? reply.slice(0, 140) : notificationCopy(getNotificationLang()).replyReady,
+            body: result.ok
+              ? (reply ? reply.slice(0, 140) : notificationCopy(getNotificationLang()).replyReady)
+              : notificationCopy(getNotificationLang()).replyFailed,
             tag: `chat-${chat.id}`,
             chatId: chat.id,
             type: "chat-reply",
           }).then(() => {
             recordAudit({
-              actor: "host", eventType: "quick_send.notification_dispatched", risk: "low",
-              summary: "Dispatched quick-send reply notification", chatId: chat.id, ok: true,
-              payload: { type: "chat-reply", hadReply: !!reply },
+              actor: "host", eventType: result.ok ? "quick_send.notification_dispatched" : "quick_send.turn_failed",
+              risk: result.ok ? "low" : "medium",
+              summary: result.ok ? "Dispatched quick-send reply notification" : result.error,
+              chatId: chat.id, ok: result.ok,
+              payload: { type: "chat-reply", hadReply: !!reply, ...(result.ok ? {} : { error: result.error, aborted: result.aborted }) },
             });
           });
         })

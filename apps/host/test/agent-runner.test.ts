@@ -71,9 +71,74 @@ test("doRunTurn does not resurrect a deleted/nonexistent chat", async () => {
     () => {},
   );
   const missingChatId = "does-not-exist-chat-id";
-  await cm.runTurn(missingChatId, "hello");
+  const result = await cm.runTurn(missingChatId, "hello");
+  assert.deepEqual(result, {
+    ok: false, error: `Chat not found: ${missingChatId}`, aborted: false, messageId: null, text: "",
+  });
   assert.equal(chatStore().exists(missingChatId), false);
   assert.deepEqual(chatStore().getMessages(missingChatId), []);
+});
+
+test("runTurn returns the persisted assistant message instead of requiring transcript inspection", async () => {
+  const session = new Session(() => {}, 1000);
+  const cm = new ChatManager(
+    {
+      port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
+      gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      mcpServers: {},
+    } as any,
+    session,
+    () => {},
+  );
+  const chat = chatStore().createChat("structured result");
+  const runtime = {
+    chatId: chat.id,
+    session: {
+      prompt: async () => { runtime.assistantBuffer = "Risposta affidabile."; },
+      getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    },
+    unsub: () => {}, lastCostUsd: 0,
+    lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+  };
+  (cm as any).ensureChat = async () => runtime;
+
+  const result = await cm.runTurn(chat.id, "ciao");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "Risposta affidabile.");
+  assert.equal(result.messageId, chatStore().getMessages(chat.id).at(-1)?.id);
+});
+
+test("runTurn resolves with a structured failure when the agent errors", async () => {
+  const session = new Session(() => {}, 1000);
+  const cm = new ChatManager(
+    {
+      port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
+      gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      mcpServers: {},
+    } as any,
+    session,
+    () => {},
+  );
+  const chat = chatStore().createChat("structured error");
+  const runtime = {
+    chatId: chat.id,
+    session: {
+      prompt: async () => { throw new Error("gateway unavailable"); },
+      getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    },
+    unsub: () => {}, lastCostUsd: 0,
+    lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+  };
+  (cm as any).ensureChat = async () => runtime;
+
+  const result = await cm.runTurn(chat.id, "ciao");
+
+  assert.deepEqual(result, {
+    ok: false, error: "gateway unavailable", aborted: false, messageId: null, text: "",
+  });
 });
 
 test("doRunTurn marks the chat running for the shared running-chats registry while in flight, and idle once it finishes", async () => {
@@ -98,7 +163,7 @@ test("doRunTurn marks the chat running for the shared running-chats registry whi
     },
     unsub: () => {}, lastCostUsd: 0,
     lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
   };
   (cm as any).ensureChat = async () => runtime;
   assert.equal(isRunning(chat.id), false, "must not be running before the turn starts");
@@ -127,7 +192,7 @@ test("onPiEvent persists assistant text interleaved between tool calls, not merg
   const runtime = {
     chatId: chat.id, session: {} as any, unsub: () => {},
     lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(),
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
   };
   const onPiEvent = (cm as unknown as { onPiEvent: (r: typeof runtime, e: unknown) => void }).onPiEvent.bind(cm);
 
