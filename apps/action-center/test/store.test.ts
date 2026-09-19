@@ -159,6 +159,25 @@ test("list({status, kind}) combines both filters", () => {
   s.close();
 });
 
+test("list({hideExpired}) omits past due items but keeps future and undated actions", () => {
+  const s = ActionStore.open(":memory:");
+  const now = Math.floor(Date.now() / 1000);
+  const expired = s.upsert({
+    sourceKey: "expired", sourceKind: "mail", kind: "deadline", title: "expired", summary: "expired", dueAt: now - 60,
+  });
+  const future = s.upsert({
+    sourceKey: "future", sourceKind: "mail", kind: "deadline", title: "future", summary: "future", dueAt: now + 3600,
+  });
+  const undated = s.upsert({
+    sourceKey: "undated", sourceKind: "mail", kind: "follow-up", title: "undated", summary: "undated",
+  });
+
+  assert.deepEqual(new Set(s.list().map((item) => item.id)), new Set([expired.id, future.id, undated.id]));
+  assert.deepEqual(new Set(s.list({ hideExpired: true }).map((item) => item.id)), new Set([future.id, undated.id]));
+  assert.deepEqual(s.list({ hideExpired: true, status: "new", kind: "deadline" }).map((item) => item.id), [future.id]);
+  s.close();
+});
+
 test("updateSummary changes the summary without touching status", () => {
   const s = ActionStore.open(":memory:");
   const { id } = s.upsert({

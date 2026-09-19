@@ -112,6 +112,7 @@
       "status": { "new": "new", "read": "read", "done": "done", "dismissed": "dismissed" },
       "deferred": "Deferred: {{list}}",
       "showDone": "Show done/dismissed",
+      "hideExpired": "Hide expired",
       "empty": "No actions."
     }
   },

@@ -931,7 +931,7 @@ export function startServer(config: HostConfig): WebSocketServer {
           emit({
             type: "action_center_state",
             sessionId: session.id,
-            state: loadActionCenterState({ includeDone: msg.includeDone, limit: msg.limit }),
+            state: loadActionCenterState({ includeDone: msg.includeDone, hideExpired: msg.hideExpired, limit: msg.limit }),
           });
           break;
         case "action_center_mark":

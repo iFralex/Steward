@@ -25,7 +25,7 @@ export type SidebarTab = "chat" | "actions";
 export function UnifiedSidebar({
   tab, onTab,
   chats, activeChatId, onSelectChat, onCreateChat, onRenameChat, onDeleteChat, onSaveChat,
-  actions, diagnostics, selectedActionId, onSelectAction, showDone, onShowDone, onRefreshActions,
+  actions, diagnostics, selectedActionId, onSelectAction, showDone, onShowDone, hideExpired, onHideExpired, onRefreshActions,
   pane, onOpenUsage, onOpenAudit, onOpenSystem,
 }: {
   tab: SidebarTab;
@@ -43,6 +43,8 @@ export function UnifiedSidebar({
   onSelectAction: (item: ActionCenterItem) => void;
   showDone: boolean;
   onShowDone: (value: boolean) => void;
+  hideExpired: boolean;
+  onHideExpired: (value: boolean) => void;
   onRefreshActions: () => void;
   pane: "chat" | "action" | "usage" | "audit" | "system";
   onOpenUsage: () => void;
@@ -82,6 +84,8 @@ export function UnifiedSidebar({
           selectedId={selectedActionId}
           showDone={showDone}
           onShowDone={onShowDone}
+          hideExpired={hideExpired}
+          onHideExpired={onHideExpired}
           onRefresh={onRefreshActions}
           onSelect={onSelectAction}
         />
@@ -219,13 +223,15 @@ function ChatList({
 }
 
 function ActionList({
-  items, diagnostics, selectedId, showDone, onShowDone, onRefresh, onSelect,
+  items, diagnostics, selectedId, showDone, onShowDone, hideExpired, onHideExpired, onRefresh, onSelect,
 }: {
   items: ActionCenterItem[];
   diagnostics: ActionDiagnostics | undefined;
   selectedId: number | null;
   showDone: boolean;
   onShowDone: (value: boolean) => void;
+  hideExpired: boolean;
+  onHideExpired: (value: boolean) => void;
   onRefresh: () => void;
   onSelect: (item: ActionCenterItem) => void;
 }) {
@@ -267,6 +273,10 @@ function ActionList({
               <label className="flex items-center gap-2 text-xs">
                 <input type="checkbox" checked={showDone} onChange={(e) => onShowDone(e.currentTarget.checked)} />
                 {t("sidebar.actionList.showDone")}
+              </label>
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={hideExpired} onChange={(e) => onHideExpired(e.currentTarget.checked)} />
+                {t("sidebar.actionList.hideExpired")}
               </label>
             </PopoverContent>
           </Popover>

@@ -99,6 +99,7 @@ function App() {
   const swipeStyle = useEdgeSwipeBack(swipePanelRef, canNavigateBack, () => setMobileDrill(false));
   const splitAction = host.actionCenter?.items.find((a) => a.id === splitActionId) ?? null;
   const [showDone, setShowDone] = useState(false);
+  const [hideExpired, setHideExpired] = useState(false);
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -281,7 +282,8 @@ function App() {
   const { connected: hostConnected, refreshActions } = host;
   useEffect(() => {
     if (!hostConnected) return;
-    const tick = () => refreshActions(showDone);
+    const tick = () => refreshActions(showDone, hideExpired);
+    tick(); // Reapply the current filters after an initial connection or reconnect.
     const id = window.setInterval(tick, 120_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") tick();
@@ -291,7 +293,7 @@ function App() {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [hostConnected, refreshActions, showDone]);
+  }, [hostConnected, refreshActions, showDone, hideExpired]);
 
   const doSend = () => {
     if (!draft.trim() && attachments.length === 0) return;
@@ -706,8 +708,10 @@ function App() {
             selectedActionId={selectedAction?.id ?? null}
             onSelectAction={selectAction}
             showDone={showDone}
-            onShowDone={(v) => { setShowDone(v); host.refreshActions(v); }}
-            onRefreshActions={() => host.refreshActions(showDone)}
+            onShowDone={(v) => { setShowDone(v); host.refreshActions(v, hideExpired); }}
+            hideExpired={hideExpired}
+            onHideExpired={(v) => { setHideExpired(v); host.refreshActions(showDone, v); }}
+            onRefreshActions={() => host.refreshActions(showDone, hideExpired)}
             pane={pane}
             onOpenUsage={openUsage}
             onOpenAudit={openAudit}

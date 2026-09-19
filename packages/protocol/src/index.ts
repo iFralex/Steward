@@ -66,7 +66,7 @@ export type ClientEvent =
   | { type: "chat_save"; chatId: string }
   | { type: "open_file"; token: string }
   | { type: "reveal_file"; token: string }
-  | { type: "action_center_refresh"; sessionId: string; includeDone?: boolean; limit?: number }
+  | { type: "action_center_refresh"; sessionId: string; includeDone?: boolean; hideExpired?: boolean; limit?: number }
   | { type: "action_center_mark"; sessionId: string; id: number; status: ActionStatus }
   | { type: "action_open_in_chat"; id: number }
   | { type: "action_center_execute"; sessionId: string; id: number; proposalId: string }

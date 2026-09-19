@@ -212,7 +212,7 @@ export class ActionStore {
     return row ? rowToAction(row) : null;
   }
 
-  list(opts: { includeDone?: boolean; status?: ActionStatus; kind?: ActionKind; limit?: number } = {}): ActionItem[] {
+  list(opts: { includeDone?: boolean; hideExpired?: boolean; status?: ActionStatus; kind?: ActionKind; limit?: number } = {}): ActionItem[] {
     const limit = opts.limit ?? 50;
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -225,6 +225,10 @@ export class ActionStore {
     if (opts.kind) {
       conditions.push("kind = ?");
       params.push(opts.kind);
+    }
+    if (opts.hideExpired) {
+      conditions.push("(due_at IS NULL OR due_at >= ?)");
+      params.push(Math.floor(Date.now() / 1000));
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     params.push(limit);

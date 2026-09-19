@@ -142,7 +142,7 @@ The scheduler scans recent mail and creates action items such as:
 - calendar proposals;
 - items that should be reviewed or dismissed.
 
-Each item stores the source thread, summary, status, proposed steps and diagnostics. The web UI shows new/read/done items. Selecting an item marks it read, opens the detail pane, and lets the agent refine or execute the proposal through the same approval flow used in chat.
+Each item stores the source thread, summary, status, proposed steps and diagnostics. The web UI shows open items by default and offers independent flags for including completed/dismissed items and hiding items whose `dueAt` is already past; undated items remain visible. Filtering is performed in SQLite before the result limit. Selecting an item marks it read, opens the detail pane, and lets the agent refine or execute the proposal through the same approval flow used in chat.
 
 Steward also supports explicit, reusable **flows** for personal procedures that the model could not reliably infer on its own. Ask in chat to create a flow from the steps you just described; Steward presents a dedicated approval card where you can edit its name, triggering situation, guidance and exclusions before saving it. Flows are never learned silently and never execute writes automatically. They can be listed, searched, updated, disabled or deleted through the Action Center tools.
 

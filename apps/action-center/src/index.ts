@@ -28,6 +28,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             enum: ["reply-needed", "scheduling-request", "calendar-invite", "event-reminder", "deadline", "document-action", "follow-up", "admin-task"],
             description: "Optional: only items of this kind.",
           },
+          hideExpired: {
+            type: "boolean",
+            description: "When true, omit items whose dueAt is earlier than now. Items without a due date remain visible.",
+          },
           limit: { type: "number" },
           includePayload: {
             type: "boolean",
@@ -122,9 +126,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const kind = typeof args.kind === "string" ? (args.kind as ActionKind) : undefined;
         const limit = typeof args.limit === "number" ? args.limit : 20;
         const includeDone = status === "all";
+        const hideExpired = args.hideExpired === true;
         const items = status === "open" || status === "all"
-          ? store.list({ includeDone, kind, limit })
-          : store.list({ status: status as ActionStatus, kind, limit });
+          ? store.list({ includeDone, hideExpired, kind, limit })
+          : store.list({ status: status as ActionStatus, hideExpired, kind, limit });
         const includePayload = args.includePayload === true;
         return text(includePayload ? items : items.map(omitPayload));
       }

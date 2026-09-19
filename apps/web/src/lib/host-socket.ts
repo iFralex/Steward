@@ -99,7 +99,7 @@ export interface HostSocket {
   revealFile: (token: string) => void;
   resolveFile: (key: string) => ChannelFile | undefined;
   registerPath: (key: string) => Promise<ChannelFile | undefined>;
-  refreshActions: (includeDone?: boolean) => void;
+  refreshActions: (includeDone?: boolean, hideExpired?: boolean) => void;
   markAction: (id: number, status: ActionStatus) => void;
   executeProposal: (id: number, proposalId: string) => void;
   reviseProposal: (id: number, proposalId: string, instruction: string) => void;
@@ -366,7 +366,9 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
   const deleteChat = useCallback((chatId: string) => send({ type: "chat_delete", chatId }), [send]);
 
   const refreshActions = useCallback(
-    (includeDone = false) => send({ type: "action_center_refresh", sessionId: sessionRef.current, includeDone, limit: 100 }),
+    (includeDone = false, hideExpired = false) => send({
+      type: "action_center_refresh", sessionId: sessionRef.current, includeDone, hideExpired, limit: 100,
+    }),
     [send],
   );
 

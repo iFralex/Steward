@@ -144,10 +144,10 @@ Rules:
 - Do not include read-only gathering steps.
 - Tool inputs must be ready for approval/execution.`;
 
-export function loadActionCenterState(opts: { includeDone?: boolean; limit?: number } = {}): ActionCenterState {
+export function loadActionCenterState(opts: { includeDone?: boolean; hideExpired?: boolean; limit?: number } = {}): ActionCenterState {
   const store = ActionStore.open(actionDbPath());
   try {
-    const items = store.list({ includeDone: opts.includeDone, limit: opts.limit ?? 50 }) as ActionCenterItem[];
+    const items = store.list({ includeDone: opts.includeDone, hideExpired: opts.hideExpired, limit: opts.limit ?? 50 }) as ActionCenterItem[];
     const all = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
     void notifyNewProposals(store, all);
     return { items, diagnostics: diagnostics(store, all) };
@@ -497,7 +497,7 @@ function diagnostics(store: ActionStore, all: ActionCenterItem[]): ActionCenterD
   for (const item of all) byKind[item.kind] = (byKind[item.kind] ?? 0) + 1;
   const now = Math.floor(Date.now() / 1000);
   const active = all.filter((a) => a.status === "new" || a.status === "read");
-  const nextDueAt = active.map((a) => a.dueAt).filter((v): v is number => typeof v === "number").sort((a, b) => a - b)[0] ?? null;
+  const nextDueAt = active.map((a) => a.dueAt).filter((v): v is number => typeof v === "number" && v >= now).sort((a, b) => a - b)[0] ?? null;
   const lastUpdatedAt = all.map((a) => a.updatedAt).sort((a, b) => b - a)[0] ?? null;
   const lastScan = store.getMeta<{ result?: { mail?: { deferredReasons?: Record<string, number> } } }>("lastScan");
   return {

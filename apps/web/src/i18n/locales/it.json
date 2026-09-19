@@ -112,6 +112,7 @@
       "status": { "new": "nuove", "read": "lette", "done": "completate", "dismissed": "scartate" },
       "deferred": "Rimandate: {{list}}",
       "showDone": "Mostra completate/scartate",
+      "hideExpired": "Nascondi scadute",
       "empty": "Nessuna azione."
     }
   },
