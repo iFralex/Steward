@@ -34,9 +34,24 @@ import type { ActionCenterItem, ChannelFile } from "@steward/protocol";
 
 const HOST_URL = hostWsUrl();
 const HTTP_BASE = hostHttpBase();
+const ACTION_FILTER_SHOW_DONE_KEY = "steward.actions.showDone";
+const ACTION_FILTER_HIDE_EXPIRED_KEY = "steward.actions.hideExpired";
 
 type Tab = "chat" | "actions" | "usage" | "audit" | "system";
 type Pane = "chat" | "action" | "usage" | "audit" | "system";
+
+function storedBoolean(key: string, fallback = false): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function storeBoolean(key: string, value: boolean): void {
+  try { window.localStorage.setItem(key, String(value)); } catch { /* storage may be disabled */ }
+}
 
 function AppMark({ className }: { className?: string }) {
   return (
@@ -98,8 +113,8 @@ function App() {
   const canNavigateBack = !isDesktop && mobileDrill && (tab === "chat" || tab === "actions");
   const swipeStyle = useEdgeSwipeBack(swipePanelRef, canNavigateBack, () => setMobileDrill(false));
   const splitAction = host.actionCenter?.items.find((a) => a.id === splitActionId) ?? null;
-  const [showDone, setShowDone] = useState(false);
-  const [hideExpired, setHideExpired] = useState(false);
+  const [showDone, setShowDone] = useState(() => storedBoolean(ACTION_FILTER_SHOW_DONE_KEY));
+  const [hideExpired, setHideExpired] = useState(() => storedBoolean(ACTION_FILTER_HIDE_EXPIRED_KEY));
   const [attachments, setAttachments] = useState<ChannelFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -132,6 +147,8 @@ function App() {
     followLatestRef.current = distanceFromBottom <= 32;
   }, []);
   useEffect(() => () => streamSafeStop(recorderRef.current), []);
+  useEffect(() => storeBoolean(ACTION_FILTER_SHOW_DONE_KEY, showDone), [showDone]);
+  useEffect(() => storeBoolean(ACTION_FILTER_HIDE_EXPIRED_KEY, hideExpired), [hideExpired]);
   const focusComposer = () => document.getElementById("composer-input")?.focus();
   const fileApi: FileApi = { open: host.openFile, reveal: host.revealFile, resolve: host.resolveFile, register: host.registerPath };
 
