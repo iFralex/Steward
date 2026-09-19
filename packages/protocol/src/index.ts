@@ -198,7 +198,10 @@ export interface ActionCenterItem {
 }
 
 export interface ActionCenterDiagnostics {
+  /** Backward-compatible alias for countsTotal. */
   counts: Record<ActionStatus, number>;
+  countsTotal: Record<ActionStatus, number>;
+  countsVisible: Record<ActionStatus, number>;
   byKind: Record<string, number>;
   staleNew: number;
   nextDueAt: number | null;

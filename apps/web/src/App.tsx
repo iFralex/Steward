@@ -139,7 +139,7 @@ function App() {
     host.actionCenter?.items.find((a) => a.id === selectedActionId)
     ?? host.actionCenter?.items[0]
     ?? null;
-  const newActionCount = host.actionCenter?.diagnostics?.counts.new ?? 0;
+  const newActionCount = host.actionCenter?.diagnostics?.countsVisible.new ?? 0;
 
   // Mobile derives content from the tab stack; desktop from pane.
   const shown: Pane = isDesktop

@@ -164,7 +164,9 @@ export function loadActionCenterState(opts: { includeDone?: boolean; hideExpired
   try {
     const items = store.list({ includeDone: opts.includeDone, hideExpired: opts.hideExpired, limit: opts.limit ?? 50 }) as ActionCenterItem[];
     const all = store.list({ includeDone: true, limit: 1000 }) as ActionCenterItem[];
-    return { items, diagnostics: diagnostics(store, all) };
+    const countsTotal = store.counts();
+    const countsVisible = store.counts({ includeDone: opts.includeDone, hideExpired: opts.hideExpired });
+    return { items, diagnostics: diagnostics(store, all, countsTotal, countsVisible) };
   } finally {
     store.close();
   }
@@ -506,7 +508,12 @@ export function normalizeStep(raw: unknown): ProposedStep | null {
   };
 }
 
-function diagnostics(store: ActionStore, all: ActionCenterItem[]): ActionCenterDiagnostics {
+function diagnostics(
+  store: ActionStore,
+  all: ActionCenterItem[],
+  countsTotal: ActionCenterDiagnostics["countsTotal"],
+  countsVisible: ActionCenterDiagnostics["countsVisible"],
+): ActionCenterDiagnostics {
   const byKind: Record<string, number> = {};
   for (const item of all) byKind[item.kind] = (byKind[item.kind] ?? 0) + 1;
   const now = Math.floor(Date.now() / 1000);
@@ -515,7 +522,9 @@ function diagnostics(store: ActionStore, all: ActionCenterItem[]): ActionCenterD
   const lastUpdatedAt = all.map((a) => a.updatedAt).sort((a, b) => b - a)[0] ?? null;
   const lastScan = store.getMeta<{ result?: { mail?: { deferredReasons?: Record<string, number> } } }>("lastScan");
   return {
-    counts: store.counts(),
+    counts: countsTotal,
+    countsTotal,
+    countsVisible,
     byKind,
     staleNew: active.filter((a) => a.status === "new" && now - a.updatedAt > 3 * 86400).length,
     nextDueAt,

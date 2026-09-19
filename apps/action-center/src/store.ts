@@ -244,8 +244,16 @@ export class ActionStore {
     return rows.map(rowToAction);
   }
 
-  counts(): Record<ActionStatus, number> {
-    const rows = this.raw.prepare("SELECT status, count(*) AS cnt FROM actions GROUP BY status").all() as
+  counts(opts: { includeDone?: boolean; hideExpired?: boolean } = {}): Record<ActionStatus, number> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (!opts.includeDone && Object.keys(opts).length > 0) conditions.push("status IN ('new','read')");
+    if (opts.hideExpired) {
+      conditions.push("(due_at IS NULL OR due_at >= ?)");
+      params.push(Math.floor(Date.now() / 1000));
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const rows = this.raw.prepare(`SELECT status, count(*) AS cnt FROM actions ${where} GROUP BY status`).all(...params) as
       { status: ActionStatus; cnt: number }[];
     return { new: 0, read: 0, done: 0, dismissed: 0, ...Object.fromEntries(rows.map((r) => [r.status, r.cnt])) };
   }

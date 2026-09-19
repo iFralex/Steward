@@ -52,7 +52,7 @@ export function UnifiedSidebar({
   onOpenSystem: () => void;
 }) {
   const { t } = useTranslation();
-  const newCount = diagnostics?.counts.new ?? 0;
+  const newCount = diagnostics?.countsVisible.new ?? 0;
   return (
     <div className="flex h-full flex-col">
       {/* Tabs: desktop only — on mobile the bottom nav selects the tab. */}
@@ -241,7 +241,7 @@ function ActionList({
       <div className="text-muted-foreground flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
         <span className="truncate tabular-nums">
           {t("sidebar.actionList.diagnostics", {
-            new: diagnostics?.counts.new ?? 0,
+            new: diagnostics?.countsVisible.new ?? 0,
             stale: diagnostics?.staleNew ?? 0,
             next: diagnostics?.nextDueAt ? formatWhen(diagnostics.nextDueAt) : "—",
           })}
@@ -258,7 +258,9 @@ function ActionList({
               <div className="grid grid-cols-4 gap-2 text-center text-xs">
                 {(["new", "read", "done", "dismissed"] as const).map((key) => (
                   <div key={key} className="bg-muted rounded-md p-2">
-                    <div className="font-semibold">{diagnostics?.counts[key] ?? 0}</div>
+                    <div className="font-semibold">
+                      {countLabel(diagnostics?.countsVisible[key] ?? 0, diagnostics?.countsTotal[key] ?? 0)}
+                    </div>
                     <div className="text-muted-foreground">{t(`sidebar.actionList.status.${key}`)}</div>
                   </div>
                 ))}
@@ -307,4 +309,8 @@ function ActionList({
       </div>
     </div>
   );
+}
+
+function countLabel(visible: number, total: number): string {
+  return visible === total ? String(total) : `${visible}/${total}`;
 }

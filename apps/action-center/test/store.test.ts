@@ -189,6 +189,10 @@ test("list({hideExpired}) omits past due items but keeps future and undated acti
   assert.deepEqual(new Set(s.list().map((item) => item.id)), new Set([expired.id, future.id, undated.id]));
   assert.deepEqual(new Set(s.list({ hideExpired: true }).map((item) => item.id)), new Set([future.id, undated.id]));
   assert.deepEqual(s.list({ hideExpired: true, status: "new", kind: "deadline" }).map((item) => item.id), [future.id]);
+  assert.deepEqual(s.counts({ hideExpired: true }), { new: 2, read: 0, done: 0, dismissed: 0 });
+  s.mark(undated.id, "done");
+  assert.deepEqual(s.counts({ hideExpired: true }), { new: 1, read: 0, done: 0, dismissed: 0 });
+  assert.deepEqual(s.counts({ includeDone: true, hideExpired: true }), { new: 1, read: 0, done: 1, dismissed: 0 });
   s.close();
 });
 
