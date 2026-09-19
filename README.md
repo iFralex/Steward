@@ -142,13 +142,15 @@ The scheduler scans recent mail and creates action items such as:
 - calendar proposals;
 - items that should be reviewed or dismissed.
 
-Each item stores the source thread, summary, status, proposed steps and diagnostics. The web UI shows open items by default and offers independent flags for including completed/dismissed items and hiding items whose `dueAt` is already past; undated items remain visible. Filtering is performed in SQLite before the result limit. Selecting an item marks it read, opens the detail pane, and lets the agent refine or execute the proposal through the same approval flow used in chat.
+Each item stores the source thread, summary, status, proposed steps and diagnostics. The web UI shows open items by default and offers independent flags for including completed/dismissed items and hiding items whose `dueAt` is already past; undated items remain visible. Both flags persist in browser `localStorage` (`steward.actions.showDone` and `steward.actions.hideExpired`) and are reapplied on the first connection and every reconnect. Filtering is performed in SQLite before the result limit. Action state exposes both `countsTotal` and filter-aware `countsVisible`; the legacy `counts` field remains an alias for totals. Badges use the visible count, while status cards show `visible/total` when the values differ. Selecting an item marks it read, opens the detail pane, and lets the agent refine or execute the proposal through the same approval flow used in chat.
+
+The `list_actions` MCP tool returns compact summaries unless `includePayload` is explicitly requested. Its JSON schema declares a range of 1–100 items, and `ActionStore.list()` independently clamps direct callers to the same hard maximum. This defence in depth prevents a model—or another internal caller—from materializing thousands of large context snapshots in memory or in the agent context. Full detail for one item remains available through `read_action`.
 
 Steward also supports explicit, reusable **flows** for personal procedures that the model could not reliably infer on its own. Ask in chat to create a flow from the steps you just described; Steward presents a dedicated approval card where you can edit its name, triggering situation, guidance and exclusions before saving it. Flows are never learned silently and never execute writes automatically. They can be listed, searched, updated, disabled or deleted through the Action Center tools.
 
 Action generation can be disabled from the System page without stopping the rest of Steward. While disabled, incoming mail and calendar changes do not create Action items. Re-enabling establishes a fresh cutoff: only items ingested or modified from that moment onward are eligible, so the disabled-period backlog is not replayed unexpectedly.
 
-The Action Center sends Web Push notifications to paired phones when a new Action is created, in addition to notifications associated with chat responses and pending approvals. Notifications can open the relevant Action directly.
+The Action Center sends Web Push notifications to paired phones when a new Action is created, in addition to notifications associated with chat responses and pending approvals. Notifications can open the relevant Action directly. A notification is marked dispatched only when no subscription exists or at least one registered endpoint accepts it; if all endpoints fail, the Action remains eligible for a later retry. Expired subscriptions returning HTTP 404/410 are pruned without treating successful deliveries to other devices as failures.
 
 ![Opening an Action Center item in chat, ready to refine or execute its proposal](docs/images/action-center-open-in-chat.png)
 
@@ -272,7 +274,7 @@ repository's `.env.example` shows the Italian setting. The macOS bundle includes
 the Whisper runtime and model; the launcher passes the configured language to
 `whisper.cpp` with `-l`.
 
-There is also a `/quick-send` path for shortcuts such as an iPhone Action Button. It can send text or audio into a headless chat runner. Gated writes still require approval; unattended sensitive actions time out rather than silently executing.
+There is also a `/quick-send` path for shortcuts such as an iPhone Action Button. It can send text or audio into a headless chat runner. Gated writes still require approval; unattended sensitive actions time out rather than silently executing. The underlying `ChatManager.runTurn()` returns a discriminated result: success includes the persisted assistant `messageId` and text, while failure includes the error and whether generation was aborted. The WebSocket UI continues to stream events, but Quick Send can now decide whether to send a reply or failure notification without searching the chat transcript and guessing whether the turn succeeded.
 
 ### Live Trains And Event Monitors
 
@@ -350,6 +352,7 @@ Steward keeps a redacted, queryable audit log of what happened across chat, tool
 - Action Center item creation, execution and revision, including background items created by the scheduler;
 - Action Center background reads, approval-preview lookups, flow provenance,
   proposal-notification dispatch and direct tool execution;
+- Quick Send creation, structured turn failures and notification dispatch;
 - watch creation, stopping, expiry, completion, polling failures, queued events,
   notification generation, retries, fallback and final delivery;
 - mail-to-wiki promotion writes;
@@ -441,6 +444,20 @@ sequenceDiagram
 
 Each chat has its own Pi session and permission-gate context, so an approval is routed back to the chat that requested it. `packages/mcp-bridge` converts MCP tools into Pi tools named `mcp__<server>__<tool>`. The host wraps every tool before it reaches the agent; the model never receives a direct handle to AppleScript, SQLite or the filesystem.
 
+`ChatManager.runTurn()` serializes work per chat and returns `TurnResult` after
+the normal transcript, audit, usage and status cleanup has completed:
+
+```ts
+type TurnResult =
+  | { ok: true; messageId: string | null; text: string }
+  | { ok: false; error: string; aborted: boolean; messageId: string | null; text: string };
+```
+
+Agent setup failures, missing/deleted chats, closed sessions, model errors and
+user aborts therefore have explicit outcomes. Channel clients still rely on
+streaming protocol events for live rendering; headless callers use the return
+value for control flow.
+
 The UI receives protocol events rather than provider-specific objects. Messages, tool starts/results/errors, questions, approval requests and Action Center state therefore remain portable across the browser, installed PWA, native WebKit window and future clients.
 
 ### Live Train Lookup And Refresh
@@ -512,6 +529,8 @@ sequenceDiagram
     participant Engine as WatchEngine
     participant Adapter as Source Adapter
     participant DB as watches.db
+    participant Host as Host Delivery Loop
+    participant Composer as Stateless LLM Composer
     participant Push as Web Push
 
     User->>Agent: Notify me at these milestones
@@ -529,10 +548,12 @@ sequenceDiagram
         Engine->>DB: INSERT OR IGNORE durable pending event
         Engine->>DB: save current snapshot / terminal status
     end
-    Engine->>Agent: user instruction + rule + structured event
-    Agent-->>DB: accessible notification in originating chat
-    Agent->>Push: notification tagged with watch/event IDs
-    Engine->>DB: mark event delivered
+    Host->>DB: load oldest pending events
+    Host->>Composer: user instruction + rule + structured event
+    Composer-->>Host: short accessible notification
+    Host->>DB: persist notification in originating chat and event row
+    Host->>Push: notification tagged with watch/event IDs
+    Host->>DB: mark event delivered
 ```
 
 The host runs the combined poll-and-delivery loop immediately at startup and
@@ -545,15 +566,24 @@ turn in flight, so an automatic prompt cannot be interleaved with a user turn.
 
 The notification prompt preserves the user's original instruction, identifies
 the matched rule and treats event fields as data rather than instructions. It
-forbids writes, asks for one Italian message of at most 180 characters and
-requires explicit platform confidence. The push body is capped at 240
-characters. On generation failure the event remains pending; after two failed
-delivery attempts, the third pass uses the adapter's deterministic
-`fallbackText`. If every registered push endpoint fails, the durable event is
-retried; its already composed notification text is stored and reused so the
-retry neither calls the LLM again nor duplicates the chat message. Delivery is
-complete when the chat copy exists and either no push endpoint is registered or
-at least one endpoint accepts the notification.
+forbids actions and tool calls and requests one spoken-friendly message of at
+most 180 characters in the configured notification language (`it`, otherwise
+`en`). The generic prompt contains no train policy: an adapter may attach
+localized titles and trusted domain guidance to its `DomainEvent`; the train
+adapter supplies the platform-confidence and last-update rules. The composer
+is a direct, stateless gateway completion attributed to
+`host / watch-notification`. It has no Pi session, transcript memory or tools,
+so it cannot concurrently open or mutate the originating chat's session file.
+
+The push body is capped at 240 characters. On generation failure the event
+remains pending; after two failed composition attempts, the third pass uses the
+adapter's deterministic `fallbackText`. If every registered push endpoint
+fails, the durable event is retried; its already composed notification text is
+stored in `watch_events.notification_text` and reused so the retry neither
+calls the LLM again nor duplicates the chat message. Per-send reports track
+attempted, delivered, failed and pruned subscriptions. Delivery is complete
+when the chat copy exists and either no push endpoint is registered or at least
+one endpoint accepts the notification.
 The internal structured prompt is not stored as a user-authored chat message;
 only the accessible notification is added to the transcript. Audit events use
 the watch ID as their correlation ID, while the LLM call, source polling and
@@ -1077,7 +1107,7 @@ four source-neutral contracts:
 |---|---|
 | `WatchDefinition` | `source`, opaque `resourceRef`, one or more rules, original user `instruction`, originating `chatId`, and optional expiry. |
 | `WatchRule` | Unique rule `id`, exact semantic event name, optional equality filters in `where`, and optional `once`. |
-| `DomainEvent` | Stable resource-relative `key`, semantic `type`, timestamp, structured `data`, previous/current state and deterministic `fallbackText`. |
+| `DomainEvent` | Stable resource-relative `key`, semantic `type`, timestamp, structured `data`, previous/current state, deterministic `fallbackText`, and optional localized notification title/domain guidance. |
 | `WatchAdapter` | A source name plus `snapshot`, `events`, `defaultExpiry` and `isTerminal` implementations. |
 
 A representative train watch is data, not new scheduler code:
@@ -1171,6 +1201,10 @@ The tool schema, SQLite queue, rule matcher, LLM handoff, Web Push delivery and
 stop lifecycle remain unchanged. A good adapter must keep snapshots
 serializable, make events deterministic from `(previous,current)`, provide
 truthful fallback text, define a bounded expiry and identify terminal state.
+Domain-specific wording belongs in `DomainEvent.notification`, not in the
+generic delivery service; titles and guidance can be keyed by notification
+language, while a plain guidance string remains valid for language-neutral
+rules.
 
 ### LLM Gateway Request Lifecycle
 
@@ -1259,6 +1293,7 @@ Local-first does not mean unbounded. Several limits keep cold starts, model cont
 | Unranked mail browse | 500-row window; final API limit max 100 | Supports sorting/pagination without materializing the entire archive. |
 | Action-planner mail page | Up to 6 compact results; threads and large bodies expose continuation offsets | Avoids full-message context by default. |
 | Action-planner calendar/contact/wiki pages | Up to 10 events, 8 contacts and 5 wiki results; wiki file pages max 5,000 characters | Keeps read-tool context proportional to the decision while allowing explicit continuation. |
+| Action Center list | `list_actions` defaults to 20 and is capped at 100 in both MCP schema and SQLite store; full payloads are opt-in | Prevents large context snapshots from producing unbounded memory or model-context growth. |
 | Mail embedding input | First 2,000 characters by default | Bounds embedding cost and latency while retaining subject and leading body context. |
 | Embedding batches | 32 by default, with per-item recovery | Amortizes gateway overhead without allowing one input to poison the queue. |
 | Mail promotion | Thread hashes plus worker pool, concurrency 8 by default | Avoids unchanged work and overlaps I/O-bound model/wiki requests. |
@@ -1429,8 +1464,8 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 
 | Path | Purpose |
 |---|---|
-| [apps/web](apps/web/) | React + Vite + PWA UI. Provides chat, chat list, mobile layout, Action Center, approval/question cards, tool cards, rich cards, file uploads/chips, audio recording, Usage page, Audit page, System page, phone pairing, notification controls and service worker. |
-| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket sessions, runs Pi agent sessions, loads MCP tools, applies the tool policy, stores chats, records usage, handles approvals/questions, serves tokenized files, registers uploaded/local files, manages auth/pairing, push, speech transcription, system status and the audit ledger. |
+| [apps/web](apps/web/) | React + Vite + PWA UI. Provides chat, chat list, mobile layout, Action Center with persistent filters and visible/total diagnostics, approval/question cards, tool cards, rich cards, file uploads/chips, audio recording, Usage page, Audit page, System page, phone pairing, notification controls and service worker. |
+| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket sessions, returns structured headless-turn results, runs Pi agent sessions and stateless watch notification completions, loads MCP tools, applies the tool policy, stores chats, records usage, handles approvals/questions, serves tokenized files, registers uploaded/local files, manages auth/pairing, push, speech transcription, system status and the audit ledger. |
 | [packages/protocol](packages/protocol/) | Dependency-free event contract between host and clients. Keeps chat, approvals, questions, tool calls, files and Action Center state portable across future clients. |
 | [packages/mcp-bridge](packages/mcp-bridge/) | Converts stdio MCP servers into Pi custom tools named like `mcp__server__tool`. |
 | [apps/llm-gateway](apps/llm-gateway/) | Local OpenAI-compatible gateway on `:4000`. Provides `tier-1` through `tier-6`, `local-embed`, `/rates`, `/health`, `/v1/models`, chat completions and embeddings. Routes to Ollama and DeepSeek by default. |
@@ -1438,7 +1473,7 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 | [apps/mail-mirror](apps/mail-mirror/) | Local SQLite mirror of Apple Mail. Handles backfill, watch, reconcile, embeddings, thread resolution, mailbox roles, partial-message fallback and attachment blobs. |
 | [apps/mail-mcp](apps/mail-mcp/) | Mail MCP connector. Searches, reads, resolves threads, opens mail URLs, saves attachments and performs approved send/reply/scheduled-send through AppleScript and write journaling. |
 | [apps/mail-promoter](apps/mail-promoter/) | Mail-to-wiki pipeline. Triage, distillation, note generation, selected attachment sync and promotion state. |
-| [apps/action-center](apps/action-center/) | Scans recent mail into actionable items with LLM-prepared proposals. Exposes CLI and MCP surfaces and persists status in SQLite. |
+| [apps/action-center](apps/action-center/) | Scans recent mail into actionable items with LLM-prepared proposals. Exposes bounded CLI/MCP list and detail surfaces, filter-aware counts, and persists status in SQLite. |
 | [apps/calendar-mcp](apps/calendar-mcp/) | Calendar connector. Reads Calendar data, builds hybrid search index and performs approved event writes through AppleScript/write-ops. |
 | [apps/contacts-mcp](apps/contacts-mcp/) | Contacts connector. Reads AddressBook data, deduplicates, labels, indexes and resolves recipients. |
 | [apps/shell-mcp](apps/shell-mcp/) | Safe shell/files connector. Finds files, runs constrained read-only commands, and gates write commands. |
