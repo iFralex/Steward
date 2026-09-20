@@ -195,10 +195,25 @@
     },
     "servicesLoading": "Loading service status...",
     "serviceNoDetail": "No detail",
+    "tools": {
+      "title": "Tool inventory",
+      "description": "Every MCP and host-native tool, including approval policy, scope and recorded usage.",
+      "available": "{{count}} available",
+      "calls": "{{count}} recorded calls",
+      "errors": "{{count}} errors",
+      "show": "Show {{count}} tools",
+      "usage": "{{calls}} calls · {{errors}} errors",
+      "lastUsed": "Last: {{time}} · {{outcome}}",
+      "succeeded": "succeeded",
+      "failed": "failed",
+      "decisions": { "allow": "automatic", "gate": "approval", "deny": "blocked", "interactive": "interactive" },
+      "scopes": { "chat": "chat", "call": "call", "watch": "watch", "all": "all channels" }
+    },
     "lastUpdated": "Last updated: {{time}}.",
     "language": {
       "title": "Language",
-      "description": "Choose the app language."
+      "description": "Choose the app language.",
+      "syncError": "The app changed language, but the host could not save it."
     }
   },
   "usage": {

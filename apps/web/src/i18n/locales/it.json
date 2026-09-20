@@ -195,10 +195,25 @@
     },
     "servicesLoading": "Caricamento stato servizi...",
     "serviceNoDetail": "Nessun dettaglio",
+    "tools": {
+      "title": "Inventario tool",
+      "description": "Tutti i tool MCP e nativi dell’host, con policy di approvazione, ambito e utilizzo registrato.",
+      "available": "{{count}} disponibili",
+      "calls": "{{count}} chiamate registrate",
+      "errors": "{{count}} errori",
+      "show": "Mostra {{count}} tool",
+      "usage": "{{calls}} chiamate · {{errors}} errori",
+      "lastUsed": "Ultimo: {{time}} · {{outcome}}",
+      "succeeded": "riuscito",
+      "failed": "fallito",
+      "decisions": { "allow": "automatico", "gate": "approvazione", "deny": "bloccato", "interactive": "interattivo" },
+      "scopes": { "chat": "chat", "call": "chiamata", "watch": "watcher", "all": "tutti i canali" }
+    },
     "lastUpdated": "Ultimo aggiornamento: {{time}}.",
     "language": {
       "title": "Lingua",
-      "description": "Scegli la lingua dell'app."
+      "description": "Scegli la lingua dell'app.",
+      "syncError": "La lingua dell’app è cambiata, ma l’host non è riuscito a salvarla."
     }
   },
   "usage": {

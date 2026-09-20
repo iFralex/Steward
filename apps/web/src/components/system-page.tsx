@@ -20,6 +20,7 @@ interface SystemServiceStatus {
   detail?: string;
   checks?: SystemServiceCheck[];
   tools?: number;
+  toolDetails?: SystemToolStatus[];
   updatedAt: number;
 }
 
@@ -27,6 +28,19 @@ interface SystemServiceCheck {
   name: string;
   ok: boolean;
   detail?: string;
+  verified?: boolean;
+}
+
+interface SystemToolStatus {
+  name: string;
+  qualifiedName: string;
+  source: string;
+  decision: "allow" | "gate" | "deny" | "interactive";
+  scope: "chat" | "call" | "watch" | "all";
+  calls: number;
+  errors: number;
+  lastUsedAt?: number;
+  lastOk?: boolean;
 }
 
 interface AutostartStatus {
@@ -43,6 +57,7 @@ interface SystemStatus {
   bundled: boolean;
   autostart: AutostartStatus;
   services: SystemServiceStatus[];
+  toolTotals: { available: number; used: number; errors: number };
 }
 
 interface ActionAutomationSettings {
@@ -453,6 +468,20 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
         </CardContent>
       </Card>
 
+      {status && (
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle>{t("system.tools.title")}</CardTitle>
+            <CardDescription>{t("system.tools.description")}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2 text-sm">
+            <Badge variant="outline">{t("system.tools.available", { count: status.toolTotals.available })}</Badge>
+            <Badge variant="outline">{t("system.tools.calls", { count: status.toolTotals.used })}</Badge>
+            <Badge variant={status.toolTotals.errors ? "destructive" : "outline"}>{t("system.tools.errors", { count: status.toolTotals.errors })}</Badge>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {(status?.services ?? []).map((service) => (
           <ServiceRow key={service.id} service={service} />
@@ -521,14 +550,16 @@ function ActionsAutomationCard({
  *  itself doesn't depend on the host being reachable. */
 function LanguageCard({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const { t, i18n: i18nInstance } = useTranslation();
+  const [syncError, setSyncError] = useState(false);
   const current = i18nInstance.language === "it" ? "it" : "en";
   const setLang = (lang: Lang) => {
     void i18n.changeLanguage(lang);
+    setSyncError(false);
     void authFetch(`${httpBase}/settings/user-lang`, token, onUnauthorized, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ lang }),
-    }).catch(() => { /* best-effort — UI language switch doesn't depend on the host */ });
+    }).then((response) => { if (!response.ok) setSyncError(true); }).catch(() => setSyncError(true));
   };
   return (
     <Card size="sm">
@@ -546,6 +577,7 @@ function LanguageCard({ httpBase, token, onUnauthorized }: { httpBase: string; t
         <Button size="sm" variant={current === "it" ? "default" : "outline"} onClick={() => setLang("it")}>
           Italiano
         </Button>
+        {syncError && <span className="text-destructive self-center text-xs">{t("system.language.syncError")}</span>}
       </CardContent>
     </Card>
   );
@@ -650,8 +682,8 @@ function ServiceRow({ service }: { service: SystemServiceStatus }) {
       <CardHeader className="grid-cols-[auto_1fr_auto]">
         <StateIcon state={service.state} />
         <div className="min-w-0">
-          <CardTitle className="truncate">{service.label}</CardTitle>
-          <CardDescription className="truncate">{service.detail ?? t("system.serviceNoDetail")}</CardDescription>
+          <CardTitle className="break-words">{service.label}</CardTitle>
+          <CardDescription className="break-words">{service.detail ?? t("system.serviceNoDetail")}</CardDescription>
         </div>
         <Badge variant={badgeVariant(service.state)}>{service.state}</Badge>
       </CardHeader>
@@ -659,15 +691,45 @@ function ServiceRow({ service }: { service: SystemServiceStatus }) {
         <CardContent className="space-y-1.5 pt-0">
           {service.checks.map((check) => (
             <div key={check.name} className="flex items-center gap-2 text-xs">
-              {check.ok ? (
+              {check.verified === false ? (
+                <AlertTriangle className="text-muted-foreground size-3.5 shrink-0" />
+              ) : check.ok ? (
                 <CheckCircle2 className="text-emerald-600 size-3.5 shrink-0" />
               ) : (
                 <XCircle className="text-destructive size-3.5 shrink-0" />
               )}
-              <span className="min-w-0 flex-1 truncate">{check.name}</span>
-              {check.detail && <span className="text-muted-foreground max-w-[45%] truncate text-right">{check.detail}</span>}
+              <span className="min-w-0 flex-1 break-words">{check.name}</span>
+              {check.detail && <span className="text-muted-foreground max-w-[60%] break-words text-right">{check.detail}</span>}
             </div>
           ))}
+        </CardContent>
+      )}
+      {service.toolDetails && service.toolDetails.length > 0 && (
+        <CardContent className="pt-0">
+          <details className="text-xs">
+            <summary className="text-muted-foreground cursor-pointer select-none">
+              {t("system.tools.show", { count: service.toolDetails.length })}
+            </summary>
+            <div className="mt-2 space-y-2 border-t pt-2">
+              {service.toolDetails.map((tool) => (
+                <div key={tool.qualifiedName} className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <code className="min-w-0 flex-1 break-all">{tool.name}</code>
+                    <Badge variant={tool.decision === "deny" ? "destructive" : tool.decision === "gate" ? "secondary" : "outline"}>
+                      {t(`system.tools.decisions.${tool.decision}`)}
+                    </Badge>
+                    <Badge variant="outline">{t(`system.tools.scopes.${tool.scope}`)}</Badge>
+                  </div>
+                  <div className="text-muted-foreground">{t("system.tools.usage", { calls: tool.calls, errors: tool.errors })}</div>
+                  {tool.lastUsedAt && (
+                    <div className={tool.lastOk === false ? "text-destructive" : "text-muted-foreground"}>
+                      {t("system.tools.lastUsed", { time: new Date(tool.lastUsedAt).toLocaleString(currentLocale()), outcome: tool.lastOk === false ? t("system.tools.failed") : t("system.tools.succeeded") })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </details>
         </CardContent>
       )}
     </Card>
