@@ -126,9 +126,10 @@ approve those operations in the app.
 
 A watch event resumes the persisted agent session of its originating chat. A
 normal `create_watch` remains read-only. When the user explicitly asks for a
-future call, the agent uses gated `create_agent_watch` with
-`authorizedTools: ["mcp__voice__call_start"]`; approving it grants exactly that
-future dialing capability for the watch.
+future call, the agent uses gated `create_agent_watch` and places a
+`mcp__voice__call_start` grant only on the relevant one-shot rule. Approving it
+grants exactly that future dialing capability for that rule, not for the whole
+watch. Multiple rules matching the same event are combined into one turn.
 
 At the matching event the agent receives the structured event and resource
 reference, can refresh live facts with read-only tools such as `train_status`,

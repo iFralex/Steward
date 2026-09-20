@@ -315,19 +315,24 @@ allowed because they only observe or reduce background work. A source adapter
 turns snapshot changes into domain events, and matching events are placed in a
 durable SQLite queue. The event resumes the persisted agent session of the
 originating chat, where the agent can use read-only tools to refresh facts.
-`create_agent_watch` additionally stores a narrow list of future tools
-explicitly authorized by the user and therefore requires the normal approval
-gate. Currently the only supported authorization is
-`mcp__voice__call_start`: it lets the resumed agent call through Ringback and
-continue the same conversation while retaining train tools and chat history.
-If generation or calling fails, a deterministic fallback push is delivered.
+`create_agent_watch` adds narrowly constrained grants to individual rules and
+therefore requires the normal approval gate. A voice grant lets that one rule
+call through Ringback. A mail grant fixes the recipient list, subject and body
+template in advance; the runtime rejects additions or changes (including CC,
+BCC, attachments and delayed send) and durably claims the action before it
+runs. Both paths resume the same conversation with its read-only train,
+calendar, mail and memory tools available. If generation or calling fails, a
+deterministic fallback push is delivered.
 
 The train adapter currently emits platform announcement/confirmation/change,
 departure, arrival, cancellation, delay change and per-stop arrival/departure
 events. For stop rules, `positionRelativeToDestination: -1` means the stop
 immediately before the requested destination and `0` means the destination
-itself. Rules can be one-shot, watches expire automatically after the journey,
-and event keys prevent duplicate delivery across restarts. Future domains can
+itself. A generic `before_time` trigger can fire relative to a live timestamp,
+such as 30 minutes before `estimatedArrivalMs`; a moving train ETA therefore
+moves the deadline until the rule fires. Rules can be one-shot, watches expire
+automatically after the journey, and event keys prevent duplicate delivery
+across restarts. Future domains can
 reuse the engine by registering another adapter rather than adding another
 train-specific scheduler.
 
@@ -584,7 +589,10 @@ sent to the same persisted Pi session but is not rendered as a new user-authored
 message; assistant and tool messages are appended normally. A process-wide
 running-chat check defers the event while an interactive turn is active. The
 background policy is deny-by-default: normal watches get read-only tools, while
-an agent watch receives only the tool approved when it was created.
+an agent watch receives the union of grants on the rules matched by this event.
+All rules matching one domain event are aggregated into one agent turn. Thus an
+“every stop” notification and a “call at the penultimate stop” rule do not
+produce duplicate messages; the call is the delivery for that stop.
 
 The push body is capped at 240 characters. On generation failure the event
 remains pending; after two failed agent attempts, the third pass uses the
@@ -970,7 +978,7 @@ Every Pi tool definition is wrapped by the host before being exposed to the agen
 - `gate` — emit an approval request and wait;
 - `deny` — return a blocked result without asking.
 
-The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic read-only watch creation and stopping are automatic. `create_agent_watch` is gated because it can grant one narrowly validated tool to a future event turn; currently only Ringback dialing is accepted. Other write tools fall through to the gated default. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
+The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic read-only watch creation and stopping are automatic. `create_agent_watch` is gated because a rule can grant one future Ringback call or one exact Apple Mail send. At execution time the headless policy enables only the granted tool, a second deterministic guard checks the exact email arguments, and a durable claim prevents retries from sending it twice. Other write tools remain denied. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
 
 ### Approval Lifecycle
 
@@ -1118,8 +1126,8 @@ four source-neutral contracts:
 
 | Contract | Required meaning |
 |---|---|
-| `WatchDefinition` | `source`, opaque `resourceRef`, rules, original user `instruction`, originating `chatId`, optional expiry, and optional gated `authorizedTools`. |
-| `WatchRule` | Unique rule `id`, exact semantic event name, optional equality filters in `where`, and optional `once`. |
+| `WatchDefinition` | `source`, opaque `resourceRef`, rules, original user `instruction`, originating `chatId`, and optional expiry. |
+| `WatchRule` | Unique rule `id`; exactly one semantic `event` or temporal `trigger`; optional equality filters, `once`, and rule-scoped tool grants. |
 | `DomainEvent` | Stable resource-relative `key`, semantic `type`, timestamp, structured `data`, previous/current state, deterministic `fallbackText`, and optional localized notification title/domain guidance. |
 | `WatchAdapter` | A source name plus `snapshot`, `events`, `defaultExpiry` and `isTerminal` implementations. |
 
@@ -1129,25 +1137,46 @@ A representative train watch is data, not new scheduler code:
 {
   "source": "train",
   "resourceRef": "vt1_...",
-  "instruction": "Avvisami in modo breve quando devo prepararmi e scendere",
-  "authorizedTools": ["mcp__voice__call_start"],
+  "instruction": "Avvisami a ogni fermata, scrivi a mia sorella 30 minuti prima e chiamami alle ultime due fermate",
   "rules": [
-    { "id": "departed", "event": "train.departed", "once": true },
+    { "id": "every-stop", "event": "train.stop_arrived" },
+    {
+      "id": "mail-30m",
+      "trigger": { "kind": "before_time", "field": "estimatedArrivalMs", "minutes": 30 },
+      "once": true,
+      "grants": [{
+        "tool": "mcp__mail__send_email",
+        "maxInvocations": 1,
+        "constraints": {
+          "to": ["sorella@example.com"],
+          "subject": "Sto arrivando",
+          "bodyTemplate": "Sto arrivando a {{destination}} alle {{estimatedArrival}}."
+        }
+      }]
+    },
     {
       "id": "prepare",
       "event": "train.stop_arrived",
       "where": { "positionRelativeToDestination": -1 },
-      "once": true
+      "once": true,
+      "grants": [{ "tool": "mcp__voice__call_start", "maxInvocations": 1 }]
     },
     {
       "id": "get-off",
       "event": "train.stop_arrived",
       "where": { "positionRelativeToDestination": 0 },
-      "once": true
+      "once": true,
+      "grants": [{ "tool": "mcp__voice__call_start", "maxInvocations": 1 }]
     }
   ]
 }
 ```
+
+The host must be awake and connected while the watch is active. If it resumes
+only after a temporal target has already passed, Steward deliberately does not
+send a stale “30 minutes before” email. Ringback also remains subject to the
+active network's SIP reachability; the watch's persisted fallback still avoids
+an automatic redial after a crash.
 
 Rule matching first requires an exact event type. Every `where` entry is then
 compared for deep equality against `event.data`; dot-separated keys can address
