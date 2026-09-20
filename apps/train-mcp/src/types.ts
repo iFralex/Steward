@@ -30,6 +30,7 @@ export interface TrainSnapshot {
   estimatedDeparture?: string;
   scheduledArrival?: string;
   estimatedArrival?: string;
+  estimatedArrivalMs?: number;
   scheduledDepartureMs?: number;
   scheduledArrivalMs?: number;
   delayMinutes: number;

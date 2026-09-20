@@ -141,6 +141,7 @@ function normalizeStatus(raw: Record<string, unknown>, ref: TrainRefData, depart
       estimatedDeparture: formatRome(actualDepartureMs ?? addMinutes(scheduledDepartureMs, delayMinutes)),
       scheduledArrival: formatRome(scheduledArrivalMs),
       estimatedArrival: formatRome(actualArrivalMs ?? addMinutes(scheduledArrivalMs, delayMinutes)),
+      estimatedArrivalMs: actualArrivalMs ?? addMinutes(scheduledArrivalMs, delayMinutes),
       scheduledDepartureMs, scheduledArrivalMs,
       delayMinutes, platform: actualPlatform ?? scheduledPlatform, scheduledPlatform, actualPlatform, platformStatus,
       cancelled, departed, arrived,

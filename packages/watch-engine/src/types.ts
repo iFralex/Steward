@@ -1,8 +1,28 @@
+export interface WatchMailGrantConstraints {
+  to: string[];
+  subject: string;
+  bodyTemplate: string;
+}
+
+export type WatchToolGrant =
+  | { tool: "mcp__voice__call_start"; maxInvocations?: 1 }
+  | { tool: "mcp__mail__send_email"; maxInvocations?: 1; constraints: WatchMailGrantConstraints };
+
+export interface WatchTemporalTrigger {
+  kind: "before_time";
+  /** Dot path in the current resource snapshot, for example estimatedArrivalMs. */
+  field: string;
+  minutes: number;
+}
+
 export interface WatchRule {
   id: string;
-  event: string;
+  event?: string;
+  trigger?: WatchTemporalTrigger;
   where?: Record<string, unknown>;
   once?: boolean;
+  /** Capabilities explicitly approved for turns caused by this rule only. */
+  grants?: WatchToolGrant[];
 }
 
 export interface WatchDefinition {
@@ -11,7 +31,7 @@ export interface WatchDefinition {
   rules: WatchRule[];
   instruction: string;
   chatId: string;
-  /** Tools the user explicitly pre-authorized for the future agent turn. */
+  /** @deprecated Compatibility with watches created before rule-scoped grants. */
   authorizedTools?: string[];
   expiresAt?: number;
 }
@@ -50,8 +70,7 @@ export interface PendingWatchEvent {
   chatId: string;
   instruction: string;
   resourceRef: string;
-  authorizedTools: string[];
-  rule: WatchRule;
+  rules: WatchRule[];
   event: DomainEvent;
   attempts: number;
   notificationText?: string;
@@ -71,7 +90,7 @@ export interface WatchEngineObserver {
   watchCreated?(watch: WatchRecord): void;
   watchStopped?(watch: WatchRecord): void;
   watchExpired?(watch: WatchRecord): void;
-  eventQueued?(watch: WatchRecord, rule: WatchRule, event: DomainEvent): void;
+  eventQueued?(watch: WatchRecord, rules: WatchRule[], event: DomainEvent): void;
   pollCompleted?(watch: WatchRecord, result: { durationMs: number; queued: number; terminal: boolean }): void;
   pollFailed?(watch: WatchRecord, error: string, durationMs: number): void;
   watchCompleted?(watch: WatchRecord): void;

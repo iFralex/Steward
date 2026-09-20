@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { WatchEngine, WatchStore, type DomainEvent, type WatchAdapter, type WatchEngineObserver } from "../src/index.ts";
 
-interface Snapshot { step: number; terminal?: boolean }
+interface Snapshot { step: number; terminal?: boolean; etaMs?: number }
 
 class FakeAdapter implements WatchAdapter {
   readonly source = "fake";
@@ -46,8 +46,8 @@ test("poll translates a state change into a durable matching event", async () =>
   try {
     const watch = await fx.engine.create({
       source: "fake", resourceRef: "resource-1", chatId: "chat-1", instruction: "Avvisami",
-      rules: [{ id: "before", event: "fake.changed", where: { position: -1 }, once: true }],
-      authorizedTools: ["mcp__voice__call_start"],
+      rules: [{ id: "before", event: "fake.changed", where: { position: -1 }, once: true,
+        grants: [{ tool: "mcp__voice__call_start" }] }],
     });
     fx.adapter.current = { step: 1 };
 
@@ -55,16 +55,58 @@ test("poll translates a state change into a durable matching event", async () =>
     const [pending] = fx.store.pending();
     assert.equal(pending.watchId, watch.id);
     assert.equal(pending.event.type, "fake.changed");
-    assert.deepEqual(pending.rule.where, { position: -1 });
+    assert.deepEqual(pending.rules[0].where, { position: -1 });
     assert.equal(pending.resourceRef, "resource-1");
-    assert.deepEqual(pending.authorizedTools, ["mcp__voice__call_start"]);
-    assert.deepEqual(fx.store.get(watch.id)?.authorizedTools, ["mcp__voice__call_start"]);
+    assert.deepEqual(pending.rules[0].grants, [{ tool: "mcp__voice__call_start" }]);
     fx.store.setNotificationText(pending.id, "Already composed");
     assert.equal(fx.store.pending()[0].notificationText, "Already composed", "composed text must survive a push retry");
 
     assert.equal(await fx.engine.poll(), 0, "the same state must not enqueue twice");
     fx.adapter.current = { step: 2 };
     assert.equal(await fx.engine.poll(), 0, "a once rule must not fire a second time");
+  } finally { fx.cleanup(); }
+});
+
+test("one domain event aggregates every matching rule into one durable turn", async () => {
+  const fx = fixture();
+  try {
+    await fx.engine.create({
+      source: "fake", resourceRef: "aggregate", chatId: "chat", instruction: "x",
+      rules: [
+        { id: "all", event: "fake.changed" },
+        { id: "first", event: "fake.changed", where: { position: -1 }, once: true, grants: [{ tool: "mcp__voice__call_start" }] },
+      ],
+    });
+    fx.adapter.current = { step: 1 };
+    assert.equal(await fx.engine.poll(), 1);
+    assert.deepEqual(fx.store.pending()[0].rules.map((rule) => rule.id), ["all", "first"]);
+  } finally { fx.cleanup(); }
+});
+
+test("before_time rules fire once inside their moving arrival window", async () => {
+  const fx = fixture();
+  try {
+    const target = Date.now() + 10 * 60_000;
+    await fx.engine.create({
+      source: "fake", resourceRef: "timed", chatId: "chat", instruction: "x",
+      rules: [{ id: "thirty", trigger: { kind: "before_time", field: "etaMs", minutes: 30 }, once: true }],
+    });
+    fx.adapter.current = { step: 0, etaMs: target };
+    assert.equal(await fx.engine.poll(), 1);
+    const [pending] = fx.store.pending();
+    assert.equal(pending.event.type, "watch.before_time");
+    assert.equal(pending.event.data.targetTimeMs, target);
+    assert.equal(await fx.engine.poll(), 0);
+  } finally { fx.cleanup(); }
+});
+
+test("watch action claims are durable and at-most-once", () => {
+  const fx = fixture();
+  try {
+    assert.equal(fx.store.claimAction("event", "rule", "mcp__mail__send_email"), true);
+    assert.equal(fx.store.claimAction("event", "rule", "mcp__mail__send_email"), false);
+    fx.store.finishAction("event", "rule", "mcp__mail__send_email");
+    assert.equal(fx.store.claimAction("event", "rule", "mcp__mail__send_email"), false);
   } finally { fx.cleanup(); }
 });
 

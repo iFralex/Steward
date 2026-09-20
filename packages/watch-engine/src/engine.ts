@@ -1,4 +1,4 @@
-import { matchesRule } from "./match.ts";
+import { matchesRule, readPath } from "./match.ts";
 import { WatchStore } from "./store.ts";
 import type { WatchAdapter, WatchDefinition, WatchEngineObserver, WatchRecord } from "./types.ts";
 
@@ -21,7 +21,12 @@ export class WatchEngine {
     if (!definition.rules.length) throw new Error("At least one watch rule is required.");
     const ids = new Set<string>();
     for (const rule of definition.rules) {
-      if (!rule.id || !rule.event) throw new Error("Every watch rule requires id and event.");
+      if (!rule.id || Number(!!rule.event) + Number(!!rule.trigger) !== 1) {
+        throw new Error("Every watch rule requires id and exactly one of event or trigger.");
+      }
+      if (rule.trigger && (rule.trigger.kind !== "before_time" || !rule.trigger.field || !Number.isFinite(rule.trigger.minutes) || rule.trigger.minutes < 0)) {
+        throw new Error(`Invalid temporal trigger on watch rule ${rule.id}.`);
+      }
       if (ids.has(rule.id)) throw new Error(`Duplicate watch rule id: ${rule.id}`);
       ids.add(rule.id);
     }
@@ -57,14 +62,21 @@ export class WatchEngine {
         const current = await adapter.snapshot(watch.resourceRef);
         let watchQueued = 0;
         for (const event of adapter.events(watch.snapshot, current)) {
-          for (const rule of watch.rules) {
-            if (!matchesRule(rule, event)) continue;
-            if (rule.once && this.store.hasRuleFired(watch.id, rule.id)) continue;
-            if (this.store.enqueue(watch, rule, event)) {
-              queued++;
-              watchQueued++;
-              this.notify("eventQueued", watch, rule, event);
-            }
+          const rules = watch.rules.filter((rule) => matchesRule(rule, event)
+            && !(rule.once && this.store.hasRuleFired(watch.id, rule.id)));
+          if (this.store.enqueue(watch, rules, event)) {
+            queued++;
+            watchQueued++;
+            this.notify("eventQueued", watch, rules, event);
+          }
+        }
+        for (const rule of watch.rules) {
+          if (!rule.trigger || (rule.once && this.store.hasRuleFired(watch.id, rule.id))) continue;
+          const event = temporalEvent(rule, current, Date.now());
+          if (event && this.store.enqueue(watch, [rule], event)) {
+            queued++;
+            watchQueued++;
+            this.notify("eventQueued", watch, [rule], event);
           }
         }
         const terminal = adapter.isTerminal(current);
@@ -80,6 +92,24 @@ export class WatchEngine {
     }
     return queued;
   }
+}
+
+function temporalEvent(rule: WatchRecord["rules"][number], current: unknown, now: number) {
+  const trigger = rule.trigger;
+  if (!trigger) return null;
+  const value = readPath(current, trigger.field);
+  const targetTimeMs = typeof value === "number" ? value : Date.parse(String(value));
+  if (!Number.isFinite(targetTimeMs)) return null;
+  const dueAt = targetTimeMs - trigger.minutes * 60_000;
+  if (now < dueAt || now >= targetTimeMs) return null;
+  return {
+    key: `before-time:${rule.id}:${Math.trunc(targetTimeMs / 60_000)}`,
+    type: "watch.before_time",
+    timestamp: now,
+    data: { field: trigger.field, minutes: trigger.minutes, targetTimeMs, dueAt },
+    currentState: current,
+    fallbackText: `${trigger.minutes} minutes remain before ${trigger.field}.`,
+  };
 }
 
 export * from "./types.ts";

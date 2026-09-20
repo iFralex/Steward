@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import type { DomainEvent, PendingWatchEvent, WatchDefinition, WatchRecord, WatchRule } from "./types.ts";
+import type { DomainEvent, PendingWatchEvent, WatchDefinition, WatchRecord, WatchRule, WatchToolGrant } from "./types.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS watches (
@@ -35,6 +35,23 @@ CREATE TABLE IF NOT EXISTS watch_events (
   notification_text TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_watch_events_pending ON watch_events(status, created_at);
+CREATE TABLE IF NOT EXISTS watch_event_rules (
+  event_id TEXT NOT NULL,
+  watch_id TEXT NOT NULL,
+  rule_id TEXT NOT NULL,
+  PRIMARY KEY (event_id, rule_id)
+);
+CREATE INDEX IF NOT EXISTS idx_watch_event_rules_fired ON watch_event_rules(watch_id, rule_id);
+CREATE TABLE IF NOT EXISTS watch_action_runs (
+  action_key TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  rule_id TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'claimed',
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  last_error TEXT
+);
 `;
 
 export class WatchStore {
@@ -45,7 +62,10 @@ export class WatchStore {
     db.pragma("journal_mode = WAL");
     db.exec(SCHEMA);
     ensureColumn(db, "watch_events", "notification_text", "TEXT");
+    ensureColumn(db, "watch_events", "matched_rules", "TEXT");
     ensureColumn(db, "watches", "authorized_tools", "TEXT NOT NULL DEFAULT '[]'");
+    db.exec(`INSERT OR IGNORE INTO watch_event_rules(event_id,watch_id,rule_id)
+      SELECT id,watch_id,rule_id FROM watch_events`);
     return new WatchStore(db);
   }
 
@@ -96,16 +116,23 @@ export class WatchStore {
   }
 
   hasRuleFired(watchId: string, ruleId: string): boolean {
-    return !!this.raw.prepare("SELECT 1 FROM watch_events WHERE watch_id=? AND rule_id=? LIMIT 1").get(watchId, ruleId);
+    return !!this.raw.prepare("SELECT 1 FROM watch_event_rules WHERE watch_id=? AND rule_id=? LIMIT 1").get(watchId, ruleId);
   }
 
-  enqueue(watch: WatchRecord, rule: WatchRule, event: DomainEvent): boolean {
-    const eventKey = `${watch.id}:${rule.id}:${event.key}`;
-    const info = this.raw.prepare(`INSERT OR IGNORE INTO watch_events
-      (id,event_key,watch_id,rule_id,rule,event,status,attempts,created_at)
-      VALUES (?,?,?,?,?,?,'pending',0,?)`)
-      .run(randomUUID(), eventKey, watch.id, rule.id, JSON.stringify(rule), JSON.stringify(event), Date.now());
-    return info.changes > 0;
+  enqueue(watch: WatchRecord, rules: WatchRule[], event: DomainEvent): boolean {
+    if (!rules.length) return false;
+    const id = randomUUID();
+    const eventKey = `${watch.id}:${event.key}`;
+    const insertEvent = this.raw.prepare(`INSERT OR IGNORE INTO watch_events
+      (id,event_key,watch_id,rule_id,rule,matched_rules,event,status,attempts,created_at)
+      VALUES (?,?,?,?,?,?,?,'pending',0,?)`);
+    const insertRule = this.raw.prepare(`INSERT OR IGNORE INTO watch_event_rules(event_id,watch_id,rule_id) VALUES (?,?,?)`);
+    return this.raw.transaction(() => {
+      const info = insertEvent.run(id, eventKey, watch.id, rules[0].id, JSON.stringify(rules[0]), JSON.stringify(rules), JSON.stringify(event), Date.now());
+      if (!info.changes) return false;
+      for (const rule of rules) insertRule.run(id, watch.id, rule.id);
+      return true;
+    })();
   }
 
   pending(limit = 20): PendingWatchEvent[] {
@@ -114,8 +141,9 @@ export class WatchStore {
       WHERE e.status='pending' ORDER BY e.created_at LIMIT ?`).all(limit) as EventRow[];
     return rows.map((row) => ({
       id: row.id, watchId: row.watch_id, chatId: row.chat_id, instruction: row.instruction,
-      resourceRef: row.resource_ref, authorizedTools: JSON.parse(row.authorized_tools) as string[],
-      rule: JSON.parse(row.rule) as WatchRule, event: JSON.parse(row.event) as DomainEvent, attempts: row.attempts,
+      resourceRef: row.resource_ref,
+      rules: row.matched_rules ? JSON.parse(row.matched_rules) as WatchRule[] : [JSON.parse(row.rule) as WatchRule],
+      event: JSON.parse(row.event) as DomainEvent, attempts: row.attempts,
       ...(row.notification_text ? { notificationText: row.notification_text } : {}),
     }));
   }
@@ -133,6 +161,18 @@ export class WatchStore {
       .run(retry ? "pending" : "failed", error.slice(0, 500), id);
   }
 
+  claimAction(eventId: string, ruleId: string, tool: string): boolean {
+    const key = `${eventId}:${ruleId}:${tool}`;
+    return this.raw.prepare(`INSERT OR IGNORE INTO watch_action_runs
+      (action_key,event_id,rule_id,tool,status,started_at) VALUES (?,?,?,?,'claimed',?)`)
+      .run(key, eventId, ruleId, tool, Date.now()).changes > 0;
+  }
+
+  finishAction(eventId: string, ruleId: string, tool: string, error?: string): void {
+    this.raw.prepare(`UPDATE watch_action_runs SET status=?, finished_at=?, last_error=? WHERE action_key=?`)
+      .run(error ? "failed" : "completed", Date.now(), error?.slice(0, 500) ?? null, `${eventId}:${ruleId}:${tool}`);
+  }
+
   close(): void { this.raw.close(); }
 }
 
@@ -144,7 +184,7 @@ interface WatchRow {
 }
 interface EventRow {
   id: string; watch_id: string; rule: string; event: string; attempts: number; chat_id: string; instruction: string;
-  notification_text: string | null; resource_ref: string; authorized_tools: string;
+  notification_text: string | null; resource_ref: string; matched_rules: string | null;
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, declaration: string): void {
@@ -152,11 +192,17 @@ function ensureColumn(db: Database.Database, table: string, column: string, decl
   if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${declaration}`);
 }
 function watchFromRow(row: WatchRow): WatchRecord {
+  const legacyTools = JSON.parse(row.authorized_tools ?? "[]") as string[];
+  const rawRules = JSON.parse(row.rules) as WatchRule[];
+  const rules = rawRules.map((rule) => rule.grants?.length || !legacyTools.length ? rule : {
+    ...rule,
+    grants: legacyTools.flatMap((tool): WatchToolGrant[] => tool === "mcp__voice__call_start" ? [{ tool }] : []),
+  });
   return {
-    id: row.id, source: row.source, resourceRef: row.resource_ref, rules: JSON.parse(row.rules) as WatchRule[],
+    id: row.id, source: row.source, resourceRef: row.resource_ref, rules,
     instruction: row.instruction, chatId: row.chat_id, status: row.status, snapshot: JSON.parse(row.snapshot),
-    ...((JSON.parse(row.authorized_tools ?? "[]") as string[]).length
-      ? { authorizedTools: JSON.parse(row.authorized_tools) as string[] }
+    ...(legacyTools.length
+      ? { authorizedTools: legacyTools }
       : {}),
     expiresAt: row.expires_at, createdAt: row.created_at, updatedAt: row.updated_at,
     ...(row.last_checked_at ? { lastCheckedAt: row.last_checked_at } : {}),
