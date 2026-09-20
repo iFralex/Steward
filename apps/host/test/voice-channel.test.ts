@@ -80,6 +80,7 @@ test("preflight runs before chat creation and duplicate request ids are idempote
       return { runTurn: async () => turn, abort: async () => {} };
     },
     audit: (() => {}) as any,
+    usage: () => {},
     now: () => 1234,
     sleep: async () => {},
   });
@@ -111,6 +112,7 @@ test("a resolved TurnResult with ok false marks the call as failed", async () =>
       abort: async () => {},
     }),
     audit: (() => {}) as any,
+    usage: () => {},
     sleep: async () => {},
   });
 
@@ -132,6 +134,7 @@ test("preflight retries once but never creates a chat when Ringback stays unheal
     },
     createChat: () => { chats += 1; return { id: "must-not-exist" }; },
     audit: (() => {}) as any,
+    usage: () => {},
     sleep: async () => {},
   });
   await assert.rejects(() => coordinator.start(undefined, "preflight-failure"), /MCP offline/);
@@ -150,9 +153,52 @@ test("preflight rejects Ringback's machine-readable ready false result", async (
     },
     createChat: () => ({ id: "must-not-exist" }),
     audit: (() => {}) as any,
+    usage: () => {},
     sleep: async () => {},
   });
   await assert.rejects(() => coordinator.start(undefined, "unhealthy-engine"), /pjsua init failed/);
   assert.equal(attempts, 2);
   assert.equal(coordinator.status().state, "failed");
+});
+
+test("structured SIP failures reach status, Usage, Audit, and completion callback", async () => {
+  let emit: ((event: any) => void) | undefined;
+  let finishTurn: ((result: any) => void) | undefined;
+  let finishedError: Error | undefined;
+  const usage: any[] = [];
+  const audit: any[] = [];
+  const turn = new Promise<any>((resolve) => { finishTurn = resolve; });
+  let now = 1_000;
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), (_chatId, error) => { finishedError = error; }, {
+    bridge: async () => fakeBridge(),
+    createChat: () => ({ id: "sip-failure-chat" }),
+    createRunner: (handler) => {
+      emit = handler;
+      return { runTurn: async () => turn, abort: async () => {} };
+    },
+    audit: ((event: any) => audit.push(event)) as any,
+    usage: (record) => usage.push(record),
+    now: () => now,
+    sleep: async () => {},
+  });
+  await coordinator.start(undefined, "sip-failure");
+  now = 5_000;
+  emit?.({
+    type: "tool_result", tool: "mcp__voice__call_start", ok: false,
+    output: '[CALL FAILED] {"code":"unreachable","message":"Phone unreachable","retryable":true,"sipStatus":480,"sipReason":"Temporarily Unavailable","dialDurationMs":3900}',
+  });
+  finishTurn?.({ ok: true, messageId: null, text: "done" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(finishedError?.message, "Phone unreachable");
+  assert.equal(coordinator.status().lastCall?.failureCode, "unreachable");
+  assert.equal(coordinator.status().lastCall?.sipStatus, 480);
+  assert.equal(coordinator.status().lastCall?.durationMs, 4_000);
+  assert.deepEqual(usage[0], {
+    ts: 5_000, sessionId: "sip-failure-chat", transport: "ringback", outcome: "unreachable",
+    failureCode: "unreachable", sipStatus: 480, durationMs: 4_000, ok: false,
+  });
+  const failed = audit.find((event) => event.eventType === "voice.call_failed");
+  assert.equal(failed.durationMs, 4_000);
+  assert.equal(failed.payload.diagnostic.sipStatus, 480);
 });

@@ -20,6 +20,7 @@ import { registerGatewayModel } from "./pi-provider.ts";
 import { chatStore, toolMessage } from "./chat-store.ts";
 import { markIdle, markRunning } from "./running-chats.ts";
 import { usageLedger } from "@steward/usage-ledger";
+import { parseRingbackFailure } from "./voice-diagnostics.ts";
 import type { Emit, Session } from "./session.ts";
 import type { HostConfig } from "../config.ts";
 import type { ChannelFile } from "@steward/protocol";
@@ -295,10 +296,14 @@ export class ChatManager {
       const input = e.toolCallId ? runtime.toolInputs.get(e.toolCallId) : undefined;
       if (e.toolCallId) { runtime.starts.delete(e.toolCallId); runtime.toolInputs.delete(e.toolCallId); }
       const durationMs = startedAt != null ? Date.now() - startedAt : 0;
-      const ok = !e.isError;
       const output = extractToolOutput(e.result);
+      const voiceFailure = e.toolName?.startsWith("mcp__voice__") ? parseRingbackFailure(output) : null;
+      // MCP completed successfully at the protocol layer, but Ringback may
+      // return a terminal SIP failure as structured tool content. Count that
+      // as a real tool error in both Usage and Audit.
+      const ok = !e.isError && !voiceFailure;
       const files = filesFromOutput(output);
-      const error = ok ? undefined : (typeof output === "string" ? output : JSON.stringify(output));
+      const error = ok ? undefined : (voiceFailure?.message ?? (typeof output === "string" ? output : JSON.stringify(output)));
       try { usageLedger().recordTool({ ts: Date.now(), sessionId: runtime.chatId, tool: e.toolName, durationMs, ok }); } catch { /* ledger optional */ }
       recordAudit({
         actor: "tool",
@@ -311,7 +316,7 @@ export class ChatManager {
         toolCallId: e.toolCallId ?? "",
         ok,
         durationMs,
-        payload: { input, output, error },
+        payload: { input, output, error, ...(voiceFailure ? { voiceFailure } : {}) },
         sourceRefs: files.map((file) => ({ type: "file", path: file.path, id: file.token, label: file.name })),
       });
       try {

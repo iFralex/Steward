@@ -88,6 +88,13 @@ remote Linphone reachability remains unknown until dialing.
 timestamps and the last-call outcome. The PWA polls these phases once per second
 only while a call is in progress.
 
+Ringback preserves the final SIP status and maps failures to stable outcomes:
+`no_answer`, `rejected`, `busy`, `unreachable`, `timeout`, `auth_failed`,
+`server_error`, `media_error`, or `network_error`. The coordinator records the
+outcome, SIP status, and duration in both the Audit event and the dedicated
+Voice calls section of Usage. A protocol-level MCP success containing a terminal
+`[CALL FAILED]` result is counted as an error rather than a successful tool call.
+
 Only the authenticated `/voice/call` endpoint automatically authorizes dialing.
 In ordinary chat, `call_start` still produces an approval card. Once connected,
 the harmless voice lifecycle tools may continue without one approval per turn.

@@ -6,6 +6,8 @@ import type { HostConfig } from "../config.ts";
 import { ChatManager, extractToolOutput, sharedMcpBridge, type TurnResult } from "./agent-runner.ts";
 import { chatStore } from "./chat-store.ts";
 import { Session, type Emit } from "./session.ts";
+import { usageLedger, type VoiceCallRecord } from "@steward/usage-ledger";
+import { parseRingbackFailure, type VoiceFailureDiagnostic } from "./voice-diagnostics.ts";
 
 export type VoiceCallState =
   | "disabled" | "idle" | "preflighting" | "starting" | "ringing"
@@ -18,6 +20,10 @@ export interface VoiceCallSummary {
   finishedAt: number;
   ok: boolean;
   error?: string;
+  failureCode?: string;
+  sipStatus?: number;
+  sipReason?: string;
+  durationMs: number;
 }
 
 export interface VoiceChannelStatus {
@@ -56,6 +62,7 @@ interface VoiceCoordinatorDeps {
   createChat?: () => { id: string };
   createRunner?: (emit: Emit) => VoiceRunner;
   audit?: typeof recordAudit;
+  usage?: (record: VoiceCallRecord) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -68,13 +75,10 @@ function outputText(output: unknown): string {
   try { return JSON.stringify(output); } catch { return String(output); }
 }
 
-function failureFromVoiceOutput(tool: string, output: unknown): Error | null {
-  const text = outputText(output);
-  if (tool === "mcp__voice__call_start" && text.includes("[NO ANSWER]")) {
-    return new Error("The phone did not answer. Ringback will not retry automatically.");
+class VoiceCallFailedError extends Error {
+  constructor(readonly diagnostic: VoiceFailureDiagnostic) {
+    super(diagnostic.message);
   }
-  if (text.includes("[NO ACTIVE CALL]")) return new Error("Ringback has no active phone call.");
-  return null;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -101,7 +105,7 @@ export function ringbackCallPrompt(openingLine: string): string {
     "Puoi usare gli strumenti di sola lettura di Steward quando servono.",
     "Le operazioni sensibili non sono autorizzabili a voce: se ne serve una, spiega che occorre approvarla nell'app e non dichiararla eseguita.",
     "Quando l'utente saluta, riaggancia o il tool restituisce [CALL ENDED], termina con mcp__voice__call_end e concludi il turno.",
-    "Se call_start restituisce [NO ANSWER], non riprovare: concludi il turno spiegando che il telefono non ha risposto.",
+    "Se call_start restituisce [NO ANSWER] o [CALL FAILED], non riprovare: concludi il turno spiegando brevemente il problema.",
     "Non rispondere soltanto in chat: lo scopo di questo turno è svolgere la conversazione al telefono.",
   ].join(" ");
 }
@@ -176,8 +180,16 @@ export class VoiceCallCoordinator {
     this.transition("preflighting", "Checking the Ringback engine before dialing.");
     try {
       await this.preflight();
+      this.audit({
+        actor: "host", eventType: "voice.preflight_passed", risk: "low", summary: "Ringback preflight passed",
+        correlationId: requestId, ok: true, payload: { transport: "ringback" },
+      });
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
+      this.audit({
+        actor: "host", eventType: "voice.preflight_failed", risk: "medium", summary: error.message,
+        correlationId: requestId, ok: false, payload: { transport: "ringback", error: error.message },
+      });
       this.failBeforeCall(error);
       throw new VoiceUnavailableError(error.message);
     }
@@ -198,17 +210,20 @@ export class VoiceCallCoordinator {
       if (this.terminalError) throw this.terminalError;
       this.audit({
         actor: "host", eventType: "voice.call_completed", risk: "low", summary: "Voice call completed",
-        chatId: chat.id, correlationId: requestId, ok: true, payload: { transport: "ringback", requestId },
+        chatId: chat.id, correlationId: requestId, ok: true,
+        durationMs: this.callDurationMs(), payload: { transport: "ringback", requestId },
       });
       this.finish(chat.id, requestId);
       await this.onFinished?.(chat.id);
     }).catch(async (cause) => {
       const error = cause instanceof Error ? cause : new Error(String(cause));
-      this.transition("failed", error.message, true);
+      const diagnostic = error instanceof VoiceCallFailedError ? error.diagnostic : undefined;
+      this.transition("failed", error.message, diagnostic?.retryable ?? true);
       this.audit({
         actor: "host", eventType: "voice.call_failed", risk: "medium", summary: error.message,
         chatId: chat.id, correlationId: requestId, ok: false,
-        payload: { transport: "ringback", requestId, error: error.stack ?? error.message },
+        durationMs: this.callDurationMs(),
+        payload: { transport: "ringback", requestId, error: error.message, ...(diagnostic ? { diagnostic } : {}) },
       });
       this.finish(chat.id, requestId, error);
       await this.onFinished?.(chat.id, error);
@@ -262,15 +277,15 @@ export class VoiceCallCoordinator {
       return;
     }
     if (e.type !== "tool_result" || !e.tool?.startsWith("mcp__voice__")) return;
+    const failure = parseRingbackFailure(e.output);
+    if (failure) {
+      this.terminalError = new VoiceCallFailedError(failure);
+      this.transition("failed", failure.message, failure.retryable);
+      return;
+    }
     if (e.ok === false) {
       this.terminalError = new Error(`Ringback tool failed: ${e.tool}`);
       this.transition("failed", this.terminalError.message, true);
-      return;
-    }
-    const failure = failureFromVoiceOutput(e.tool, e.output);
-    if (failure) {
-      this.terminalError = failure;
-      this.transition("failed", failure.message, true);
       return;
     }
     const text = outputText(e.output);
@@ -285,10 +300,29 @@ export class VoiceCallCoordinator {
   }
 
   private finish(chatId: string, requestId: string, error?: Error): void {
+    const diagnostic = error instanceof VoiceCallFailedError ? error.diagnostic : undefined;
+    const finishedAt = this.deps.now();
+    const startedAt = this.startedAt ?? finishedAt;
+    const durationMs = Math.max(0, finishedAt - startedAt);
     this.lastCall = {
-      chatId, requestId, startedAt: this.startedAt ?? this.deps.now(), finishedAt: this.deps.now(), ok: !error,
+      chatId, requestId, startedAt, finishedAt, durationMs, ok: !error,
       ...(error ? { error: error.message } : {}),
+      ...(diagnostic?.code ? { failureCode: diagnostic.code } : {}),
+      ...(diagnostic?.sipStatus !== undefined ? { sipStatus: diagnostic.sipStatus } : {}),
+      ...(diagnostic?.sipReason ? { sipReason: diagnostic.sipReason } : {}),
     };
+    try {
+      const record: VoiceCallRecord = {
+        ts: finishedAt, sessionId: chatId, transport: "ringback",
+        outcome: error ? (diagnostic?.code ?? "unknown") : "completed",
+        failureCode: diagnostic?.code, sipStatus: diagnostic?.sipStatus, durationMs, ok: !error,
+      };
+      (this.deps.usage ?? ((entry) => usageLedger().recordVoiceCall(entry)))(record);
+    } catch { /* usage is best-effort */ }
+  }
+
+  private callDurationMs(): number {
+    return Math.max(0, this.deps.now() - (this.startedAt ?? this.deps.now()));
   }
 
   private transition(state: VoiceCallState, detail?: string, retryable?: boolean): void {

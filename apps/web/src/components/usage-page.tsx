@@ -26,6 +26,12 @@ interface RecentRow {
 }
 interface ToolRow { tool: string; calls: number; errors: number; totalMs: number; avgMs: number; maxMs: number }
 interface ToolTotals { calls: number; errors: number; totalMs: number }
+interface VoiceTotals { calls: number; completed: number; failed: number; totalMs: number; avgMs: number }
+interface VoiceOutcomeRow { outcome: string; calls: number }
+interface RecentVoiceRow {
+  ts: number; sessionId: string; transport: string; outcome: string;
+  failureCode: string | null; sipStatus: number | null; durationMs: number; ok: number;
+}
 interface CostByKind { input: number; output: number; cacheRead: number; cacheWrite: number }
 interface UsageSummary {
   totals: Totals;
@@ -36,6 +42,9 @@ interface UsageSummary {
   recent: RecentRow[];
   byTool: ToolRow[];
   toolTotals: ToolTotals;
+  voiceTotals: VoiceTotals;
+  byVoiceOutcome: VoiceOutcomeRow[];
+  recentVoice: RecentVoiceRow[];
   costByKind: CostByKind;
 }
 
@@ -313,6 +322,60 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
       )}
 
       {/* Tool usage (unchanged data source: host tool_calls) */}
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>{t("usage.voice.title")}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {data.voiceTotals.calls === 0 ? (
+            <p className="text-muted-foreground text-sm">{t("usage.voice.empty")}</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-4 text-xs">
+                <span>{t("usage.voice.calls", { count: intl(data.voiceTotals.calls) })}</span>
+                <span className="text-emerald-600">{t("usage.voice.completed", { count: intl(data.voiceTotals.completed) })}</span>
+                <span className={data.voiceTotals.failed ? "text-destructive" : ""}>{t("usage.voice.failed", { count: intl(data.voiceTotals.failed) })}</span>
+                <span className="text-muted-foreground">{t("usage.voice.avg", { time: ms(data.voiceTotals.avgMs) })}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {data.byVoiceOutcome.map((row) => (
+                  <Badge key={row.outcome} variant={row.outcome === "completed" ? "default" : "outline"}>
+                    {t(`usage.voice.outcomes.${row.outcome}`)} · {intl(row.calls)}
+                  </Badge>
+                ))}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-xs">
+                  <thead className="text-muted-foreground">
+                    <tr>
+                      <Th>{t("usage.voice.headers.when")}</Th>
+                      <Th>{t("usage.voice.headers.outcome")}</Th>
+                      <Th>{t("usage.voice.headers.transport")}</Th>
+                      <Th right>{t("usage.voice.headers.sip")}</Th>
+                      <Th right>{t("usage.voice.headers.duration")}</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.recentVoice.slice(0, 10).map((row) => (
+                      <tr key={`${row.ts}-${row.sessionId}`} className="border-border border-t">
+                        <Td>{new Date(row.ts).toLocaleString(currentLocale())}</Td>
+                        <Td className={row.ok ? "text-emerald-600" : "text-destructive"}>
+                          {t(`usage.voice.outcomes.${row.outcome}`)}
+                        </Td>
+                        <Td>{row.transport}</Td>
+                        <Td right>{row.sipStatus ?? "—"}</Td>
+                        <Td right>{ms(row.durationMs)}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Tool usage (host tool_calls) */}
       <Card size="sm">
         <CardHeader>
           <CardTitle>{t("usage.byTool.title")}</CardTitle>

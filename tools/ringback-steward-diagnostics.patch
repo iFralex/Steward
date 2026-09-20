@@ -1,0 +1,79 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -542,8 +542,13 @@ class _Call(pj.Call):
+     def onCallState(self, prm):
+         ci = self.getInfo()
+         self.session.last_state = ci.state
++        self.session.last_state_text = str(getattr(ci, "stateText", "") or "")
++        try:
++            self.session.last_status_code = int(getattr(ci, "lastStatusCode", 0) or 0)
++        except (TypeError, ValueError):
++            self.session.last_status_code = 0
++        self.session.last_reason = str(getattr(ci, "lastReason", "") or "")
+         if ci.state == pj.PJSIP_INV_STATE_CONFIRMED:
+             self.session.connected = True
+         if ci.state == pj.PJSIP_INV_STATE_DISCONNECTED:
+@@ -566,6 +571,9 @@ class CallSession:
+         self.connected = False
+         self.disconnected = False
+         self.last_state = None
++        self.last_state_text = ""
++        self.last_status_code = 0
++        self.last_reason = ""
+         self.noise_floor = 0.0  # ambient RMS measured at call connect (see place_call)
+@@ -704,6 +712,9 @@ class CallSession:
+         self._reg()
+         self.connected = False
+         self.disconnected = False
++        self.last_state_text = ""
++        self.last_status_code = 0
++        self.last_reason = ""
+         self.half_duplex = HALF_DUPLEX   # re-evaluate echo per call (unless forced on)
+diff --git a/voice_mcp.py b/voice_mcp.py
+--- a/voice_mcp.py
++++ b/voice_mcp.py
+@@ -74,9 +74,43 @@ def call_start(opening_line: str) -> str:
+     """
+     s = _get()
+     s.log = []                       # fresh conversation
++    dial_started = time.monotonic()
+     if not s.place_call():
+-        return "[NO ANSWER] — the user did not pick up. Do not retry immediately."
++        dial_ms = round((time.monotonic() - dial_started) * 1000)
++        status = int(getattr(s, "last_status_code", 0) or 0)
++        reason = str(getattr(s, "last_reason", "") or "")
++        state = str(getattr(s, "last_state_text", "") or "")
++        if status in (486, 600):
++            code, message, retryable = "busy", "The phone is busy.", True
++        elif status in (603,):
++            code, message, retryable = "rejected", "The phone rejected the call.", False
++        elif status in (404, 410, 430, 480):
++            code, message, retryable = "unreachable", "The phone is not reachable through SIP.", True
++        elif status in (408, 504):
++            code, message, retryable = "timeout", "The SIP provider timed out.", True
++        elif status in (401, 403, 407):
++            code, message, retryable = "auth_failed", "The SIP provider rejected the credentials.", False
++        elif 500 <= status <= 599:
++            code, message, retryable = "server_error", "The SIP provider returned a server error.", True
++        elif status == 200:
++            code, message, retryable = "media_error", "The call connected but audio media was unavailable.", True
++        elif status == 0:
++            code, message, retryable = "network_error", "The network did not complete the SIP call.", True
++        else:
++            code, message, retryable = "no_answer", "The phone did not answer.", True
++        payload = {
++            "code": code, "message": message, "retryable": retryable,
++            "dialDurationMs": dial_ms,
++        }
++        if status:
++            payload["sipStatus"] = status
++        if reason:
++            payload["sipReason"] = reason
++        if state:
++            payload["sipState"] = state
++        # A timed-out outgoing INVITE may still be alive in pjsua. Terminate it
++        # before returning so a retry can never overlap a late first attempt.
++        s.hangup()
++        return "[CALL FAILED] " + json.dumps(payload)
+     return _format_turn(s.speak_interruptible(opening_line))

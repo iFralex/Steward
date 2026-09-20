@@ -35,6 +35,17 @@ export interface ToolCallRecord {
   ok: boolean;
 }
 
+export interface VoiceCallRecord {
+  ts: number;
+  sessionId: string;
+  transport: string;
+  outcome: string;
+  failureCode?: string | null;
+  sipStatus?: number | null;
+  durationMs: number;
+  ok: boolean;
+}
+
 export interface LedgerSummary {
   totals: { calls: number; cost: number; input: number; output: number; cacheRead: number; cacheWrite: number };
   byService: { service: string; cost: number; calls: number; tokens: number }[];
@@ -49,6 +60,12 @@ export interface LedgerSummary {
   }[];
   byTool: { tool: string; calls: number; errors: number; totalMs: number; avgMs: number; maxMs: number }[];
   toolTotals: { calls: number; errors: number; totalMs: number };
+  voiceTotals: { calls: number; completed: number; failed: number; totalMs: number; avgMs: number };
+  byVoiceOutcome: { outcome: string; calls: number }[];
+  recentVoice: {
+    ts: number; sessionId: string; transport: string; outcome: string;
+    failureCode: string | null; sipStatus: number | null; durationMs: number; ok: number;
+  }[];
 }
 
 const SCHEMA = `
@@ -79,6 +96,18 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   ok INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_ts ON tool_calls(ts);
+CREATE TABLE IF NOT EXISTS voice_calls (
+  id INTEGER PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  session_id TEXT NOT NULL,
+  transport TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  failure_code TEXT,
+  sip_status INTEGER,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_voice_calls_ts ON voice_calls(ts);
 `;
 
 const TOKENS = "input_tokens + output_tokens + cache_read_tokens + cache_write_tokens";
@@ -126,6 +155,13 @@ export class UsageLedger {
     this.raw.prepare(
       `INSERT INTO tool_calls (ts, session_id, tool, duration_ms, ok) VALUES (?, ?, ?, ?, ?)`,
     ).run(t.ts, t.sessionId, t.tool, t.durationMs, t.ok ? 1 : 0);
+  }
+
+  recordVoiceCall(v: VoiceCallRecord): void {
+    this.raw.prepare(
+      `INSERT INTO voice_calls (ts, session_id, transport, outcome, failure_code, sip_status, duration_ms, ok)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(v.ts, v.sessionId, v.transport, v.outcome, v.failureCode ?? null, v.sipStatus ?? null, v.durationMs, v.ok ? 1 : 0);
   }
 
   /** Aggregations for the Usage page. `days` = lookback window; undefined = all time. */
@@ -181,7 +217,24 @@ export class UsageLedger {
        FROM tool_calls WHERE ts >= ?`,
     ).get(cutoff) as LedgerSummary["toolTotals"];
 
-    return { totals, byService, byAction, byDay, byModel, byTier, recent, byTool, toolTotals };
+    const voiceTotals = this.raw.prepare(
+      `SELECT COUNT(*) calls,
+              COALESCE(SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END),0) completed,
+              COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END),0) failed,
+              COALESCE(SUM(duration_ms),0) totalMs,
+              COALESCE(AVG(duration_ms),0) avgMs
+       FROM voice_calls WHERE ts >= ?`,
+    ).get(cutoff) as LedgerSummary["voiceTotals"];
+    const byVoiceOutcome = this.raw.prepare(
+      `SELECT outcome, COUNT(*) calls FROM voice_calls WHERE ts >= ? GROUP BY outcome ORDER BY calls DESC`,
+    ).all(cutoff) as LedgerSummary["byVoiceOutcome"];
+    const recentVoice = this.raw.prepare(
+      `SELECT ts, session_id sessionId, transport, outcome, failure_code failureCode,
+              sip_status sipStatus, duration_ms durationMs, ok
+       FROM voice_calls WHERE ts >= ? ORDER BY ts DESC LIMIT 50`,
+    ).all(cutoff) as LedgerSummary["recentVoice"];
+
+    return { totals, byService, byAction, byDay, byModel, byTier, recent, byTool, toolTotals, voiceTotals, byVoiceOutcome, recentVoice };
   }
 }
 

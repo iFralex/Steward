@@ -77,3 +77,18 @@ test("failed calls and recent rows are exposed; tool calls aggregate as before",
   assert.equal(s.byTool[0].errors, 1);
   assert.equal(s.toolTotals.calls, 2);
 });
+
+test("voice calls aggregate outcomes and expose recent SIP diagnostics", () => {
+  const ledger = openTemp();
+  const now = Date.now();
+  ledger.recordVoiceCall({ ts: now, sessionId: "v1", transport: "ringback", outcome: "completed", durationMs: 20_000, ok: true });
+  ledger.recordVoiceCall({ ts: now, sessionId: "v2", transport: "ringback", outcome: "unreachable", failureCode: "unreachable", sipStatus: 480, durationMs: 4_000, ok: false });
+  const s = ledger.summary();
+  assert.equal(s.voiceTotals.calls, 2);
+  assert.equal(s.voiceTotals.completed, 1);
+  assert.equal(s.voiceTotals.failed, 1);
+  assert.equal(s.voiceTotals.totalMs, 24_000);
+  assert.equal(s.byVoiceOutcome.find((row) => row.outcome === "unreachable")?.calls, 1);
+  assert.equal(s.recentVoice[0].sipStatus, 480);
+  assert.equal(s.recentVoice[0].failureCode, "unreachable");
+});

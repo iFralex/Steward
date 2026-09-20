@@ -43,6 +43,9 @@ fi
 if ! grep -q 'remote_reachability' "$RINGBACK_DIR/voice_mcp.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-reliability.patch"
 fi
+if ! grep -q 'dialDurationMs' "$RINGBACK_DIR/voice_mcp.py"; then
+  git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-diagnostics.patch"
+fi
 if ! grep -q 'remote_reachability' "$RINGBACK_DIR/voice_mcp.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-reliability.patch"
 fi

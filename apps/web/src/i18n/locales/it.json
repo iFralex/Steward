@@ -225,6 +225,21 @@
       "total": "{{time}} totali",
       "headers": { "tool": "Tool", "calls": "Chiamate", "errors": "Errori", "avg": "Media", "max": "Max", "total": "Totale", "frequency": "Frequenza" }
     },
+    "voice": {
+      "title": "Chiamate vocali",
+      "empty": "Nessuna chiamata vocale registrata nel periodo.",
+      "calls": "{{count}} tentativi",
+      "completed": "{{count}} completati",
+      "failed": "{{count}} falliti",
+      "avg": "durata media {{time}}",
+      "headers": { "when": "Quando", "outcome": "Esito", "transport": "Trasporto", "sip": "SIP", "duration": "Durata" },
+      "outcomes": {
+        "completed": "completata", "no_answer": "nessuna risposta", "rejected": "rifiutata",
+        "busy": "occupato", "unreachable": "non raggiungibile", "timeout": "timeout",
+        "auth_failed": "autenticazione SIP", "server_error": "errore provider",
+        "media_error": "errore audio", "network_error": "errore di rete", "unknown": "errore sconosciuto"
+      }
+    },
     "recent": {
       "title": "Chiamate recenti",
       "empty": "Nessuna chiamata registrata.",
