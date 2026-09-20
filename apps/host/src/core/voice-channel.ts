@@ -61,7 +61,7 @@ export class VoiceBusyError extends Error {
 
 interface VoiceRunner {
   runTurn(chatId: string, prompt: string): Promise<TurnResult>;
-  runAutomaticTurn?(chatId: string, prompt: string): Promise<TurnResult>;
+  runAutomaticTurn?(chatId: string, prompt: string, actor?: "scheduler" | "host"): Promise<TurnResult>;
   abort(chatId?: string): Promise<void>;
   close?(): Promise<void>;
 }
@@ -351,8 +351,8 @@ export class VoiceCallCoordinator {
     const runner = scoped ? this.createScopedRunner(options.allowedTools ?? [], options.executionGuard) : this.getRunner();
     const callApprovalSession = this.activeApprovalSession;
     const turnPrompt = options.prompt ?? ringbackCallPrompt(line, language);
-    const turn = options.chatId && runner.runAutomaticTurn
-      ? runner.runAutomaticTurn(chat.id, turnPrompt)
+    const turn = runner.runAutomaticTurn
+      ? runner.runAutomaticTurn(chat.id, turnPrompt, options.chatId ? "scheduler" : "host")
       : runner.runTurn(chat.id, turnPrompt);
     void turn.then(async (result) => {
       if (!result.ok) throw new Error(result.error || voiceCopy.status.agentFailed);

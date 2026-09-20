@@ -118,6 +118,7 @@ const MESSAGES = {
     },
     callPrompt: (openingLine) => [
       "Start a voice call with the user now using mcp__voice__call_start.",
+      "Do not write any assistant text before calling call_start.",
       `Say exactly this opening message: ${JSON.stringify(openingLine)}.`,
       "After each user reply, continue the same call with mcp__voice__converse.",
       "Speak English unless the user changes language; use one or two short sentences per turn.",
@@ -186,6 +187,7 @@ const MESSAGES = {
     },
     callPrompt: (openingLine) => [
       "Avvia ora una chiamata vocale con l'utente usando mcp__voice__call_start.",
+      "Non scrivere alcun testo dell'assistente prima di chiamare call_start.",
       `Pronuncia come apertura esattamente questo messaggio: ${JSON.stringify(openingLine)}.`,
       "Dopo ogni risposta dell'utente, continua la stessa chiamata con mcp__voice__converse.",
       "Parla in italiano salvo che l'utente cambi lingua; usa una o due frasi brevi per turno.",

@@ -10,6 +10,8 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 export interface McpServerSpec {
   command: string;
   args: string[];
+  /** Per-tool request timeout. Long-running media tools need more than MCP's 60s default. */
+  callTimeoutMs?: number;
 }
 
 export interface McpBridge {
@@ -44,7 +46,11 @@ export async function buildMcpBridge(specs: Record<string, McpServerSpec>): Prom
           parameters: (t.inputSchema ?? { type: "object", properties: {} }) as any,
           prepareArguments: (a: unknown) => a as any,
           execute: async (_id: string, params: any) => {
-            const res: any = await client.callTool({ name: bareName, arguments: params ?? {} });
+            const res: any = await client.callTool(
+              { name: bareName, arguments: params ?? {} },
+              undefined,
+              spec.callTimeoutMs ? { timeout: spec.callTimeoutMs } : undefined,
+            );
             return { content: res.content ?? [{ type: "text", text: "" }], details: {} };
           },
         } as ToolDefinition);
@@ -68,7 +74,12 @@ export async function buildMcpBridge(specs: Record<string, McpServerSpec>): Prom
       if (!parsed) throw new Error(`Invalid MCP tool name: ${toolName}`);
       const client = clientsByServer.get(parsed.server);
       if (!client) throw new Error(`MCP server not available: ${parsed.server}`);
-      const res: any = await client.callTool({ name: parsed.tool, arguments: args ?? {} });
+      const spec = specs[parsed.server];
+      const res: any = await client.callTool(
+        { name: parsed.tool, arguments: args ?? {} },
+        undefined,
+        spec?.callTimeoutMs ? { timeout: spec.callTimeoutMs } : undefined,
+      );
       return res.content ?? [{ type: "text", text: "" }];
     },
     close: async () => {

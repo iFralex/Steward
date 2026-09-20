@@ -246,7 +246,12 @@ export function loadConfig(): HostConfig {
   // Keep the MCP id transport-neutral. A future StreamCore adapter can expose
   // the same host-facing voice channel without renaming tools throughout Steward.
   if (voice.transport === "ringback" && voice.launcher) {
-    mcpServers.voice = { command: voice.launcher, args: [] };
+    const configuredTimeout = Number(process.env.STEWARD_VOICE_TOOL_TIMEOUT_MS ?? 180_000);
+    mcpServers.voice = {
+      command: voice.launcher,
+      args: [],
+      callTimeoutMs: Number.isFinite(configuredTimeout) ? Math.max(60_000, configuredTimeout) : 180_000,
+    };
   }
 
   const voicePrompt = voice.transport === "ringback"

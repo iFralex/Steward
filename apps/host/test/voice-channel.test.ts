@@ -248,6 +248,37 @@ test("preflight runs before chat creation and duplicate request ids are idempote
   assert.equal(coordinator.status().lastCall?.ok, true);
 });
 
+test("a quick call uses a hidden host control turn instead of a visible user message", async () => {
+  let automaticActor: string | undefined;
+  let visibleTurnCalled = false;
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), undefined, {
+    bridge: async () => fakeBridge(),
+    createChat: () => ({ id: "quick-call-chat" }),
+    createRunner: (emit) => ({
+      runTurn: async () => {
+        visibleTurnCalled = true;
+        throw new Error("quick-call control prompts must stay hidden");
+      },
+      runAutomaticTurn: async (_chatId, _prompt, actor) => {
+        automaticActor = actor;
+        emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+        emit({ type: "tool_result", tool: "mcp__voice__call_start", ok: true, output: "connected" } as any);
+        return { ok: true, messageId: "done", text: "done" };
+      },
+      abort: async () => {},
+    }),
+    audit: (() => {}) as any,
+    usage: () => {},
+    sleep: async () => {},
+  });
+
+  await coordinator.start(undefined, "hidden-quick-call");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(visibleTurnCalled, false);
+  assert.equal(automaticActor, "host");
+  assert.equal(coordinator.status().lastCall?.ok, true);
+});
+
 test("a resolved TurnResult with ok false marks the call as failed", async () => {
   let finishedError: Error | undefined;
   const coordinator = new VoiceCallCoordinator(fakeConfig(), (_chatId, error) => { finishedError = error; }, {

@@ -370,11 +370,17 @@ export class ChatManager {
   /** Run a trusted background event in the same persisted Pi conversation.
    * The structured control prompt stays out of the user-visible transcript;
    * assistant and tool messages are persisted normally. */
-  async runAutomaticTurn(chatId: string, prompt: string): Promise<TurnResult> {
-    return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, undefined, true));
+  async runAutomaticTurn(chatId: string, prompt: string, actor: "scheduler" | "host" = "scheduler"): Promise<TurnResult> {
+    return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, undefined, true, actor));
   }
 
-  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[], automatic = false): Promise<TurnResult> {
+  private async doRunTurn(
+    chatId: string,
+    prompt: string,
+    attachments?: ChannelFile[],
+    automatic = false,
+    automaticActor: "scheduler" | "host" = "scheduler",
+  ): Promise<TurnResult> {
     const store = chatStore();
     // A turn queued behind another can run after its chat was deleted; do not
     // resurrect a deleted chat (addMessage orphan row + ensureChat rebuilding a session).
@@ -387,8 +393,8 @@ export class ChatManager {
       store.maybeAutoTitle(chatId, prompt);
     }
     recordAudit({
-      actor: automatic ? "scheduler" : "user",
-      eventType: automatic ? "chat.automatic_event" : "chat.user_message",
+      actor: automatic ? automaticActor : "user",
+      eventType: automatic ? (automaticActor === "host" ? "chat.control_event" : "chat.automatic_event") : "chat.user_message",
       risk: "low",
       summary: automatic ? "Resumed chat for an automatic event" : (prompt.trim().slice(0, 180) || "User sent attachments"),
       sessionId: this.session.id,

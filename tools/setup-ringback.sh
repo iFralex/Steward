@@ -11,6 +11,7 @@ MODE="${1:-auto}"
 ARM_BREW="/opt/homebrew/bin/brew"
 PACKAGED_WHISPER_MODEL="/Applications/Steward.app/Contents/Resources/speech/models/ggml-base.bin"
 WHISPER_MODEL_NAME="ggml-large-v3-turbo-q5_0.bin"
+WHISPER_STREAM_MODEL_NAME="ggml-base.bin"
 
 if [ -e "$RINGBACK_DIR" ] && [ ! -d "$RINGBACK_DIR/.git" ]; then
   echo "Refusing to overwrite existing non-git path: $RINGBACK_DIR" >&2
@@ -142,9 +143,9 @@ else
   fi
   MODEL_TMP="$(mktemp "$RINGBACK_DIR/voice.env.model.XXXXXX")"
   awk '!/^export WHISPER_MODEL=/ && !/^export WHISPER_SERVER_MODEL=/' "$VOICE_ENV" > "$MODEL_TMP"
-  printf '\n# Steward: multilingual large-v3-turbo q5 speech recognition.\n' >> "$MODEL_TMP"
+  printf '\n# Steward: accurate final recognition plus low-latency turn detection.\n' >> "$MODEL_TMP"
   printf 'export WHISPER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$MODEL_TMP"
-  printf 'export WHISPER_SERVER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$MODEL_TMP"
+  printf 'export WHISPER_SERVER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_STREAM_MODEL_NAME" >> "$MODEL_TMP"
   mv "$MODEL_TMP" "$VOICE_ENV"
   # Select Alice/Samantha at synthesis time from Steward's persisted user
   # language. Replacing the old fixed-Alice command migrates existing installs.
