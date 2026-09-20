@@ -37,13 +37,21 @@ export function parseRingbackFailure(output: unknown): VoiceFailureDiagnostic | 
   const raw = text.slice(start + marker.length).trim();
   try {
     const value = JSON.parse(raw) as Partial<VoiceFailureDiagnostic>;
-    const code = typeof value.code === "string" ? value.code as VoiceFailureCode : "unknown";
+    let code = typeof value.code === "string" ? value.code as VoiceFailureCode : "unknown";
+    const sipReason = typeof value.sipReason === "string" ? value.sipReason : undefined;
+    // pjsua sometimes surfaces local transport failures as SIP 503. Preserve
+    // the status, but classify an explicit socket/network reason correctly.
+    if ((code === "server_error" || code === "unknown") && sipReason
+      && /connection (?:reset|refused)|transport|network|socket|dns|host unreachable/i.test(sipReason)) {
+      code = "network_error";
+    }
+    const suppliedMessage = typeof value.message === "string" && value.message ? value.message : undefined;
     return {
       code,
-      message: typeof value.message === "string" && value.message ? value.message : humanVoiceFailure(code),
+      message: code === "network_error" ? humanVoiceFailure(code) : (suppliedMessage ?? humanVoiceFailure(code)),
       retryable: typeof value.retryable === "boolean" ? value.retryable : retryableVoiceFailure(code),
       ...(typeof value.sipStatus === "number" ? { sipStatus: value.sipStatus } : {}),
-      ...(typeof value.sipReason === "string" ? { sipReason: value.sipReason } : {}),
+      ...(sipReason ? { sipReason } : {}),
       ...(typeof value.sipState === "string" ? { sipState: value.sipState } : {}),
       ...(typeof value.dialDurationMs === "number" ? { dialDurationMs: value.dialDurationMs } : {}),
     };
