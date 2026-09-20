@@ -2,6 +2,17 @@ import { recordAudit, type AuditEventInput } from "@steward/audit-log";
 import { usageLedger } from "@steward/usage-ledger";
 import type { DomainEvent, WatchEngineObserver, WatchRecord, WatchRule } from "@steward/watch-engine";
 
+export interface WatchActivityStatus {
+  lastPoll: { at: number; watchId: string; source: string; ok: boolean; durationMs: number; error?: string } | null;
+  lastDelivery: { at: number; watchId: string; ok: boolean; durationMs: number } | null;
+}
+
+const activity: WatchActivityStatus = { lastPoll: null, lastDelivery: null };
+
+export function watchActivityStatus(): WatchActivityStatus {
+  return { lastPoll: activity.lastPoll ? { ...activity.lastPoll } : null, lastDelivery: activity.lastDelivery ? { ...activity.lastDelivery } : null };
+}
+
 function watchPayload(watch: WatchRecord): Record<string, unknown> {
   return {
     watchId: watch.id,
@@ -47,6 +58,7 @@ export function createWatchObserver(): WatchEngineObserver {
       });
     },
     pollCompleted(watch, result) {
+      activity.lastPoll = { at: Date.now(), watchId: watch.id, source: watch.source, ok: true, durationMs: result.durationMs };
       try {
         usageLedger().recordTool({
           ts: Date.now(), sessionId: `watch:${watch.id}`, tool: `watch.poll.${watch.source}`,
@@ -55,6 +67,7 @@ export function createWatchObserver(): WatchEngineObserver {
       } catch { /* usage is best-effort */ }
     },
     pollFailed(watch, error, durationMs) {
+      activity.lastPoll = { at: Date.now(), watchId: watch.id, source: watch.source, ok: false, durationMs, error };
       try {
         usageLedger().recordTool({
           ts: Date.now(), sessionId: `watch:${watch.id}`, tool: `watch.poll.${watch.source}`,
@@ -77,6 +90,7 @@ export function createWatchObserver(): WatchEngineObserver {
 }
 
 export function recordWatchDeliveryUsage(watchId: string, durationMs: number, ok: boolean): void {
+  activity.lastDelivery = { at: Date.now(), watchId, ok, durationMs };
   try {
     usageLedger().recordTool({ ts: Date.now(), sessionId: `watch:${watchId}`, tool: "watch.deliver", durationMs, ok });
   } catch { /* usage is best-effort */ }

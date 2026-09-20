@@ -36,3 +36,23 @@ test("tick logs ok with a duration", async () => {
   await s.tick({ name: "j", everyMs: 1000, run: async () => { await delay(5); } });
   assert.ok(logs.some((l) => /\[j\] ok \(\d+ms\)/.test(l)));
 });
+
+test("onResult receives successful, failed, and skipped outcomes", async () => {
+  const results: Array<{ job: string; ok: boolean; skipped?: boolean; error?: string }> = [];
+  const s = new Scheduler([], { log: () => {}, onResult: (result) => results.push(result) });
+  await s.tick({ name: "ok", everyMs: 1000, run: async () => {} });
+  await s.tick({ name: "bad", everyMs: 1000, run: async () => { throw new Error("boom"); } });
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const slow: Job = { name: "slow", everyMs: 1000, run: () => blocked };
+  const first = s.tick(slow);
+  await s.tick(slow);
+  release();
+  await first;
+  assert.deepEqual(results.map(({ job, ok, skipped, error }) => ({ job, ok, skipped, error })), [
+    { job: "ok", ok: true, skipped: undefined, error: undefined },
+    { job: "bad", ok: false, skipped: undefined, error: "boom" },
+    { job: "slow", ok: true, skipped: true, error: undefined },
+    { job: "slow", ok: true, skipped: undefined, error: undefined },
+  ]);
+});

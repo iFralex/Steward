@@ -12,6 +12,8 @@
     "add-login-item": "node --import tsx add-login-item.mts"
   },
   "dependencies": {
+    "@steward/audit-log": "*",
+    "@steward/usage-ledger": "*",
     "@steward/write-ops": "*",
     "@steward/applescript": "*"
   },

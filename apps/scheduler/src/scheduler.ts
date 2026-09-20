@@ -18,6 +18,7 @@ export interface SchedulerOptions {
   log?: (line: string) => void;
   /** Run every job once immediately on start (default true). */
   runAtStart?: boolean;
+  onResult?: (result: { job: string; ok: boolean; durationMs: number; error?: string; skipped?: boolean }) => void;
 }
 
 export class Scheduler {
@@ -46,15 +47,21 @@ export class Scheduler {
   async tick(job: Job): Promise<void> {
     if (this.running.has(job.name)) {
       this.log(`${this.ts()} [${job.name}] skip — previous run still in progress`);
+      this.opts.onResult?.({ job: job.name, ok: true, durationMs: 0, skipped: true });
       return;
     }
     this.running.add(job.name);
     const t0 = Date.now();
     try {
       await job.run();
-      this.log(`${this.ts()} [${job.name}] ok (${Date.now() - t0}ms)`);
+      const durationMs = Date.now() - t0;
+      this.log(`${this.ts()} [${job.name}] ok (${durationMs}ms)`);
+      this.opts.onResult?.({ job: job.name, ok: true, durationMs });
     } catch (err) {
-      this.log(`${this.ts()} [${job.name}] FAILED (${Date.now() - t0}ms): ${err instanceof Error ? err.message : String(err)}`);
+      const durationMs = Date.now() - t0;
+      const error = err instanceof Error ? err.message : String(err);
+      this.log(`${this.ts()} [${job.name}] FAILED (${durationMs}ms): ${error}`);
+      this.opts.onResult?.({ job: job.name, ok: false, durationMs, error });
     } finally {
       this.running.delete(job.name);
     }

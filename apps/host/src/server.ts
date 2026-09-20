@@ -321,6 +321,7 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
   // Never answered for a non-localhost (phone/Tailscale) caller.
   if (req.method === "GET" && url.startsWith("/pair")) {
     if (!isLocalhostRequest(req)) { res.writeHead(403, CORS); res.end("forbidden"); return; }
+    recordAudit({ actor: "user", eventType: "system.pairing_viewed", risk: "low", summary: "Viewed phone pairing code", ok: true });
     res.writeHead(200, { "Content-Type": "application/json", ...CORS });
     res.end(JSON.stringify({ token: config.authToken }));
     return;
@@ -370,7 +371,12 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
         title: "Steward",
         body: notificationCopy(getNotificationLang()).testPush,
         tag: "push-test",
-      }).catch(() => { /* best-effort */ });
+      }).then((report) => {
+        const ok = report.delivered > 0 && report.failed === 0;
+        recordAudit({ actor: "host", eventType: ok ? "push.test_delivered" : "push.test_failed", risk: ok ? "low" : "medium", summary: ok ? "Push test delivered" : "Push test was not delivered", ok, payload: report });
+      }).catch((err) => {
+        recordAudit({ actor: "host", eventType: "push.test_failed", risk: "medium", summary: err instanceof Error ? err.message : String(err), ok: false });
+      });
     }, 15_000);
     return;
   }
@@ -527,7 +533,7 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
     return;
   }
   if (req.method === "GET" && url.startsWith("/system/status")) {
-    void loadSystemStatus(config).then((status) => {
+    void loadSystemStatus(config, { voice: voiceCalls.status(), push: pushRegistry.status() }).then((status) => {
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(status));
     }).catch((err) => {
@@ -603,6 +609,7 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
       res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": audio.length, "Cache-Control": "no-store", ...CORS });
       res.end(audio);
     }).catch((err) => {
+      recordAudit({ actor: "user", eventType: "settings.voice_preview", risk: "low", summary: err instanceof Error ? err.message : String(err), ok: false });
       res.writeHead(400, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
     });

@@ -24,6 +24,8 @@ test("sendAll fans out to every subscription", async () => {
 
   assert.deepEqual(calls.sort(), ["https://a", "https://b"]);
   assert.deepEqual(report, { attempted: 2, delivered: 2, failed: 0, pruned: 0 });
+  assert.equal(reg.status().subscriptions, 2);
+  assert.equal(reg.status().lastDelivery?.report.delivered, 2);
   rmSync(join(file, ".."), { recursive: true, force: true });
 });
 
@@ -75,5 +77,6 @@ test("sendAll with no subscriptions is a no-op", async () => {
   const report = await reg.sendAll({ title: "Steward" });
   assert.equal(called, false);
   assert.deepEqual(report, { attempted: 0, delivered: 0, failed: 0, pruned: 0 });
+  assert.deepEqual(reg.status().lastDelivery?.report, report);
   rmSync(join(file, ".."), { recursive: true, force: true });
 });

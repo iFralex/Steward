@@ -30,6 +30,11 @@ export interface PushDeliveryReport {
   pruned: number;
 }
 
+export interface PushRegistryStatus {
+  subscriptions: number;
+  lastDelivery: { at: number; tag?: string; report: PushDeliveryReport } | null;
+}
+
 /** Sends one push message to one subscription; rejects on delivery failure. */
 export type SendFn = (sub: PushSubscriptionJSON, payload: string) => Promise<unknown>;
 
@@ -47,6 +52,7 @@ function isGoneStatus(err: unknown): boolean {
 
 export class PushRegistry {
   private readonly subs = new Map<string, PushSubscriptionJSON>();
+  private lastDelivery: PushRegistryStatus["lastDelivery"] = null;
 
   constructor(
     private readonly filePath: string,
@@ -94,6 +100,10 @@ export class PushRegistry {
     return this.subs.size;
   }
 
+  status(): PushRegistryStatus {
+    return { subscriptions: this.subs.size, lastDelivery: this.lastDelivery };
+  }
+
   /**
    * Best-effort fan-out to every subscription. Never throws: a per-subscription
    * failure is swallowed (and, on a 404/410 "gone" response, prunes that
@@ -103,7 +113,10 @@ export class PushRegistry {
     const body = JSON.stringify(payload);
     const subs = [...this.subs.values()];
     const report: PushDeliveryReport = { attempted: subs.length, delivered: 0, failed: 0, pruned: 0 };
-    if (subs.length === 0) return report;
+    if (subs.length === 0) {
+      this.lastDelivery = { at: Date.now(), tag: typeof payload.tag === "string" ? payload.tag : undefined, report: { ...report } };
+      return report;
+    }
     let changed = false;
     await Promise.all(
       subs.map(async (sub) => {
@@ -120,6 +133,7 @@ export class PushRegistry {
       }),
     );
     if (changed) this.persist();
+    this.lastDelivery = { at: Date.now(), tag: typeof payload.tag === "string" ? payload.tag : undefined, report: { ...report } };
     return report;
   }
 }
