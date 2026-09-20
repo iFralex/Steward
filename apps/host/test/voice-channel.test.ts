@@ -55,6 +55,18 @@ test("Ringback voice prompt delegates sensitive approvals to the host", () => {
   assert.match(prompt, /Ciao, sono Steward\./);
 });
 
+test("Ringback opening prompt follows Steward's persisted user language", () => {
+  const italian = ringbackCallPrompt(localizedOpeningLine(undefined, "it"), "it");
+  const english = ringbackCallPrompt(localizedOpeningLine(undefined, "en"), "en");
+
+  assert.match(italian, /Ciao, sono Steward\. Come posso aiutarti\?/);
+  assert.match(italian, /Parla in italiano/);
+  assert.doesNotMatch(italian, /Speak English/);
+  assert.match(english, /Hi, this is Steward\. How can I help\?/);
+  assert.match(english, /Speak English/);
+  assert.doesNotMatch(english, /Parla in italiano/);
+});
+
 test("voice calls preserve the PWA policy and only add call/scoped grants", () => {
   const policy: Parameters<typeof voiceToolPolicy>[0] = {
     default: "gate", denyPrefixes: ["blocked__"], rules: { read: "allow", forbidden: "deny" },
