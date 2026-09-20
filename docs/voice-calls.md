@@ -38,7 +38,10 @@ security model.
    but it is never selected automatically.
 
 3. Configure the Linphone account with `./tools/configure-ringback-sip.sh
-   <username>`. The password prompt is hidden.
+   <username>`. macOS Keychain asks for and stores the password; `voice.env`
+   contains only the non-secret SIP ID and username. Existing installations
+   with a plaintext password can migrate once with
+   `./tools/configure-ringback-sip.sh --migrate-legacy <username>`.
 4. Enable Ringback in Steward:
 
    ```bash
@@ -72,6 +75,10 @@ runtime without placing a call with:
 `--version` prints the pinned runtime manifest. `--stop` is an emergency stop;
 restart Steward before placing another call because it also closes the active
 MCP connection.
+
+After migrating an account that was used for testing, rotate its password on
+the Linphone account service and run `configure-ringback-sip.sh` again. Updating
+only the local Keychain item does not change the server-side SIP password.
 
 ## iPhone Shortcut
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Enable the already-installed Ringback transport in Steward's local config.
-# SIP credentials stay in Ringback's separate voice.env file.
+# SIP account metadata stays in voice.env; its password stays in macOS Keychain.
 set -euo pipefail
 
 CONFIG_DIR="$HOME/Library/Application Support/Steward"

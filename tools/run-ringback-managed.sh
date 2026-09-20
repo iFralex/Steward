@@ -8,6 +8,8 @@ RUNTIME_DIR="${STEWARD_RINGBACK_RUNTIME_DIR:-$APP/.steward-runtime}"
 LOCK_DIR="$RUNTIME_DIR/voice-mcp.lock"
 PID_FILE="$LOCK_DIR/pid"
 MANIFEST="$APP/steward-runtime.json"
+KEYCHAIN_SERVICE="${STEWARD_RINGBACK_KEYCHAIN_SERVICE:-com.steward.ringback.sip}"
+CREDENTIAL_STORE="missing"
 
 load_environment() {
   if [ -f "$VOICE_ENV" ]; then
@@ -15,6 +17,18 @@ load_environment() {
     # shellcheck disable=SC1090
     . "$VOICE_ENV"
     set +a
+  fi
+
+  if [ -n "${VOICE_SIP_USER:-}" ]; then
+    keychain_password="$(/usr/bin/security find-generic-password -a "$VOICE_SIP_USER" -s "$KEYCHAIN_SERVICE" -w 2>/dev/null || true)"
+    if [ -n "$keychain_password" ]; then
+      VOICE_SIP_PASS="$keychain_password"
+      export VOICE_SIP_PASS
+      CREDENTIAL_STORE="keychain"
+      unset keychain_password
+    elif [ -n "${VOICE_SIP_PASS:-}" ]; then
+      CREDENTIAL_STORE="legacy-env"
+    fi
   fi
 
   PJPROJECT_DIR="${PJPROJECT_DIR:-$HOME/build/pjproject-2.17}"
@@ -54,8 +68,8 @@ doctor() {
   else
     ok=false
   fi
-  printf '{"ok":%s,"runtimeVersion":"%s","architecture":"%s","pythonArchitecture":"%s","pjsua2":%s,"managed":true}\n' \
-    "$ok" "$version" "$(uname -m)" "$(printf '%s' "$python_arch" | sed 's/["\\]/\\&/g')" "$pjsua2"
+  printf '{"ok":%s,"runtimeVersion":"%s","architecture":"%s","pythonArchitecture":"%s","pjsua2":%s,"credentialStore":"%s","managed":true}\n' \
+    "$ok" "$version" "$(uname -m)" "$(printf '%s' "$python_arch" | sed 's/["\\]/\\&/g')" "$pjsua2" "$CREDENTIAL_STORE"
   [ "$ok" = true ]
 }
 
