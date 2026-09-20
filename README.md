@@ -316,13 +316,16 @@ turns snapshot changes into domain events, and matching events are placed in a
 durable SQLite queue. The event resumes the persisted agent session of the
 originating chat, where the agent can use read-only tools to refresh facts.
 `create_agent_watch` adds narrowly constrained grants to individual rules and
-therefore requires the normal approval gate. A voice grant lets that one rule
-call through Ringback. A mail grant fixes the recipient list, subject and body
-template in advance; the runtime rejects additions or changes (including CC,
-BCC, attachments and delayed send) and durably claims the action before it
-runs. Both paths resume the same conversation with its read-only train,
-calendar, mail and memory tools available. If generation or calling fails, a
-deterministic fallback push is delivered.
+therefore requires the normal approval gate. Its generic capability registry
+currently covers voice, mail send/reply, calendar create/update/delete,
+Contacts create/update and Action Center status changes. Each argument uses an
+`exact`, trusted `template`, `one_of`, or numeric `range` constraint. Extra
+fields are denied, the runtime enables only tools granted by the rules matched
+by that event, and a durable claim prevents repeated execution. New write tools
+remain unavailable until their argument surface is explicitly registered.
+These turns retain the conversation's read-only train, calendar, mail and
+memory tools. If generation or calling fails, a deterministic fallback push is
+delivered.
 
 The train adapter currently emits platform announcement/confirmation/change,
 departure, arrival, cancellation, delay change and per-stop arrival/departure
@@ -978,7 +981,7 @@ Every Pi tool definition is wrapped by the host before being exposed to the agen
 - `gate` — emit an approval request and wait;
 - `deny` — return a blocked result without asking.
 
-The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic read-only watch creation and stopping are automatic. `create_agent_watch` is gated because a rule can grant one future Ringback call or one exact Apple Mail send. At execution time the headless policy enables only the granted tool, a second deterministic guard checks the exact email arguments, and a durable claim prevents retries from sending it twice. Other write tools remain denied. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
+The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic read-only watch creation and stopping are automatic. `create_agent_watch` is gated because a rule can grant a registered future capability. At execution time the headless policy enables only tools granted by the matched rules; a second deterministic guard checks every argument against generic field constraints, and a durable claim prevents retries from repeating the action. Unknown tools and unconstrained write fields are rejected. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
 
 ### Approval Lifecycle
 
@@ -1148,9 +1151,15 @@ A representative train watch is data, not new scheduler code:
         "tool": "mcp__mail__send_email",
         "maxInvocations": 1,
         "constraints": {
-          "to": ["sorella@example.com"],
-          "subject": "Sto arrivando",
-          "bodyTemplate": "Sto arrivando a {{destination}} alle {{estimatedArrival}}."
+          "denyExtraFields": true,
+          "fields": {
+            "to": { "kind": "exact", "value": ["sorella@example.com"] },
+            "subject": { "kind": "exact", "value": "Sto arrivando" },
+            "body": {
+              "kind": "template",
+              "template": "Sto arrivando a {{state.destination}} alle {{state.estimatedArrival}}."
+            }
+          }
         }
       }]
     },
@@ -1171,6 +1180,15 @@ A representative train watch is data, not new scheduler code:
   ]
 }
 ```
+
+The capability registry lives in `apps/host/src/core/watch-capabilities.ts`.
+Registering another write tool declares its allowed and required argument
+fields, whether constraints are mandatory, its execution mode and invocation
+limit. The shared guard then supplies template resolution, exact/set/range
+matching, rejection of extra fields, durable claims, Usage and Audit without
+changes to the watch engine or scheduler. Arbitrary MCP names are intentionally
+not accepted: connection to Steward does not automatically make a write tool
+eligible for unattended execution.
 
 The host must be awake and connected while the watch is active. If it resumes
 only after a temporal target has already passed, Steward deliberately does not

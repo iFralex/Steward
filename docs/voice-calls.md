@@ -136,7 +136,10 @@ reference, can refresh live facts with read-only tools such as `train_status`,
 then calls through the same `VoiceCallCoordinator`. The phone conversation,
 tool calls and transcript remain in the original chat, so follow-up questions
 such as the expected arrival time can be answered during the call. Unrelated
-writes remain denied. A failed or interrupted call falls back to Web Push, and
+writes remain denied. If another rule matched the same event and explicitly
+granted a registered constrained action, that action is available inside the
+same scoped phone turn; its deterministic argument guard is unchanged. A
+failed or interrupted call falls back to Web Push, and
 the fallback is persisted before dialing so a host restart never redials the
 same event automatically.
 
