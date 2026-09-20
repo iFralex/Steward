@@ -20,6 +20,9 @@ export async function buildApprovalPreview(
   context?: ApprovalPreviewContext,
 ): Promise<Record<string, unknown> | undefined> {
   try {
+    if (tool === "create_agent_watch") {
+      return { source: input.source, resourceRef: input.resourceRef, instruction: input.instruction, expiresAt: input.expiresAt, rules: input.rules };
+    }
     if (["mcp__calendar__update_event", "mcp__calendar__delete_event"].includes(tool) && string(input.uid)) {
       return asRecord(await callJson(callTool, "mcp__calendar__read_event", { uid: input.uid }, context));
     }

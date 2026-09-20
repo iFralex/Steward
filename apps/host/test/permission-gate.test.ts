@@ -78,3 +78,22 @@ test("gated tool's requestApproval receives the chatId it was constructed with",
   assert.equal(captured[0].tool, "send");
   assert.deepEqual(captured[0].input, { a: 1 });
 });
+
+test("an execution guard runs after policy and can block or finalize an allowed tool", async () => {
+  const calls: any[] = [];
+  const events: string[] = [];
+  const denied = gateToolDefinition(fakeTool("read", calls), policy, denyAll, noFollowUp, undefined, {
+    beforeExecute: async () => ({ allowed: false, reason: "outside grant" }),
+  });
+  const blocked: any = await denied.execute("1", { a: 1 }, undefined, undefined, {} as any);
+  assert.match(blocked.content[0].text, /outside grant/);
+  assert.equal(calls.length, 0);
+
+  const allowed = gateToolDefinition(fakeTool("read", calls), policy, denyAll, noFollowUp, undefined, {
+    beforeExecute: async () => ({ allowed: true }),
+    afterExecute: async (_tool, input, error) => { events.push(`${JSON.stringify(input)}:${error ?? "ok"}`); },
+  });
+  await allowed.execute("2", { a: 2 }, undefined, undefined, {} as any);
+  assert.deepEqual(calls, [{ a: 2 }]);
+  assert.deepEqual(events, ['{"a":2}:ok']);
+});

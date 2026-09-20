@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { buildMcpBridge, type McpBridge } from "@steward/mcp-bridge";
 import { recordAudit } from "@steward/audit-log";
-import { gateToolDefinition } from "./permission-gate.ts";
+import { gateToolDefinition, type ToolExecutionGuard } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
 import { buildClipboardTool } from "./clipboard-tool.ts";
 import { filesFromOutput } from "./file-registry.ts";
@@ -171,6 +171,7 @@ export class ChatManager {
     private readonly config: HostConfig,
     private readonly session: Session,
     private readonly emit: Emit,
+    private readonly executionGuard?: ToolExecutionGuard,
   ) { chatManagers.add(this); }
 
   private async ensureBridge(): Promise<BridgeRuntime> {
@@ -227,6 +228,7 @@ export class ChatManager {
           }),
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
           () => ({ sessionId: this.session.id, chatId }),
+          this.executionGuard,
         ),
       ),
       gateToolDefinition(
@@ -235,6 +237,7 @@ export class ChatManager {
         (req) => this.session.requestApproval({ ...req, chatId }),
         () => ({ followUp: (t: string) => piSession.followUp(t) }),
         () => ({ sessionId: this.session.id, chatId }),
+        this.executionGuard,
       ),
       ...buildWatchTools(chatId).map((def) =>
         gateToolDefinition(
@@ -242,6 +245,7 @@ export class ChatManager {
           (req) => this.session.requestApproval({ ...req, chatId }),
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
           () => ({ sessionId: this.session.id, chatId }),
+          this.executionGuard,
         ),
       ),
       buildAskUserTool((q) => this.session.askQuestion(q, chatId)),

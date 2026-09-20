@@ -4,9 +4,9 @@ import { watchAgentPrompt, watchTitle } from "../src/core/watch-notification-ser
 
 test("generic watch prompt resumes the chat with read-only tools and contains no train policy", () => {
   const prompt = watchAgentPrompt({
-    id: "e", watchId: "w", chatId: "c", attempts: 0, resourceRef: "sensor-1", authorizedTools: [],
+    id: "e", watchId: "w", chatId: "c", attempts: 0, resourceRef: "sensor-1",
     instruction: "Notify me when the value changes",
-    rule: { id: "changed", event: "sensor.changed" },
+    rules: [{ id: "changed", event: "sensor.changed" }],
     event: { type: "sensor.changed", key: "42", timestamp: 1, data: { value: 42 }, currentState: {}, fallbackText: "42" },
   }, "en");
   assert.match(prompt, /Notify me when the value changes/);
@@ -30,9 +30,9 @@ test("an adapter can add domain guidance and localized titles", () => {
     },
   };
   const prompt = watchAgentPrompt({
-    id: "e", watchId: "w", chatId: "c", attempts: 0, resourceRef: "train", authorizedTools: [],
+    id: "e", watchId: "w", chatId: "c", attempts: 0, resourceRef: "train",
     instruction: "Avvisami quando devo prepararmi a scendere",
-    rule: { id: "before", event: "train.stop_arrived", where: { positionRelativeToDestination: -1 } },
+    rules: [{ id: "before", event: "train.stop_arrived", where: { positionRelativeToDestination: -1 } }],
     event: { ...event, key: "stop", timestamp: 1, currentState: {}, fallbackText: "Fermata" },
   }, "it");
   assert.match(prompt, /Avvisami quando devo prepararmi a scendere/);
@@ -47,8 +47,8 @@ test("agent watch prompt resumes the chat and authorizes a conversational call",
     id: "event-1", watchId: "watch-1", chatId: "chat-1", attempts: 0,
     instruction: "Chiamami alla fermata precedente",
     resourceRef: "vt1_train",
-    authorizedTools: ["mcp__voice__call_start"],
-    rule: { id: "before", event: "train.stop_arrived", where: { positionRelativeToDestination: -1 }, once: true },
+    rules: [{ id: "before", event: "train.stop_arrived", where: { positionRelativeToDestination: -1 }, once: true,
+      grants: [{ tool: "mcp__voice__call_start" }] }],
     event: {
       type: "train.stop_arrived", key: "station:1", timestamp: 1,
       data: { station: "Modena", positionRelativeToDestination: -1 },

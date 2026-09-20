@@ -31,7 +31,7 @@ class Adapter implements WatchAdapter {
   }
 }
 
-async function fixture(authorizedTools: string[] = []) {
+async function fixture(voice = false) {
   const store = WatchStore.open(join(mkdtempSync(join(testRoot, "watch-")), "watches.db"));
   const adapter = new Adapter();
   const engine = new WatchEngine(store).register(adapter);
@@ -39,15 +39,15 @@ async function fixture(authorizedTools: string[] = []) {
   await engine.create({
     source: "fake", resourceRef: "train-ref", chatId: chat.id,
     instruction: "Chiamami alla fermata precedente",
-    rules: [{ id: "before", event: "fake.arrived", once: true }],
-    ...(authorizedTools.length ? { authorizedTools } : {}),
+    rules: [{ id: "before", event: "fake.arrived", once: true,
+      ...(voice ? { grants: [{ tool: "mcp__voice__call_start" as const }] } : {}) }],
   });
   adapter.step = 1;
   return { engine, store, chat };
 }
 
 test("an authorized event invokes one conversational voice turn in the originating chat", async () => {
-  const fx = await fixture(["mcp__voice__call_start"]);
+  const fx = await fixture(true);
   let calls = 0;
   let seenChat = "";
   let seenPrompt = "";
@@ -77,7 +77,7 @@ test("an authorized event invokes one conversational voice turn in the originati
 });
 
 test("a failed voice event falls back to push and never redials on delivery retry", async () => {
-  const fx = await fixture(["mcp__voice__call_start"]);
+  const fx = await fixture(true);
   let voiceCalls = 0;
   let pushAttempts = 0;
   const push = new PushRegistry(join(testRoot, "fallback-push.json"), async () => {

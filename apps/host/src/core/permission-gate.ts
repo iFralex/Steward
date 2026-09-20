@@ -38,12 +38,18 @@ export interface ToolAuditContext {
   chatId?: string;
 }
 
+export interface ToolExecutionGuard {
+  beforeExecute(tool: string, input: Record<string, unknown>): Promise<{ allowed: boolean; reason?: string }>;
+  afterExecute?(tool: string, input: Record<string, unknown>, error?: string): Promise<void>;
+}
+
 export function gateToolDefinition(
   def: ToolDefinition,
   policy: ToolPolicy,
   requestApproval: RequestApproval,
   getSession: () => FollowUpSink,
   getAuditContext?: () => ToolAuditContext,
+  executionGuard?: ToolExecutionGuard,
 ): ToolDefinition {
   return {
     ...def,
@@ -66,7 +72,7 @@ export function gateToolDefinition(
         return blocked(`Tool ${def.name} is disabled by policy.`);
       }
       if (decision === "allow") {
-        return def.execute(id, params as never, signal as never, onUpdate as never, ctx as never);
+        return executeGuarded(def, id, params, signal, onUpdate, ctx, executionGuard);
       }
       // gate → ask the user
       const outcome = await requestApproval({ tool: def.name, input: toRecord(params) });
@@ -101,9 +107,33 @@ export function gateToolDefinition(
       if (outcome.note?.trim()) {
         await getSession().followUp(`User note: ${outcome.note.trim()}`);
       }
-      return def.execute(id, args as never, signal as never, onUpdate as never, ctx as never);
+      return executeGuarded(def, id, args, signal, onUpdate, ctx, executionGuard);
     },
   };
+}
+
+async function executeGuarded(
+  def: ToolDefinition,
+  id: string,
+  params: unknown,
+  signal: unknown,
+  onUpdate: unknown,
+  ctx: unknown,
+  guard?: ToolExecutionGuard,
+) {
+  const input = toRecord(params);
+  if (guard) {
+    const authorization = await guard.beforeExecute(def.name, input);
+    if (!authorization.allowed) return blocked(authorization.reason ?? `Tool ${def.name} is outside the approved watch grant.`);
+  }
+  try {
+    const output = await def.execute(id, params as never, signal as never, onUpdate as never, ctx as never);
+    await guard?.afterExecute?.(def.name, input);
+    return output;
+  } catch (error) {
+    await guard?.afterExecute?.(def.name, input, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 }
 
 function blocked(text: string) {

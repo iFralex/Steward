@@ -9,7 +9,7 @@ function watchPayload(watch: WatchRecord): Record<string, unknown> {
     resourceRef: watch.resourceRef,
     status: watch.status,
     ruleIds: watch.rules.map((rule) => rule.id),
-    authorizedTools: watch.authorizedTools ?? [],
+    grants: watch.rules.flatMap((rule) => (rule.grants ?? []).map((grant) => ({ ruleId: rule.id, ...grant }))),
     expiresAt: watch.expiresAt,
   };
 }
@@ -39,10 +39,10 @@ export function createWatchObserver(): WatchEngineObserver {
         payload: watchPayload(watch), sourceRefs: [{ type: "watch", id: watch.id, label: watch.source }],
       });
     },
-    eventQueued(watch: WatchRecord, rule: WatchRule, event: DomainEvent) {
+    eventQueued(watch: WatchRecord, rules: WatchRule[], event: DomainEvent) {
       audit(watch, {
         actor: "scheduler", eventType: "watch.event_queued", risk: "low", summary: `Queued ${event.type}`,
-        ok: true, payload: { ...watchPayload(watch), rule, event },
+        ok: true, payload: { ...watchPayload(watch), rules, event },
         sourceRefs: [{ type: "watch", id: watch.id, label: event.type }],
       });
     },

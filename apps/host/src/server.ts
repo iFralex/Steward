@@ -27,6 +27,7 @@ import { getNotificationLang, setNotificationLang } from "./core/notification-la
 import { notificationCopy } from "./core/notification-copy.ts";
 import { sharedWatchEngine } from "./core/watch-runtime.ts";
 import { pollAndDeliverWatchEvents } from "./core/watch-notification-service.ts";
+import { createWatchExecutionGuard, watchHasGrant } from "./core/watch-grants.ts";
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
@@ -750,7 +751,20 @@ export function startServer(config: HostConfig): WebSocketServer {
   const pollWatches = () => pollAndDeliverWatchEvents({
     engine: sharedWatchEngine(),
     push: pushRegistry,
-    runAgentTurn: (chatId, prompt) => watchChats.runAutomaticTurn(chatId, prompt),
+    runAgentTurn: async (chatId, prompt, pending) => {
+      if (!watchHasGrant(pending, "mcp__mail__send_email")) return watchChats.runAutomaticTurn(chatId, prompt);
+      const scopedRules = { ...backgroundRules, "mcp__mail__send_email": "allow" as const };
+      const scoped = new ChatManager({
+        ...config,
+        gateway: { ...config.gateway, usageService: "host", usageAction: "watch-agent-turn" },
+        policy: { ...config.policy, default: "deny", rules: scopedRules },
+      }, watchSession, () => {}, createWatchExecutionGuard(pending, sharedWatchEngine().store));
+      try {
+        return await scoped.runAutomaticTurn(chatId, prompt);
+      } finally {
+        await scoped.close();
+      }
+    },
     runVoiceTurn: (chatId, prompt, eventId) => voiceCalls.runWatchEvent(chatId, prompt, eventId),
   });
   void pollWatches();

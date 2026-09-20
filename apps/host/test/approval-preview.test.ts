@@ -46,3 +46,12 @@ test("reply preview derives recipient and subject from the original message", as
   });
   assert.deepEqual(preview, { to: ["Ada <ada@example.com>"], subject: "Hello", mailUrl: "message://42" });
 });
+
+test("agent watch approval previews every rule-scoped action and constraint", async () => {
+  const rules = [{ id: "mail", trigger: { kind: "before_time", field: "estimatedArrivalMs", minutes: 30 }, once: true,
+    grants: [{ tool: "mcp__mail__send_email", constraints: { to: ["sister@example.com"], subject: "Arrivo", bodyTemplate: "Sto arrivando" } }] }];
+  const preview = await buildApprovalPreview("create_agent_watch", {
+    source: "train", resourceRef: "ref", instruction: "Avvisala", rules,
+  }, async () => { throw new Error("preview must not call another tool"); });
+  assert.deepEqual(preview, { source: "train", resourceRef: "ref", instruction: "Avvisala", expiresAt: undefined, rules });
+});
