@@ -124,7 +124,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM HUP
 
-"$PYTHON_BIN" "$APP/voice_mcp.py" &
+# Bash redirects stdin to /dev/null for asynchronous commands when job control
+# is disabled unless an explicit stdin redirection is present. MCP is a stdio
+# protocol, so preserve the parent pipe or the server sees EOF and exits before
+# it can answer initialize/listTools.
+"$PYTHON_BIN" "$APP/voice_mcp.py" <&0 &
 child_pid=$!
 wait "$child_pid"
 exit_code=$?
