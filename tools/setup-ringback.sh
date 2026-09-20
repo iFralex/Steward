@@ -46,9 +46,6 @@ fi
 if ! grep -q 'dialDurationMs' "$RINGBACK_DIR/voice_mcp.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-diagnostics.patch"
 fi
-if ! grep -q 'remote_reachability' "$RINGBACK_DIR/voice_mcp.py"; then
-  git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-reliability.patch"
-fi
 
 # Ringback compiles a Python extension against Homebrew libraries. Always use
 # the native Apple Silicon toolchain when it is available; /usr/local may still
@@ -169,12 +166,14 @@ else
   if ! grep -q '^export VOICE_ANSWER_TIMEOUT=' "$VOICE_ENV"; then
     printf 'export VOICE_ANSWER_TIMEOUT="60"\n' >> "$VOICE_ENV"
   fi
-  LAUNCHER="$RINGBACK_DIR/run_voice_mcp.sh"
+  install -m 755 "$STEWARD_ROOT/tools/run-ringback-managed.sh" "$RINGBACK_DIR/steward-run-voice-mcp.sh"
+  install -m 644 "$STEWARD_ROOT/tools/ringback-runtime.json" "$RINGBACK_DIR/steward-runtime.json"
+  LAUNCHER="$RINGBACK_DIR/steward-run-voice-mcp.sh"
 fi
 
 echo
 echo "Ringback installed at: $RINGBACK_DIR"
-echo "Next: edit $RINGBACK_DIR/voice.env with the Linphone SIP credentials."
+echo "Next: run ./tools/configure-ringback-sip.sh <linphone-username>."
 echo "Also add these lines to Steward's config.env:"
 echo "STEWARD_VOICE_TRANSPORT=ringback"
 echo "STEWARD_RINGBACK_LAUNCHER=$LAUNCHER"

@@ -1,0 +1,7 @@
+{
+  "runtimeVersion": "1",
+  "ringbackCommit": "dfadf47ef5f106079cb11d48daaa4da39825e140",
+  "architecture": "arm64",
+  "homebrewPrefix": "/opt/homebrew",
+  "managedLauncher": "steward-run-voice-mcp.sh"
+}

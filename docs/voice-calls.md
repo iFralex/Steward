@@ -37,8 +37,8 @@ security model.
    Docker remains an explicit fallback via `./tools/setup-ringback.sh docker`,
    but it is never selected automatically.
 
-3. Edit Ringback's generated `voice.env` and set `VOICE_SIP_ID`,
-   `VOICE_SIP_USER`, and `VOICE_SIP_PASS`.
+3. Configure the Linphone account with `./tools/configure-ringback-sip.sh
+   <username>`. The password prompt is hidden.
 4. Enable Ringback in Steward:
 
    ```bash
@@ -49,7 +49,7 @@ security model.
 
    ```dotenv
    STEWARD_VOICE_TRANSPORT=ringback
-   STEWARD_RINGBACK_LAUNCHER=/Users/YOU/Library/Application Support/Steward/ringback/run_voice_mcp.sh
+   STEWARD_RINGBACK_LAUNCHER=/Users/YOU/Library/Application Support/Steward/ringback/steward-run-voice-mcp.sh
    STEWARD_VOICE_OPENING_LINE=Ciao, sono Steward. Come posso aiutarti?
    ```
 
@@ -59,6 +59,19 @@ security model.
 Ringback remains an external optional component rather than being copied into
 the packaged app. This avoids silently combining its pjproject/pjsua2 GPL
 runtime with Steward's distributable bundle.
+
+The Steward launcher owns Ringback's lifecycle through a single-instance lock
+and PID file. Ringback starts as an MCP child, receives termination when the
+host exits, and removes stale locks on the next launch. Diagnose the native ARM
+runtime without placing a call with:
+
+```bash
+"$HOME/Library/Application Support/Steward/ringback/steward-run-voice-mcp.sh" --doctor
+```
+
+`--version` prints the pinned runtime manifest. `--stop` is an emergency stop;
+restart Steward before placing another call because it also closes the active
+MCP connection.
 
 ## iPhone Shortcut
 

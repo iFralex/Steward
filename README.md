@@ -1727,7 +1727,7 @@ Logs go in:
 | `STEWARD_SPEECH_LANGUAGE` | Whisper language code, default `en`; set `it` explicitly for Italian dictation. |
 | `STEWARD_SPEECH_ENABLED` | Set `0` to disable transcription. |
 | `STEWARD_VOICE_TRANSPORT` | Optional voice transport: `ringback`; `streamcore` is reserved for the future adapter. |
-| `STEWARD_RINGBACK_LAUNCHER` | Absolute path to Ringback's `run_voice_mcp.sh`. |
+| `STEWARD_RINGBACK_LAUNCHER` | Absolute path to Ringback's Steward-managed MCP launcher. |
 | `STEWARD_VOICE_OPENING_LINE` | Default first sentence spoken when `/voice/call` starts. |
 | `STEWARD_STREAMCORE_URL` | Reserved base URL for the future StreamCore adapter. |
 | `TRAIN_MCP_ENTRY` | Override the train MCP entrypoint; normally set automatically by the packaged launcher. |

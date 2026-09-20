@@ -5,7 +5,7 @@ set -euo pipefail
 
 CONFIG_DIR="$HOME/Library/Application Support/Steward"
 CONFIG_FILE="$CONFIG_DIR/config.env"
-LAUNCHER="$CONFIG_DIR/ringback/run_voice_mcp.sh"
+LAUNCHER="$CONFIG_DIR/ringback/steward-run-voice-mcp.sh"
 
 [ -x "$LAUNCHER" ] || {
   echo "Ringback launcher not found or not executable: $LAUNCHER" >&2
