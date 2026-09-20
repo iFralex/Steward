@@ -115,9 +115,8 @@ automatically redialed after no answer. The outbound Ringback account is
 deliberately not SIP-registered, so preflight can verify the local engine but
 remote Linphone reachability remains unknown until dialing.
 
-For the proposed secure in-call confirmation protocol, see
-[Voice approvals](voice-approvals.md). It is a design boundary and is not yet
-enabled by `/quick-call`.
+For the in-call confirmation protocol, see [Voice approvals](voice-approvals.md).
+It is active in calls created by `/quick-call` and in watcher-started calls.
 
 `GET /voice/status` reports detailed phases such as `preflighting`, `starting`,
 `ringing`, `speaking`, `listening`, `processing`, `ending`, and `failed`, plus
@@ -134,9 +133,9 @@ Voice calls section of Usage. A protocol-level MCP success containing a terminal
 Only the authenticated `/voice/call` endpoint automatically authorizes dialing.
 In ordinary chat, `call_start` still produces an approval card. Once connected,
 the harmless voice lifecycle tools may continue without one approval per turn.
-Every unrelated write remains denied in a headless call: spoken confirmation
-cannot send mail, edit a calendar, or mutate files. Steward tells the user to
-approve those operations in the app.
+Every tool follows the same policy as the PWA. A gated action pauses the agent;
+Ringback reads the complete request and accepts `approva`, `rifiuta`, or
+`ripeti`. Explicit policy denials remain non-overridable.
 
 ## Calls started by a watch
 
@@ -152,9 +151,10 @@ reference, can refresh live facts with read-only tools such as `train_status`,
 then calls through the same `VoiceCallCoordinator`. The phone conversation,
 tool calls and transcript remain in the original chat, so follow-up questions
 such as the expected arrival time can be answered during the call. Unrelated
-writes remain denied. If another rule matched the same event and explicitly
-granted a registered constrained action, that action is available inside the
-same scoped phone turn; its deterministic argument guard is unchanged. A
+writes use the normal voice approval flow. If another rule matched the same
+event and explicitly granted a registered constrained action, that action is
+available inside the same scoped phone turn; its deterministic argument guard
+is unchanged. A
 failed or interrupted call falls back to Web Push, and
 the fallback is persisted before dialing so a host restart never redials the
 same event automatically.

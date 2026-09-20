@@ -2,13 +2,15 @@
 import { randomUUID } from "node:crypto";
 import { recordAudit } from "@steward/audit-log";
 import type { McpBridge } from "@steward/mcp-bridge";
+import type { ServerEvent } from "@steward/protocol";
 import type { HostConfig } from "../config.ts";
 import { ChatManager, extractToolOutput, sharedMcpBridge, type TurnResult } from "./agent-runner.ts";
 import { chatStore } from "./chat-store.ts";
 import { Session, type Emit } from "./session.ts";
-import { usageLedger, type VoiceCallRecord } from "@steward/usage-ledger";
+import { usageLedger, type ToolCallRecord, type VoiceCallRecord } from "@steward/usage-ledger";
 import { parseRingbackFailure, type VoiceFailureDiagnostic } from "./voice-diagnostics.ts";
 import type { ToolExecutionGuard } from "./permission-gate.ts";
+import type { ToolPolicy } from "./tool-policy.ts";
 
 export type VoiceCallState =
   | "disabled" | "idle" | "preflighting" | "starting" | "ringing"
@@ -63,9 +65,14 @@ interface VoiceRunner {
 interface VoiceCoordinatorDeps {
   bridge?: () => Promise<McpBridge>;
   createChat?: () => { id: string };
-  createRunner?: (emit: Emit, scope?: { allowedTools: string[]; executionGuard?: ToolExecutionGuard }) => VoiceRunner;
+  createRunner?: (
+    emit: Emit,
+    scope?: { allowedTools: string[]; executionGuard?: ToolExecutionGuard },
+    session?: Session,
+  ) => VoiceRunner;
   audit?: typeof recordAudit;
   usage?: (record: VoiceCallRecord) => void;
+  toolUsage?: (record: ToolCallRecord) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -79,6 +86,80 @@ interface VoiceStartOptions {
 
 const PREFLIGHT_ATTEMPTS = 2;
 const IDEMPOTENCY_TTL_MS = 10 * 60_000;
+const MAX_APPROVAL_EXCHANGES = 6;
+
+type VoiceApprovalEvent = Extract<ServerEvent, { type: "approval_request" }>;
+export type VoiceApprovalDecision = "allow" | "deny";
+
+function jsonForSpeech(value: unknown): string {
+  if (value === undefined) return "nessuno";
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+/** Deterministic rendering of exactly what the permission gate is waiting on. */
+export function formatVoiceApprovalRequest(request: Pick<VoiceApprovalEvent, "tool" | "input" | "preview">): string {
+  const parts = [
+    "Richiesta di approvazione.",
+    `Strumento: ${request.tool}.`,
+    `Argomenti: ${jsonForSpeech(request.input)}.`,
+  ];
+  if (request.preview !== undefined) parts.push(`Anteprima: ${jsonForSpeech(request.preview)}.`);
+  parts.push("Di approva per eseguirla, rifiuta per negarla, oppure ripeti per riascoltare questa richiesta.");
+  return parts.join(" ");
+}
+
+function userReply(output: unknown): string {
+  const text = outputText(output);
+  const wrapped = text.match(/User replied:\s*["“]([\s\S]*?)["”]\s*$/i);
+  return (wrapped?.[1] ?? text)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("it")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export function parseVoiceApprovalReply(output: unknown): VoiceApprovalDecision | "repeat" | "unknown" {
+  const reply = userReply(output);
+  if (reply === "approva") return "allow";
+  if (reply === "rifiuta") return "deny";
+  if (["ripeti", "ripetilo", "rileggi", "rileggi la richiesta"].includes(reply)) return "repeat";
+  return "unknown";
+}
+
+/** Runs outside the model so the agent cannot interpret its own authorization. */
+export async function conductVoiceApproval(
+  prompt: string,
+  converse: (text: string) => Promise<unknown>,
+  onRepeat?: () => void,
+): Promise<{ decision: VoiceApprovalDecision; repeats: number; reason: string }> {
+  let next = prompt;
+  let repeats = 0;
+  for (let exchange = 0; exchange < MAX_APPROVAL_EXCHANGES; exchange += 1) {
+    const parsed = parseVoiceApprovalReply(await converse(next));
+    if (parsed === "allow" || parsed === "deny") return { decision: parsed, repeats, reason: "spoken-command" };
+    if (parsed === "repeat") {
+      repeats += 1;
+      onRepeat?.();
+      next = prompt;
+      continue;
+    }
+    next = "Non ho capito. Di soltanto approva, rifiuta oppure ripeti.";
+  }
+  return { decision: "deny", repeats, reason: "unrecognized-or-too-many-attempts" };
+}
+
+/** The call has the PWA policy, plus call-start and any watch-scoped grants. */
+export function voiceToolPolicy(policy: ToolPolicy, allowedTools: string[] = []): ToolPolicy {
+  return {
+    ...policy,
+    rules: Object.fromEntries([
+      ...Object.entries(policy.rules),
+      ["mcp__voice__call_start", "allow"],
+      ...allowedTools.map((tool) => [tool, "allow"]),
+    ]) as ToolPolicy["rules"],
+  };
+}
 
 function outputText(output: unknown): string {
   if (typeof output === "string") return output;
@@ -113,7 +194,7 @@ export function ringbackCallPrompt(openingLine: string): string {
     "Parla in italiano salvo che l'utente cambi lingua; usa una o due frasi brevi per turno.",
     "Non usare ask_user durante la telefonata: fai le domande direttamente con converse.",
     "Puoi usare gli strumenti di sola lettura di Steward quando servono.",
-    "Le operazioni sensibili non sono autorizzabili a voce: se ne serve una, spiega che occorre approvarla nell'app e non dichiararla eseguita.",
+    "Le operazioni sensibili attivano il sottoprotocollo vocale dell'host: attendi la decisione senza chiederla o interpretarla tu e non dichiarare eseguita un'azione negata.",
     "Quando l'utente saluta, riaggancia o il tool restituisce [CALL ENDED], termina con mcp__voice__call_end e concludi il turno.",
     "Se call_start restituisce [NO ANSWER] o [CALL FAILED], non riprovare: concludi il turno spiegando brevemente il problema.",
     "Non rispondere soltanto in chat: lo scopo di questo turno è svolgere la conversazione al telefono.",
@@ -123,6 +204,9 @@ export function ringbackCallPrompt(openingLine: string): string {
 /** One active call per host: Ringback itself owns one process-global SIP session. */
 export class VoiceCallCoordinator {
   private runner: VoiceRunner | null = null;
+  private runnerSession: Session | null = null;
+  private activeApprovalSession: Session | null = null;
+  private approvalQueue: Promise<void> = Promise.resolve();
   private activeChatId: string | null = null;
   private activeRequestId: string | null = null;
   private startedAt: number | null = null;
@@ -256,6 +340,7 @@ export class VoiceCallCoordinator {
     let completedSummary: VoiceCallSummary | undefined;
     const scoped = !!(options.allowedTools?.length || options.executionGuard);
     const runner = scoped ? this.createScopedRunner(options.allowedTools ?? [], options.executionGuard) : this.getRunner();
+    const callApprovalSession = this.activeApprovalSession;
     const turnPrompt = options.prompt ?? ringbackCallPrompt(line);
     const turn = options.chatId && runner.runAutomaticTurn
       ? runner.runAutomaticTurn(chat.id, turnPrompt)
@@ -291,7 +376,9 @@ export class VoiceCallCoordinator {
       }
     }).finally(async () => {
       if (scoped) await runner.close?.();
+      if (scoped && callApprovalSession) callApprovalSession.closed = true;
       if (this.activeChatId === chat.id) {
+        if (this.activeApprovalSession === callApprovalSession) this.activeApprovalSession = null;
         this.activeChatId = null;
         this.activeRequestId = null;
         this.startedAt = null;
@@ -332,6 +419,21 @@ export class VoiceCallCoordinator {
 
   private onAgentEvent: Emit = (event) => {
     const e = event as unknown as { type?: string; tool?: string; ok?: boolean; output?: unknown };
+    if (event.type === "approval_request") {
+      const session = this.activeApprovalSession;
+      if (!session) {
+        this.audit({
+          actor: "host", eventType: "voice.approval_failed", risk: "high",
+          summary: "Voice approval has no active session", chatId: event.chatId,
+          toolName: event.tool, correlationId: event.requestId, ok: false,
+        });
+        return;
+      }
+      this.approvalQueue = this.approvalQueue
+        .then(() => this.handleVoiceApproval(event, session))
+        .catch(() => { /* handleVoiceApproval fails closed and records the error */ });
+      return;
+    }
     if (e.type === "tool_call") {
       if (e.tool === "mcp__voice__call_start") {
         this.dialStarted = true;
@@ -410,42 +512,103 @@ export class VoiceCallCoordinator {
     (this.deps.audit ?? recordAudit)(input);
   }
 
+  private async handleVoiceApproval(request: VoiceApprovalEvent, session: Session): Promise<void> {
+    const startedAt = this.deps.now();
+    const prompt = formatVoiceApprovalRequest(request);
+    this.transition("speaking", `Steward is reading the approval request for ${request.tool}.`);
+    this.audit({
+      actor: "host", eventType: "voice.approval_prompted", risk: "high",
+      summary: `Voice approval requested for ${request.tool}`, sessionId: session.id,
+      chatId: request.chatId, toolName: request.tool, correlationId: request.requestId,
+      payload: { input: request.input, preview: request.preview },
+    });
+    let decision: VoiceApprovalDecision = "deny";
+    let repeats = 0;
+    let reason = "voice-approval-error";
+    try {
+      const bridge = await (this.deps.bridge ?? (() => sharedMcpBridge(this.config.mcpServers)))();
+      const result = await conductVoiceApproval(
+        prompt,
+        async (text) => {
+          this.transition("listening", "Steward is waiting for approva, rifiuta, or ripeti.");
+          const raw = await bridge.callTool("mcp__voice__converse", { text });
+          return extractToolOutput(Array.isArray(raw) ? { content: raw } : raw);
+        },
+        () => {
+          this.audit({
+            actor: "user", eventType: "voice.approval_repeated", risk: "high",
+            summary: `Voice approval request repeated for ${request.tool}`, sessionId: session.id,
+            chatId: request.chatId, toolName: request.tool, correlationId: request.requestId, ok: true,
+          });
+        },
+      );
+      decision = result.decision;
+      repeats = result.repeats;
+      reason = result.reason;
+    } catch (cause) {
+      reason = cause instanceof Error ? cause.message : String(cause);
+      decision = "deny";
+    }
+
+    const resolved = session.resolveApproval(request.requestId, {
+      decision,
+      ...(decision === "deny" ? { note: `Rifiutata durante la chiamata: ${reason}` } : {}),
+    });
+    const durationMs = Math.max(0, this.deps.now() - startedAt);
+    this.audit({
+      actor: "user", eventType: `voice.approval_${decision}`, risk: "high",
+      summary: `Voice approval ${decision} for ${request.tool}`, sessionId: session.id,
+      chatId: request.chatId, toolName: request.tool, correlationId: request.requestId,
+      durationMs, ok: decision === "allow" && resolved,
+      payload: { decision, repeats, reason, resolved },
+    });
+    try {
+      const usage: ToolCallRecord = {
+        ts: this.deps.now(), sessionId: request.chatId ?? session.id,
+        tool: "voice.approval", durationMs, ok: resolved && reason === "spoken-command",
+      };
+      (this.deps.toolUsage ?? ((entry) => usageLedger().recordTool(entry)))(usage);
+    } catch { /* usage is best-effort */ }
+    this.transition("processing", resolved ? `Voice approval ${decision} recorded.` : "The approval was already resolved.");
+  }
+
   private getRunner(): VoiceRunner {
-    if (this.runner) return this.runner;
+    if (this.runner) {
+      this.activeApprovalSession = this.runnerSession;
+      return this.runner;
+    }
     if (this.deps.createRunner) {
-      this.runner = this.deps.createRunner(this.onAgentEvent);
+      const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
+      this.runnerSession = session;
+      this.activeApprovalSession = session;
+      this.runner = this.deps.createRunner(this.onAgentEvent, undefined, session);
       return this.runner;
     }
     const voiceConfig: HostConfig = {
       ...this.config,
       gateway: { ...this.config.gateway, usageService: "host", usageAction: "voice-call" },
-      policy: {
-        ...this.config.policy,
-        default: "deny",
-        rules: { ...this.config.policy.rules, "mcp__voice__call_start": "allow" },
-      },
+      policy: voiceToolPolicy(this.config.policy),
     };
     const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
+    this.runnerSession = session;
+    this.activeApprovalSession = session;
     this.runner = new ChatManager(voiceConfig, session, this.onAgentEvent);
     return this.runner;
   }
 
   private createScopedRunner(allowedTools: string[], executionGuard?: ToolExecutionGuard): VoiceRunner {
-    if (this.deps.createRunner) return this.deps.createRunner(this.onAgentEvent, { allowedTools, executionGuard });
+    if (this.deps.createRunner) {
+      const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
+      this.activeApprovalSession = session;
+      return this.deps.createRunner(this.onAgentEvent, { allowedTools, executionGuard }, session);
+    }
     const voiceConfig: HostConfig = {
       ...this.config,
       gateway: { ...this.config.gateway, usageService: "host", usageAction: "voice-call" },
-      policy: {
-        ...this.config.policy,
-        default: "deny",
-        rules: Object.fromEntries([
-          ...Object.entries(this.config.policy.rules),
-          ["mcp__voice__call_start", "allow"],
-          ...allowedTools.map((tool) => [tool, "allow"]),
-        ]) as HostConfig["policy"]["rules"],
-      },
+      policy: voiceToolPolicy(this.config.policy, allowedTools),
     };
     const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
+    this.activeApprovalSession = session;
     return new ChatManager(voiceConfig, session, this.onAgentEvent, executionGuard);
   }
 }

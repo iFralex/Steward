@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 process.env.CHATS_DIR = mkdtempSync(join(tmpdir(), "voice-channel-chats-"));
 import { loadVoiceChannelConfig } from "../src/config.ts";
-import { ringbackCallPrompt, VoiceBusyError, VoiceCallCoordinator } from "../src/core/voice-channel.ts";
+import {
+  conductVoiceApproval, formatVoiceApprovalRequest, parseVoiceApprovalReply,
+  ringbackCallPrompt, voiceToolPolicy, VoiceBusyError, VoiceCallCoordinator,
+} from "../src/core/voice-channel.ts";
 import { chatStore } from "../src/core/chat-store.ts";
 
 test("voice config is disabled unless explicitly selected", () => {
@@ -40,14 +43,97 @@ test("StreamCore already has a config shape without pretending it is implemented
   });
 });
 
-test("Ringback voice prompt enforces the phone loop and approval boundary", () => {
+test("Ringback voice prompt delegates sensitive approvals to the host", () => {
   const prompt = ringbackCallPrompt("Ciao, sono Steward.");
   assert.match(prompt, /mcp__voice__call_start/);
   assert.match(prompt, /mcp__voice__converse/);
   assert.match(prompt, /mcp__voice__call_end/);
-  assert.match(prompt, /non sono autorizzabili a voce/i);
+  assert.match(prompt, /sottoprotocollo vocale dell'host/i);
   assert.match(prompt, /non riprovare/i);
   assert.match(prompt, /Ciao, sono Steward\./);
+});
+
+test("voice calls preserve the PWA policy and only add call/scoped grants", () => {
+  const policy: Parameters<typeof voiceToolPolicy>[0] = {
+    default: "gate", denyPrefixes: ["blocked__"], rules: { read: "allow", forbidden: "deny" },
+  };
+  const voice = voiceToolPolicy(policy, ["preapproved"]);
+  assert.equal(voice.default, "gate");
+  assert.deepEqual(voice.denyPrefixes, ["blocked__"]);
+  assert.deepEqual(voice.rules, {
+    read: "allow", forbidden: "deny", mcp__voice__call_start: "allow", preapproved: "allow",
+  });
+});
+
+test("voice approval renders the complete immutable request", () => {
+  const prompt = formatVoiceApprovalRequest({
+    tool: "mcp__mail__send_email",
+    input: { to: ["sorella@example.com"], subject: "Arrivo", body: "Sto arrivando" },
+    preview: { recipients: 1 },
+  });
+  assert.match(prompt, /mcp__mail__send_email/);
+  assert.match(prompt, /sorella@example\.com/);
+  assert.match(prompt, /Sto arrivando/);
+  assert.match(prompt, /recipients/);
+});
+
+test("ripeti rereads the exact same approval request before accepting", async () => {
+  const spoken: string[] = [];
+  const replies = ['User replied: "ripeti"', 'User replied: "approva"'];
+  let repeated = 0;
+  const result = await conductVoiceApproval("RICHIESTA IDENTICA", async (text) => {
+    spoken.push(text);
+    return replies.shift();
+  }, () => { repeated += 1; });
+  assert.deepEqual(spoken, ["RICHIESTA IDENTICA", "RICHIESTA IDENTICA"]);
+  assert.deepEqual(result, { decision: "allow", repeats: 1, reason: "spoken-command" });
+  assert.equal(repeated, 1);
+});
+
+test("voice approval commands are exact and ambiguity fails closed", () => {
+  assert.equal(parseVoiceApprovalReply('User replied: "approva"'), "allow");
+  assert.equal(parseVoiceApprovalReply('User replied: "rifiuta"'), "deny");
+  assert.equal(parseVoiceApprovalReply('User replied: "rileggi la richiesta"'), "repeat");
+  assert.equal(parseVoiceApprovalReply('User replied: "forse sì"'), "unknown");
+});
+
+test("a gated call tool is approved through Ringback and recorded in Usage and Audit", async () => {
+  const audit: any[] = [];
+  const toolUsage: any[] = [];
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => { finish = resolve; });
+  const bridge = fakeBridge();
+  bridge.callTool = async (tool: string) => tool === "mcp__voice__call_status"
+    ? [{ type: "text", text: '{"ready":true,"phase":"idle"}' }]
+    : [{ type: "text", text: 'User replied: "approva"' }];
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), () => { finish(); }, {
+    bridge: async () => bridge,
+    createChat: () => ({ id: "voice-approval-chat" }),
+    createRunner: (emit, _scope, session) => ({
+      runTurn: async () => {
+        emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+        const outcome = await session!.requestApproval({
+          tool: "mcp__mail__send_email",
+          input: { to: ["sorella@example.com"], subject: "Arrivo", body: "Sto arrivando" },
+          preview: { recipients: 1 },
+          chatId: "voice-approval-chat",
+        });
+        assert.equal(outcome.decision, "allow");
+        return { ok: true, messageId: "done", text: "inviata" };
+      },
+      abort: async () => {},
+    }),
+    audit: ((event: any) => audit.push(event)) as any,
+    usage: () => {}, toolUsage: (record) => toolUsage.push(record), sleep: async () => {},
+  });
+
+  await coordinator.start(undefined, "voice-approval-request");
+  await finished;
+  assert.equal(audit.some((event) => event.eventType === "voice.approval_prompted"), true);
+  assert.equal(audit.some((event) => event.eventType === "voice.approval_allow"), true);
+  assert.equal(toolUsage.length, 1);
+  assert.equal(toolUsage[0].tool, "voice.approval");
+  assert.equal(toolUsage[0].ok, true);
 });
 
 function fakeConfig() {
@@ -67,7 +153,7 @@ function fakeConfig() {
 
 function fakeBridge(status = '{"ready":true,"phase":"idle"}') {
   return {
-    tools: ["call_start", "call_status", "call_end"].map((name) => ({ name: `mcp__voice__${name}` })),
+    tools: ["call_start", "call_status", "call_end", "converse"].map((name) => ({ name: `mcp__voice__${name}` })),
     callTool: async () => [{ type: "text", text: status }],
     close: async () => {},
   } as any;

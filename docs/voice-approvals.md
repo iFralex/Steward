@@ -2,49 +2,33 @@
 
 ## Status
 
-This document specifies the recommended design. Spoken approval is not enabled
-yet: today a gated tool requested during a normal phone call still waits for
-the existing app approval and eventually denies on timeout.
+Spoken approval is enabled for every tool that the ordinary PWA policy marks
+as `gate`. Read-only tools remain automatic, explicit policy denials remain
+denied, and watcher-scoped grants remain pre-authorized.
 
 ## Security boundary
 
-A bare “yes” is not sufficient. Speech recognition can be wrong, audio can be
-replayed, and untrusted content read by the agent must never become authority.
-The model must also not decide whether the user approved its own action.
-
-The host, not the model, should own a short approval sub-protocol:
+A bare “yes” is not sufficient. The model does not decide whether the user
+approved its own action. The host owns a small deterministic sub-protocol:
 
 1. The normal deterministic permission gate creates one pending request with
    the exact tool name, canonical arguments, approval preview and chat ID.
-2. The host hashes that immutable request and generates a random spoken code,
-   for example `4821`, valid only for that request and active call.
-3. Ringback reads a tool-specific deterministic summary: recipient and subject
-   for mail, calendar/title/time for events, or target/path for file actions.
-   It then says: “Per approvare dì autorizzo 4821. Per rifiutare dì rifiuto.”
-4. Ringback captures one response without involving the main agent. The host
-   accepts only the normalized exact phrase containing the current code.
-   `rifiuto`, ambiguity, silence, a mismatched code or timeout all deny.
-5. The existing `Session.resolveApproval` resolves the original request once.
+2. Ringback reads a deterministic rendering of the tool name, complete
+   arguments, and approval preview without involving the main agent.
+3. The host accepts the explicit commands `approva`, `rifiuta`, or `ripeti`.
+   `ripeti` sends the exact same immutable rendering back to Ringback. Ambiguous
+   speech is prompted again and eventually fails closed.
+4. The existing `Session.resolveApproval` resolves the original request once.
    The permission gate then executes the unchanged arguments. Spoken approval
    never supports approve-with-edit; revisions move back to chat/PWA.
-6. Audit stores the request ID, tool, argument hash, challenge result and
-   decision. It must not store secrets or the full spoken recording.
+5. Audit stores prompt/repeat/decision events against the original request ID;
+   Usage records the exchange as `voice.approval`. No recording is stored.
 
 ## Eligibility
 
-Voice approval should be an explicit per-tool policy, separate from ordinary
-`allow/gate/deny`:
-
-- eligible: sending an already composed email, creating/updating a calendar
-  event, changing an Action Center status;
-- app-only initially: deleting files/events, shell writes, credentials,
-  purchases, security settings and actions with attachments or many recipients;
-- never implicit: a tool does not become voice-approvable merely because an MCP
-  connector exposes it.
-
-The deterministic summary renderer must refuse a request it cannot describe
-fully. In that case Steward should say that approval is available in the app,
-emit the normal approval card and keep the call usable for read-only questions.
+Eligibility is deliberately identical to the PWA: `allow` runs, `gate` can be
+approved or refused by voice, and `deny` cannot be overridden. Voice approval
+does not create a second per-tool allowlist and does not support approve-with-edit.
 
 ## Ringback integration
 
@@ -55,7 +39,5 @@ short speak/listen exchange, and then call `Session.resolveApproval`. This
 keeps the model outside the authorization decision and preserves the existing
 permission gate, Usage accounting and Audit trail.
 
-The first implementation should support one approval at a time, a 30-second
-timeout, one recognition attempt and no retry after an ambiguous answer. The
-PWA approval card remains active in parallel; whichever valid channel resolves
-the request first wins, and the other receives an “already resolved” result.
+Approvals are serialized because Ringback owns one active call. The normal
+session timeout remains authoritative and each request is resolved at most once.

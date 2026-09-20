@@ -253,7 +253,7 @@ export function loadConfig(): HostConfig {
         "Voice calls use mcp__voice__call_start, then mcp__voice__converse for every turn, and mcp__voice__call_end when finished.",
         "Start a call only after an explicit user request or a host voice-call instruction.",
         "Keep spoken lines short, natural, and in the user's language.",
-        "A spoken confirmation never bypasses Steward's normal approval gate for sensitive actions; ask the user to approve those in the app.",
+        "Sensitive actions use Steward's host-owned voice approval flow. Do not ask for or interpret approval yourself; wait for the gate result.",
       ].join(" ")
     : "";
 
