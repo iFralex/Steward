@@ -53,8 +53,14 @@ security model.
    ```dotenv
    STEWARD_VOICE_TRANSPORT=ringback
    STEWARD_RINGBACK_LAUNCHER=/Users/YOU/Library/Application Support/Steward/ringback/steward-run-voice-mcp.sh
-   STEWARD_VOICE_OPENING_LINE=Ciao, sono Steward. Come posso aiutarti?
    ```
+
+   The default opening, approval reading, recognition keywords, and recovery
+   prompts follow the language selected in Steward (English or Italian).
+   `STEWARD_VOICE_OPENING_LINE` remains available only as an explicit custom
+   override; older built-in English/Italian defaults are migrated dynamically.
+   Ringback uses Whisper language auto-detection and selects the matching
+   macOS English/Italian TTS voice from the same persisted setting.
 
 5. Restart Steward. The System page shows the Ringback MCP health and a
    **Call this phone** button.
@@ -135,7 +141,9 @@ In ordinary chat, `call_start` still produces an approval card. Once connected,
 the harmless voice lifecycle tools may continue without one approval per turn.
 Every tool follows the same policy as the PWA. A gated action pauses the agent;
 Ringback reads the complete request and accepts `approva`, `rifiuta`, or
-`ripeti`. Explicit policy denials remain non-overridable.
+`ripeti` in Italian, or `approve`, `reject`, and `repeat` in English. The
+request reading and every fixed control phrase use the same language selected
+in the PWA. Explicit policy denials remain non-overridable.
 
 ## Calls started by a watch
 

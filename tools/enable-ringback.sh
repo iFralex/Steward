@@ -26,7 +26,8 @@ awk '
 printf '\n# Native phone-call transport (Ringback / SIP).\n' >> "$TMP_FILE"
 printf 'STEWARD_VOICE_TRANSPORT=ringback\n' >> "$TMP_FILE"
 printf 'STEWARD_RINGBACK_LAUNCHER="%s"\n' "$LAUNCHER" >> "$TMP_FILE"
-printf 'STEWARD_VOICE_OPENING_LINE="Ciao, sono Steward. Come posso aiutarti?"\n' >> "$TMP_FILE"
+printf '# The default opening follows the language selected in Steward.\n' >> "$TMP_FILE"
+printf '# STEWARD_VOICE_OPENING_LINE="Custom opening line"\n' >> "$TMP_FILE"
 
 chmod 600 "$TMP_FILE"
 mv "$TMP_FILE" "$CONFIG_FILE"

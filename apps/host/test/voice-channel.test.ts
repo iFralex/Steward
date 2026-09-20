@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 process.env.CHATS_DIR = mkdtempSync(join(tmpdir(), "voice-channel-chats-"));
 import { loadVoiceChannelConfig } from "../src/config.ts";
 import {
@@ -10,6 +11,7 @@ import {
   ringbackCallPrompt, voiceToolPolicy, VoiceBusyError, VoiceCallCoordinator,
 } from "../src/core/voice-channel.ts";
 import { chatStore } from "../src/core/chat-store.ts";
+import { localizedOpeningLine, voiceMessages } from "../src/core/voice-i18n.ts";
 
 test("voice config is disabled unless explicitly selected", () => {
   assert.deepEqual(loadVoiceChannelConfig({}), { transport: "disabled" });
@@ -33,7 +35,7 @@ test("StreamCore already has a config shape without pretending it is implemented
   assert.equal(config.transport, "streamcore");
   assert.equal(config.baseUrl, "http://127.0.0.1:8080");
 
-  const coordinator = new VoiceCallCoordinator({ voice: config } as any);
+  const coordinator = new VoiceCallCoordinator({ voice: config } as any, undefined, { language: () => "en" });
   assert.deepEqual({ ...coordinator.status(), updatedAt: 0 }, {
     enabled: false,
     transport: "streamcore",
@@ -44,7 +46,7 @@ test("StreamCore already has a config shape without pretending it is implemented
 });
 
 test("Ringback voice prompt delegates sensitive approvals to the host", () => {
-  const prompt = ringbackCallPrompt("Ciao, sono Steward.");
+  const prompt = ringbackCallPrompt("Ciao, sono Steward.", "it");
   assert.match(prompt, /mcp__voice__call_start/);
   assert.match(prompt, /mcp__voice__converse/);
   assert.match(prompt, /mcp__voice__call_end/);
@@ -70,7 +72,7 @@ test("voice approval renders the complete immutable request", () => {
     tool: "mcp__mail__send_email",
     input: { to: ["sorella@example.com"], subject: "Arrivo", body: "Sto arrivando" },
     preview: { recipients: 1 },
-  });
+  }, "it");
   assert.match(prompt, /mcp__mail__send_email/);
   assert.match(prompt, /sorella@example\.com/);
   assert.match(prompt, /Sto arrivando/);
@@ -84,17 +86,53 @@ test("ripeti rereads the exact same approval request before accepting", async ()
   const result = await conductVoiceApproval("RICHIESTA IDENTICA", async (text) => {
     spoken.push(text);
     return replies.shift();
-  }, () => { repeated += 1; });
+  }, "it", () => { repeated += 1; });
   assert.deepEqual(spoken, ["RICHIESTA IDENTICA", "RICHIESTA IDENTICA"]);
   assert.deepEqual(result, { decision: "allow", repeats: 1, reason: "spoken-command" });
   assert.equal(repeated, 1);
 });
 
 test("voice approval commands are exact and ambiguity fails closed", () => {
-  assert.equal(parseVoiceApprovalReply('User replied: "approva"'), "allow");
-  assert.equal(parseVoiceApprovalReply('User replied: "rifiuta"'), "deny");
-  assert.equal(parseVoiceApprovalReply('User replied: "rileggi la richiesta"'), "repeat");
-  assert.equal(parseVoiceApprovalReply('User replied: "forse sì"'), "unknown");
+  assert.equal(parseVoiceApprovalReply('User replied: "approva"', "it"), "allow");
+  assert.equal(parseVoiceApprovalReply('User replied: "rifiuta"', "it"), "deny");
+  assert.equal(parseVoiceApprovalReply('User replied: "rileggi la richiesta"', "it"), "repeat");
+  assert.equal(parseVoiceApprovalReply('User replied: "forse sì"', "it"), "unknown");
+});
+
+test("English voice copy and commands come from the matching i18n catalog", () => {
+  const prompt = formatVoiceApprovalRequest({ tool: "send", input: { subject: "Hello" } }, "en");
+  assert.match(prompt, /^Approval request\./);
+  assert.match(prompt, /Say approve.*reject.*repeat/);
+  assert.equal(parseVoiceApprovalReply('User replied: "approve"', "en"), "allow");
+  assert.equal(parseVoiceApprovalReply('User replied: "reject"', "en"), "deny");
+  assert.equal(parseVoiceApprovalReply('User replied: "repeat"', "en"), "repeat");
+  assert.equal(parseVoiceApprovalReply('User replied: "approva"', "en"), "unknown");
+});
+
+test("default and legacy opening lines follow the selected language, custom text does not", () => {
+  assert.equal(localizedOpeningLine("", "en"), voiceMessages("en").defaultOpeningLine);
+  assert.equal(localizedOpeningLine("Ciao, sono Steward. Come posso aiutarti?", "en"), voiceMessages("en").defaultOpeningLine);
+  assert.equal(localizedOpeningLine("Pronto, test personalizzato", "en"), "Pronto, test personalizzato");
+});
+
+test("Ringback macOS TTS adapter selects its voice from the persisted user locale", () => {
+  const dir = mkdtempSync(join(tmpdir(), "voice-tts-i18n-"));
+  const langFile = join(dir, "lang.json");
+  const sayLog = join(dir, "say.log");
+  const fakeSay = join(dir, "say");
+  const adapter = new URL("../../../tools/ringback-say-localized.sh", import.meta.url).pathname;
+  writeFileSync(fakeSay, '#!/bin/bash\nprintf "%s\\n" "$@" > "$STEWARD_SAY_LOG"\n');
+  chmodSync(fakeSay, 0o700);
+  const run = (lang: "en" | "it") => {
+    writeFileSync(langFile, JSON.stringify({ lang }));
+    const result = spawnSync("/bin/bash", [adapter, join(dir, "out.wav"), "Test"], {
+      env: { ...process.env, STEWARD_USER_LANG_FILE: langFile, STEWARD_SAY_BIN: fakeSay, STEWARD_SAY_LOG: sayLog },
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    return readFileSync(sayLog, "utf8");
+  };
+  assert.match(run("it"), /Alice/);
+  assert.match(run("en"), /Samantha/);
 });
 
 test("a gated call tool is approved through Ringback and recorded in Usage and Audit", async () => {
@@ -124,7 +162,7 @@ test("a gated call tool is approved through Ringback and recorded in Usage and A
       abort: async () => {},
     }),
     audit: ((event: any) => audit.push(event)) as any,
-    usage: () => {}, toolUsage: (record) => toolUsage.push(record), sleep: async () => {},
+    usage: () => {}, toolUsage: (record) => toolUsage.push(record), language: () => "it", sleep: async () => {},
   });
 
   await coordinator.start(undefined, "voice-approval-request");

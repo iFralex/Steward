@@ -588,10 +588,9 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
     });
     return;
   }
-  // Syncs the language used for server-generated push copy (test/new-chat/reply
-  // notifications) with whichever device last changed it in the System page —
-  // one shared setting, since push goes to every registered device regardless.
-  if (req.method === "POST" && url.startsWith("/settings/notification-lang")) {
+  // One shared user language for host-generated voice and notification copy.
+  // Keep the old notification-lang path as a compatibility alias.
+  if (req.method === "POST" && (url.startsWith("/settings/user-lang") || url.startsWith("/settings/notification-lang"))) {
     void readRequestBody(req).then((raw) => {
       const body = raw ? JSON.parse(raw) as { lang?: unknown } : {};
       if (body.lang !== "en" && body.lang !== "it") {
@@ -602,9 +601,9 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
       setNotificationLang(body.lang);
       recordAudit({
         actor: "user",
-        eventType: "settings.notification_lang",
+        eventType: "settings.user_lang",
         risk: "low",
-        summary: `Notification language set to ${body.lang}`,
+        summary: `User language set to ${body.lang}`,
         payload: { lang: body.lang },
       });
       res.writeHead(204, CORS);

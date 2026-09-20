@@ -11,6 +11,8 @@ import { usageLedger, type ToolCallRecord, type VoiceCallRecord } from "@steward
 import { parseRingbackFailure, type VoiceFailureDiagnostic } from "./voice-diagnostics.ts";
 import type { ToolExecutionGuard } from "./permission-gate.ts";
 import type { ToolPolicy } from "./tool-policy.ts";
+import { getUserLang } from "./notification-lang.ts";
+import { localizedOpeningLine, voiceMessages, type VoiceLang } from "./voice-i18n.ts";
 
 export type VoiceCallState =
   | "disabled" | "idle" | "preflighting" | "starting" | "ringing"
@@ -73,6 +75,7 @@ interface VoiceCoordinatorDeps {
   audit?: typeof recordAudit;
   usage?: (record: VoiceCallRecord) => void;
   toolUsage?: (record: ToolCallRecord) => void;
+  language?: () => VoiceLang;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -91,20 +94,24 @@ const MAX_APPROVAL_EXCHANGES = 6;
 type VoiceApprovalEvent = Extract<ServerEvent, { type: "approval_request" }>;
 export type VoiceApprovalDecision = "allow" | "deny";
 
-function jsonForSpeech(value: unknown): string {
-  if (value === undefined) return "nessuno";
+function jsonForSpeech(value: unknown, lang: VoiceLang): string {
+  if (value === undefined) return voiceMessages(lang).undefinedValue;
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
 /** Deterministic rendering of exactly what the permission gate is waiting on. */
-export function formatVoiceApprovalRequest(request: Pick<VoiceApprovalEvent, "tool" | "input" | "preview">): string {
+export function formatVoiceApprovalRequest(
+  request: Pick<VoiceApprovalEvent, "tool" | "input" | "preview">,
+  lang: VoiceLang = "en",
+): string {
+  const copy = voiceMessages(lang).approval;
   const parts = [
-    "Richiesta di approvazione.",
-    `Strumento: ${request.tool}.`,
-    `Argomenti: ${jsonForSpeech(request.input)}.`,
+    copy.title,
+    copy.tool(request.tool),
+    copy.arguments(jsonForSpeech(request.input, lang)),
   ];
-  if (request.preview !== undefined) parts.push(`Anteprima: ${jsonForSpeech(request.preview)}.`);
-  parts.push("Di approva per eseguirla, rifiuta per negarla, oppure ripeti per riascoltare questa richiesta.");
+  if (request.preview !== undefined) parts.push(copy.preview(jsonForSpeech(request.preview, lang)));
+  parts.push(copy.instruction);
   return parts.join(" ");
 }
 
@@ -114,16 +121,20 @@ function userReply(output: unknown): string {
   return (wrapped?.[1] ?? text)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("it")
+    .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
 
-export function parseVoiceApprovalReply(output: unknown): VoiceApprovalDecision | "repeat" | "unknown" {
+export function parseVoiceApprovalReply(
+  output: unknown,
+  lang: VoiceLang = "en",
+): VoiceApprovalDecision | "repeat" | "unknown" {
   const reply = userReply(output);
-  if (reply === "approva") return "allow";
-  if (reply === "rifiuta") return "deny";
-  if (["ripeti", "ripetilo", "rileggi", "rileggi la richiesta"].includes(reply)) return "repeat";
+  const keywords = voiceMessages(lang).approval.keywords;
+  if (keywords.allow.includes(reply)) return "allow";
+  if (keywords.deny.includes(reply)) return "deny";
+  if (keywords.repeat.includes(reply)) return "repeat";
   return "unknown";
 }
 
@@ -131,12 +142,13 @@ export function parseVoiceApprovalReply(output: unknown): VoiceApprovalDecision 
 export async function conductVoiceApproval(
   prompt: string,
   converse: (text: string) => Promise<unknown>,
+  lang: VoiceLang = "en",
   onRepeat?: () => void,
 ): Promise<{ decision: VoiceApprovalDecision; repeats: number; reason: string }> {
   let next = prompt;
   let repeats = 0;
   for (let exchange = 0; exchange < MAX_APPROVAL_EXCHANGES; exchange += 1) {
-    const parsed = parseVoiceApprovalReply(await converse(next));
+    const parsed = parseVoiceApprovalReply(await converse(next), lang);
     if (parsed === "allow" || parsed === "deny") return { decision: parsed, repeats, reason: "spoken-command" };
     if (parsed === "repeat") {
       repeats += 1;
@@ -144,7 +156,7 @@ export async function conductVoiceApproval(
       next = prompt;
       continue;
     }
-    next = "Non ho capito. Di soltanto approva, rifiuta oppure ripeti.";
+    next = voiceMessages(lang).approval.notUnderstood;
   }
   return { decision: "deny", repeats, reason: "unrecognized-or-too-many-attempts" };
 }
@@ -186,19 +198,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
-export function ringbackCallPrompt(openingLine: string): string {
-  return [
-    "Avvia ora una chiamata vocale con l'utente usando mcp__voice__call_start.",
-    `Pronuncia come apertura esattamente questo messaggio: ${JSON.stringify(openingLine)}.`,
-    "Dopo ogni risposta dell'utente, continua la stessa chiamata con mcp__voice__converse.",
-    "Parla in italiano salvo che l'utente cambi lingua; usa una o due frasi brevi per turno.",
-    "Non usare ask_user durante la telefonata: fai le domande direttamente con converse.",
-    "Puoi usare gli strumenti di sola lettura di Steward quando servono.",
-    "Le operazioni sensibili attivano il sottoprotocollo vocale dell'host: attendi la decisione senza chiederla o interpretarla tu e non dichiarare eseguita un'azione negata.",
-    "Quando l'utente saluta, riaggancia o il tool restituisce [CALL ENDED], termina con mcp__voice__call_end e concludi il turno.",
-    "Se call_start restituisce [NO ANSWER] o [CALL FAILED], non riprovare: concludi il turno spiegando brevemente il problema.",
-    "Non rispondere soltanto in chat: lo scopo di questo turno è svolgere la conversazione al telefono.",
-  ].join(" ");
+export function ringbackCallPrompt(openingLine: string, lang: VoiceLang = "en"): string {
+  return voiceMessages(lang).callPrompt(openingLine);
 }
 
 /** One active call per host: Ringback itself owns one process-global SIP session. */
@@ -207,6 +208,7 @@ export class VoiceCallCoordinator {
   private runnerSession: Session | null = null;
   private activeApprovalSession: Session | null = null;
   private approvalQueue: Promise<void> = Promise.resolve();
+  private activeLanguage: VoiceLang | null = null;
   private activeChatId: string | null = null;
   private activeRequestId: string | null = null;
   private startedAt: number | null = null;
@@ -236,14 +238,15 @@ export class VoiceCallCoordinator {
 
   status(): VoiceChannelStatus {
     const transport = this.config.voice.transport;
+    const copy = voiceMessages(this.currentLanguage()).status;
     if (transport === "disabled") {
-      return { enabled: false, transport, state: "disabled", updatedAt: this.updatedAt, detail: "No voice transport configured." };
+      return { enabled: false, transport, state: "disabled", updatedAt: this.updatedAt, detail: copy.noTransport };
     }
     if (transport === "streamcore") {
-      return { enabled: false, transport, state: "disabled", updatedAt: this.updatedAt, detail: "StreamCore transport is reserved but not implemented yet." };
+      return { enabled: false, transport, state: "disabled", updatedAt: this.updatedAt, detail: copy.streamcoreUnavailable };
     }
     if (!this.config.voice.launcher) {
-      return { enabled: false, transport, state: "disabled", updatedAt: this.updatedAt, detail: "STEWARD_RINGBACK_LAUNCHER is not configured." };
+      return { enabled: false, transport, state: "disabled", updatedAt: this.updatedAt, detail: copy.launcherMissing };
     }
     return {
       enabled: true,
@@ -286,23 +289,26 @@ export class VoiceCallCoordinator {
     options: VoiceStartOptions = {},
   ): Promise<{ started: VoiceCallStarted; completion: Promise<VoiceCallSummary> }> {
     if (this.config.voice.transport !== "ringback" || !this.config.voice.launcher) {
-      throw new VoiceUnavailableError(this.status().detail ?? "Voice calls are unavailable.");
+      throw new VoiceUnavailableError(this.status().detail ?? voiceMessages(this.currentLanguage()).status.unavailable);
     }
     const requestId = requestedId?.trim() || randomUUID();
     this.pruneIdempotency();
     const previous = this.idempotency.get(requestId);
-    if (previous) throw new VoiceBusyError("This voice event was already started.");
-    if (this.activeChatId || this.activeRequestId) throw new VoiceBusyError("A voice call is already running.");
+    if (previous) throw new VoiceBusyError(voiceMessages(this.currentLanguage()).status.duplicate);
+    if (this.activeChatId || this.activeRequestId) throw new VoiceBusyError(voiceMessages(this.currentLanguage()).status.busy);
 
+    const language = this.currentLanguage();
+    const voiceCopy = voiceMessages(language);
+    this.activeLanguage = language;
     this.activeRequestId = requestId;
     this.startedAt = this.deps.now();
     this.terminalError = null;
     this.dialStarted = false;
-    this.transition("preflighting", "Checking the Ringback engine before dialing.");
+    this.transition("preflighting", voiceCopy.status.checking);
     try {
       await this.preflight();
       this.audit({
-        actor: "host", eventType: "voice.preflight_passed", risk: "low", summary: "Ringback preflight passed",
+        actor: "host", eventType: "voice.preflight_passed", risk: "low", summary: voiceCopy.status.preflightPassed,
         correlationId: requestId, ok: true, payload: { transport: "ringback" },
       });
     } catch (cause) {
@@ -315,20 +321,20 @@ export class VoiceCallCoordinator {
       throw new VoiceUnavailableError(error.message);
     }
 
-    const line = (openingLine?.trim() || this.config.voice.openingLine).slice(0, 500);
+    const line = localizedOpeningLine(openingLine?.trim() || this.config.voice.openingLine, language).slice(0, 500);
     const chat = options.chatId
       ? { id: options.chatId }
-      : (this.deps.createChat ?? (() => chatStore().createChat("Chiamata vocale")))();
+      : (this.deps.createChat ?? (() => chatStore().createChat(voiceMessages(language).chatTitle)))();
     if (options.chatId && !chatStore().exists(options.chatId)) {
       const error = new Error(`Chat not found: ${options.chatId}`);
       this.failBeforeCall(error);
       throw new VoiceUnavailableError(error.message);
     }
     this.activeChatId = chat.id;
-    this.transition("starting", "Ringback is ready; Steward is preparing the call.");
+    this.transition("starting", voiceCopy.status.preparing);
     this.audit({
       actor: options.chatId ? "scheduler" : "user", eventType: "voice.call_requested", risk: "medium",
-      summary: options.chatId ? "Pre-authorized watch event requested a voice call" : "Voice call requested",
+      summary: options.chatId ? voiceCopy.audit.watchCallRequested : voiceCopy.audit.callRequested,
       chatId: chat.id, correlationId: requestId,
       payload: { transport: "ringback", requestId, ...(options.chatId ? { automatic: true } : { openingLine: line }) },
     });
@@ -341,16 +347,16 @@ export class VoiceCallCoordinator {
     const scoped = !!(options.allowedTools?.length || options.executionGuard);
     const runner = scoped ? this.createScopedRunner(options.allowedTools ?? [], options.executionGuard) : this.getRunner();
     const callApprovalSession = this.activeApprovalSession;
-    const turnPrompt = options.prompt ?? ringbackCallPrompt(line);
+    const turnPrompt = options.prompt ?? ringbackCallPrompt(line, language);
     const turn = options.chatId && runner.runAutomaticTurn
       ? runner.runAutomaticTurn(chat.id, turnPrompt)
       : runner.runTurn(chat.id, turnPrompt);
     void turn.then(async (result) => {
-      if (!result.ok) throw new Error(result.error || "The voice agent turn failed.");
+      if (!result.ok) throw new Error(result.error || voiceCopy.status.agentFailed);
       if (this.terminalError) throw this.terminalError;
-      if (!this.dialStarted) throw new Error("The automatic voice turn completed without starting a call.");
+      if (!this.dialStarted) throw new Error(voiceCopy.status.noDial);
       this.audit({
-        actor: "host", eventType: "voice.call_completed", risk: "low", summary: "Voice call completed",
+        actor: "host", eventType: "voice.call_completed", risk: "low", summary: voiceCopy.audit.callCompleted,
         chatId: chat.id, correlationId: requestId, ok: true,
         durationMs: this.callDurationMs(), payload: { transport: "ringback", requestId },
       });
@@ -379,10 +385,11 @@ export class VoiceCallCoordinator {
       if (scoped && callApprovalSession) callApprovalSession.closed = true;
       if (this.activeChatId === chat.id) {
         if (this.activeApprovalSession === callApprovalSession) this.activeApprovalSession = null;
+        this.activeLanguage = null;
         this.activeChatId = null;
         this.activeRequestId = null;
         this.startedAt = null;
-        this.transition("idle", this.lastCall?.ok ? "The last call completed." : "The last call failed.", !this.lastCall?.ok);
+        this.transition("idle", this.lastCall?.ok ? voiceCopy.status.lastCompleted : voiceCopy.status.lastFailed, !this.lastCall?.ok);
       }
       if (completedSummary) complete(completedSummary);
     });
@@ -390,6 +397,7 @@ export class VoiceCallCoordinator {
   }
 
   private async preflight(): Promise<void> {
+    const copy = voiceMessages(this.currentLanguage()).status;
     const timeoutMs = this.config.voice.transport === "ringback" ? this.config.voice.preflightTimeoutMs : 10_000;
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= PREFLIGHT_ATTEMPTS; attempt += 1) {
@@ -404,12 +412,12 @@ export class VoiceCallCoordinator {
         const healthOutput = extractToolOutput(Array.isArray(health) ? { content: health } : health);
         const healthText = outputText(healthOutput);
         if (/"ready"\s*:\s*false/i.test(healthText)) throw new Error(`Ringback is not ready: ${healthText}`);
-        this.transition("starting", "Ringback preflight passed.");
+        this.transition("starting", copy.preflightPassed);
         return;
       } catch (cause) {
         lastError = cause instanceof Error ? cause : new Error(String(cause));
         if (attempt < PREFLIGHT_ATTEMPTS) {
-          this.transition("preflighting", `Ringback preflight attempt ${attempt} failed; retrying safely.`);
+          this.transition("preflighting", copy.preflightRetrying(attempt));
           await this.deps.sleep(250);
         }
       }
@@ -424,7 +432,7 @@ export class VoiceCallCoordinator {
       if (!session) {
         this.audit({
           actor: "host", eventType: "voice.approval_failed", risk: "high",
-          summary: "Voice approval has no active session", chatId: event.chatId,
+          summary: voiceMessages(this.currentLanguage()).status.approvalNoSession, chatId: event.chatId,
           toolName: event.tool, correlationId: event.requestId, ok: false,
         });
         return;
@@ -435,14 +443,15 @@ export class VoiceCallCoordinator {
       return;
     }
     if (e.type === "tool_call") {
+      const copy = voiceMessages(this.currentLanguage()).status;
       if (e.tool === "mcp__voice__call_start") {
         this.dialStarted = true;
-        this.transition("ringing", "Calling the phone; waiting for an answer.");
+        this.transition("ringing", copy.ringing);
       }
-      else if (e.tool === "mcp__voice__converse" || e.tool === "mcp__voice__speak") this.transition("speaking", "Steward is speaking and waiting for the next reply.");
-      else if (e.tool === "mcp__voice__listen") this.transition("listening", "Steward is listening.");
-      else if (e.tool === "mcp__voice__call_end") this.transition("ending", "Steward is ending the call.");
-      else if (this.activeChatId) this.transition("processing", "Steward is processing the request.");
+      else if (e.tool === "mcp__voice__converse" || e.tool === "mcp__voice__speak") this.transition("speaking", copy.speaking);
+      else if (e.tool === "mcp__voice__listen") this.transition("listening", copy.listening);
+      else if (e.tool === "mcp__voice__call_end") this.transition("ending", copy.ending);
+      else if (this.activeChatId) this.transition("processing", copy.processing);
       return;
     }
     if (e.type !== "tool_result" || !e.tool?.startsWith("mcp__voice__")) return;
@@ -458,12 +467,14 @@ export class VoiceCallCoordinator {
       return;
     }
     const text = outputText(e.output);
-    if (text.includes("[CALL ENDED]") || e.tool === "mcp__voice__call_end") this.transition("ending", "The phone call has ended.");
-    else this.transition("processing", "Steward received the reply and is processing it.");
+    const copy = voiceMessages(this.currentLanguage()).status;
+    if (text.includes("[CALL ENDED]") || e.tool === "mcp__voice__call_end") this.transition("ending", copy.callEnded);
+    else this.transition("processing", copy.replyReceived);
   };
 
   private failBeforeCall(error: Error): void {
     this.transition("failed", error.message, true);
+    this.activeLanguage = null;
     this.activeRequestId = null;
     this.startedAt = null;
   }
@@ -512,13 +523,19 @@ export class VoiceCallCoordinator {
     (this.deps.audit ?? recordAudit)(input);
   }
 
+  private currentLanguage(): VoiceLang {
+    return this.activeLanguage ?? (this.deps.language ?? getUserLang)();
+  }
+
   private async handleVoiceApproval(request: VoiceApprovalEvent, session: Session): Promise<void> {
     const startedAt = this.deps.now();
-    const prompt = formatVoiceApprovalRequest(request);
-    this.transition("speaking", `Steward is reading the approval request for ${request.tool}.`);
+    const language = this.activeLanguage ?? (this.deps.language ?? getUserLang)();
+    const copy = voiceMessages(language).approval;
+    const prompt = formatVoiceApprovalRequest(request, language);
+    this.transition("speaking", copy.readingStatus(request.tool));
     this.audit({
       actor: "host", eventType: "voice.approval_prompted", risk: "high",
-      summary: `Voice approval requested for ${request.tool}`, sessionId: session.id,
+      summary: voiceMessages(language).audit.approvalRequested(request.tool), sessionId: session.id,
       chatId: request.chatId, toolName: request.tool, correlationId: request.requestId,
       payload: { input: request.input, preview: request.preview },
     });
@@ -530,14 +547,15 @@ export class VoiceCallCoordinator {
       const result = await conductVoiceApproval(
         prompt,
         async (text) => {
-          this.transition("listening", "Steward is waiting for approva, rifiuta, or ripeti.");
+          this.transition("listening", copy.waitingStatus);
           const raw = await bridge.callTool("mcp__voice__converse", { text });
           return extractToolOutput(Array.isArray(raw) ? { content: raw } : raw);
         },
+        language,
         () => {
           this.audit({
             actor: "user", eventType: "voice.approval_repeated", risk: "high",
-            summary: `Voice approval request repeated for ${request.tool}`, sessionId: session.id,
+            summary: voiceMessages(language).audit.approvalRepeated(request.tool), sessionId: session.id,
             chatId: request.chatId, toolName: request.tool, correlationId: request.requestId, ok: true,
           });
         },
@@ -552,12 +570,12 @@ export class VoiceCallCoordinator {
 
     const resolved = session.resolveApproval(request.requestId, {
       decision,
-      ...(decision === "deny" ? { note: `Rifiutata durante la chiamata: ${reason}` } : {}),
+      ...(decision === "deny" ? { note: copy.deniedNote(reason) } : {}),
     });
     const durationMs = Math.max(0, this.deps.now() - startedAt);
     this.audit({
       actor: "user", eventType: `voice.approval_${decision}`, risk: "high",
-      summary: `Voice approval ${decision} for ${request.tool}`, sessionId: session.id,
+      summary: voiceMessages(language).audit.approvalDecision(decision, request.tool), sessionId: session.id,
       chatId: request.chatId, toolName: request.tool, correlationId: request.requestId,
       durationMs, ok: decision === "allow" && resolved,
       payload: { decision, repeats, reason, resolved },
@@ -569,7 +587,7 @@ export class VoiceCallCoordinator {
       };
       (this.deps.toolUsage ?? ((entry) => usageLedger().recordTool(entry)))(usage);
     } catch { /* usage is best-effort */ }
-    this.transition("processing", resolved ? `Voice approval ${decision} recorded.` : "The approval was already resolved.");
+    this.transition("processing", resolved ? copy.recordedStatus(decision) : copy.alreadyResolvedStatus);
   }
 
   private getRunner(): VoiceRunner {

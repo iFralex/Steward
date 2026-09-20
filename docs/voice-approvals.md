@@ -15,9 +15,10 @@ approved its own action. The host owns a small deterministic sub-protocol:
    the exact tool name, canonical arguments, approval preview and chat ID.
 2. Ringback reads a deterministic rendering of the tool name, complete
    arguments, and approval preview without involving the main agent.
-3. The host accepts the explicit commands `approva`, `rifiuta`, or `ripeti`.
-   `ripeti` sends the exact same immutable rendering back to Ringback. Ambiguous
-   speech is prompted again and eventually fails closed.
+3. The host accepts localized explicit commands: `approva`, `rifiuta`, or
+   `ripeti` in Italian; `approve`, `reject`, or `repeat` in English. The repeat
+   command sends the exact same immutable rendering back to Ringback. Ambiguous
+   speech is prompted again in the same language and eventually fails closed.
 4. The existing `Session.resolveApproval` resolves the original request once.
    The permission gate then executes the unchanged arguments. Spoken approval
    never supports approve-with-edit; revisions move back to chat/PWA.

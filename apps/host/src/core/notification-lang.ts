@@ -1,14 +1,15 @@
 /**
- * Persisted language for server-generated push notification copy (mobile-access
- * M2/M3). Steward is single-user/multi-device, so this is one shared setting —
- * not per-subscription — kept in sync from whichever device last changed the
- * language in the web UI's System page.
+ * Persisted language for all server-generated user-facing copy, including
+ * voice and push notifications. Steward is single-user/multi-device, so this
+ * is one shared setting kept in sync by the PWA.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stewardConfigDir } from "../config.ts";
 
 export type NotificationLang = "en" | "it";
+/** The setting is shared by every host-generated user-facing message. */
+export type UserLang = NotificationLang;
 
 function filePath(): string {
   return join(stewardConfigDir(), "notification-lang.json");
@@ -23,6 +24,9 @@ export function getNotificationLang(): NotificationLang {
     return "en";
   }
 }
+
+/** Semantic alias for non-notification channels such as voice calls. */
+export const getUserLang = getNotificationLang;
 
 export function setNotificationLang(lang: NotificationLang): void {
   writeFileSync(filePath(), JSON.stringify({ lang }));

@@ -405,7 +405,7 @@ function LanguageCard({ httpBase, token, onUnauthorized }: { httpBase: string; t
   const current = i18nInstance.language === "it" ? "it" : "en";
   const setLang = (lang: Lang) => {
     void i18n.changeLanguage(lang);
-    void authFetch(`${httpBase}/settings/notification-lang`, token, onUnauthorized, {
+    void authFetch(`${httpBase}/settings/user-lang`, token, onUnauthorized, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ lang }),

@@ -137,17 +137,19 @@ else
     printf 'export OPENSSL_PREFIX="/opt/homebrew/opt/openssl@3"\n' >> "$VOICE_ENV"
   fi
   if ! grep -q '^export WHISPER_MODEL=' "$VOICE_ENV"; then
-    printf '\n# Steward: multilingual Italian speech recognition.\n' >> "$VOICE_ENV"
+    printf '\n# Steward: multilingual speech recognition.\n' >> "$VOICE_ENV"
     printf 'export WHISPER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$VOICE_ENV"
   fi
   if ! grep -q '^export WHISPER_SERVER_MODEL=' "$VOICE_ENV"; then
     printf 'export WHISPER_SERVER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$VOICE_ENV"
   fi
-  if ! grep -q '^export VOICE_TTS_CMD=' "$VOICE_ENV"; then
-    # Ringback's bundled Piper voice is English. Alice is present on Italian
-    # macOS installations and produces the temporary audio file Ringback needs.
-    printf 'export VOICE_TTS_CMD="say -v Alice --file-format=WAVE --data-format=LEI16@16000 -o {out} {text}"\n' >> "$VOICE_ENV"
-  fi
+  # Select Alice/Samantha at synthesis time from Steward's persisted user
+  # language. Replacing the old fixed-Alice command migrates existing installs.
+  install -m 755 "$STEWARD_ROOT/tools/ringback-say-localized.sh" "$RINGBACK_DIR/steward-say-localized.sh"
+  TTS_TMP="$(mktemp "$RINGBACK_DIR/voice.env.tts.XXXXXX")"
+  awk '!/^export VOICE_TTS_CMD=/' "$VOICE_ENV" > "$TTS_TMP"
+  printf 'export VOICE_TTS_CMD="\\\"%s\\\" {out} {text}"\n' "$RINGBACK_DIR/steward-say-localized.sh" >> "$TTS_TMP"
+  mv "$TTS_TMP" "$VOICE_ENV"
   if ! grep -q '^export VOICE_NULL_AUDIO=' "$VOICE_ENV"; then
     # pjproject's null device intermittently disconnects WAV players/recorders
     # from the conference bridge on macOS. CoreAudio is required for reliable
@@ -160,9 +162,12 @@ else
   if ! grep -q '^export VOICE_AUDIO_CODEC=' "$VOICE_ENV"; then
     printf 'export VOICE_AUDIO_CODEC="opus/48000/2"\n' >> "$VOICE_ENV"
   fi
-  if ! grep -q '^export WHISPER_LANGUAGE=' "$VOICE_ENV"; then
-    printf 'export WHISPER_LANGUAGE="it"\n' >> "$VOICE_ENV"
-  fi
+  # The model is multilingual and calls may be English or Italian. Auto mode
+  # follows the speaker instead of forcing the previous Italian-only setting.
+  LANG_TMP="$(mktemp "$RINGBACK_DIR/voice.env.lang.XXXXXX")"
+  awk '!/^export WHISPER_LANGUAGE=/' "$VOICE_ENV" > "$LANG_TMP"
+  printf 'export WHISPER_LANGUAGE="auto"\n' >> "$LANG_TMP"
+  mv "$LANG_TMP" "$VOICE_ENV"
   if ! grep -q '^export VOICE_ANSWER_TIMEOUT=' "$VOICE_ENV"; then
     printf 'export VOICE_ANSWER_TIMEOUT="60"\n' >> "$VOICE_ENV"
   fi

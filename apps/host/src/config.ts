@@ -84,7 +84,8 @@ export interface SpeechConfig {
 
 export function loadVoiceChannelConfig(env: NodeJS.ProcessEnv = process.env): VoiceChannelConfig {
   const transport = (env.STEWARD_VOICE_TRANSPORT ?? "disabled").trim().toLowerCase();
-  const openingLine = (env.STEWARD_VOICE_OPENING_LINE ?? "Ciao, sono Steward. Come posso aiutarti?").trim();
+  // Empty means: use the localized default for the language selected in the PWA.
+  const openingLine = (env.STEWARD_VOICE_OPENING_LINE ?? "").trim();
   if (transport === "ringback") {
     return {
       transport,

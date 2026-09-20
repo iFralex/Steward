@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useHostSocket } from "@/lib/host-socket";
-import { resolveToken, setToken } from "@/lib/auth";
+import { authFetch, resolveToken, setToken } from "@/lib/auth";
 import { hostWsUrl, hostHttpBase } from "@/lib/host-url";
 import { currentLocale } from "@/lib/locale";
 import { ApprovalCard } from "@/components/approval-card";
@@ -93,7 +93,7 @@ function consumeSendParam(): { text: string; from?: string | null; created?: boo
 }
 
 function App() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // Localhost (the Mac) auto-pairs via the host-injected global; a phone pairs
   // by scanning the System page's QR (?token=…, consumed once then stripped
   // from the address bar). No token yet → show the pairing screen instead of
@@ -101,6 +101,7 @@ function App() {
   const [authToken, setAuthToken] = useState<string | null>(() => resolveToken());
   const onUnauthorized = () => setAuthToken(null);
   const host = useHostSocket(HOST_URL, authToken, onUnauthorized);
+  const userLang = i18n.language === "it" ? "it" : "en";
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");          // sidebar tab (desktop) / bottom-nav tab (mobile)
@@ -147,6 +148,17 @@ function App() {
     followLatestRef.current = distanceFromBottom <= 32;
   }, []);
   useEffect(() => () => streamSafeStop(recorderRef.current), []);
+  // The host may place a call while the PWA is closed. Persist the current UI
+  // language on every authenticated app start/language change so all host-side
+  // voice and notification copy uses the same locale.
+  useEffect(() => {
+    if (!authToken) return;
+    void authFetch(`${HTTP_BASE}/settings/user-lang`, authToken, () => setAuthToken(null), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lang: userLang }),
+    }).catch(() => { /* best-effort; local UI language remains available */ });
+  }, [authToken, userLang]);
   useEffect(() => storeBoolean(ACTION_FILTER_SHOW_DONE_KEY, showDone), [showDone]);
   useEffect(() => storeBoolean(ACTION_FILTER_HIDE_EXPIRED_KEY, hideExpired), [hideExpired]);
   const focusComposer = () => document.getElementById("composer-input")?.focus();
