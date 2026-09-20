@@ -108,9 +108,36 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/settings/actions", "/push/", "/quick-send", "/transcribe", "/voice/"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/settings/actions", "/push/", "/quick-send", "/quick-call", "/transcribe", "/voice/"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
+}
+
+/** Both routes create a fresh voice chat. `/quick-call` is the zero-text
+ * Shortcut-friendly form; `/voice/call` additionally accepts an opening line. */
+export function callStartRoute(url: string): "quick" | "voice" | null {
+  let pathname: string;
+  try { pathname = new URL(url, "http://steward.local").pathname; } catch { return null; }
+  if (pathname === "/quick-call") return "quick";
+  if (pathname === "/voice/call") return "voice";
+  return null;
+}
+
+export function parseCallStartBody(route: "quick" | "voice", raw: string): { openingLine?: string; requestId?: string } {
+  const decoded: unknown = raw ? JSON.parse(raw) : {};
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("call body must be a JSON object");
+  const body = decoded as { openingLine?: unknown; requestId?: unknown };
+  const allowed = route === "quick" ? new Set(["requestId"]) : new Set(["openingLine", "requestId"]);
+  const extra = Object.keys(body).filter((key) => !allowed.has(key));
+  if (extra.length) throw new Error(`${route === "quick" ? "quick-call" : "voice/call"} does not accept field(s): ${extra.join(", ")}`);
+  if (body.openingLine !== undefined && typeof body.openingLine !== "string") throw new Error("openingLine must be a string");
+  if (body.requestId !== undefined && (typeof body.requestId !== "string" || body.requestId.trim().length > 128)) {
+    throw new Error("requestId must be a string of at most 128 characters");
+  }
+  return {
+    ...(route === "voice" && typeof body.openingLine === "string" ? { openingLine: body.openingLine } : {}),
+    ...(typeof body.requestId === "string" ? { requestId: body.requestId } : {}),
+  };
 }
 
 const MAX_UPLOAD = 25 * 1024 * 1024;
@@ -406,20 +433,19 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
   // Explicit, authenticated call initiation for the PWA and iPhone Shortcuts.
   // This is the only headless path allowed to bypass call_start's normal
   // approval card; all other sensitive tools remain deterministically denied.
-  if (req.method === "POST" && url.startsWith("/voice/call")) {
+  const callRoute = callStartRoute(url);
+  if (req.method === "POST" && callRoute) {
     void readRequestBody(req).then(async (raw) => {
-      const body = raw ? (JSON.parse(raw) as { openingLine?: unknown; requestId?: unknown }) : {};
-      if (body.openingLine !== undefined && typeof body.openingLine !== "string") {
-        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
-        res.end(JSON.stringify({ error: "openingLine must be a string" }));
-        return;
-      }
-      if (body.requestId !== undefined && (typeof body.requestId !== "string" || body.requestId.trim().length > 128)) {
-        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
-        res.end(JSON.stringify({ error: "requestId must be a string of at most 128 characters" }));
-        return;
-      }
+      const body = parseCallStartBody(callRoute, raw);
       const started = await voiceCalls.start(body.openingLine, body.requestId);
+      if (callRoute === "quick") {
+        recordAudit({
+          actor: "user", eventType: "quick_call.created", risk: "medium",
+          summary: "Quick Call created a new voice chat", chatId: started.chatId,
+          correlationId: started.requestId, ok: true,
+          payload: { requestId: started.requestId, duplicate: started.duplicate ?? false },
+        });
+      }
       res.writeHead(202, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(started));
     }).catch((err) => {

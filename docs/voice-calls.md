@@ -85,6 +85,18 @@ only the local Keychain item does not change the server-side SIP password.
 The existing paired token also authenticates voice calls. Send:
 
 ```http
+POST https://MAC-TAILSCALE-NAME:4318/quick-call
+Authorization: Bearer <paired token>
+Content-Type: application/json
+
+{"requestId":"shortcut-run-id"}
+```
+
+The body may also be empty. This route always creates a new chat and uses the
+configured opening line. It deliberately rejects text, audio and arbitrary
+extra fields. For a custom opening line, use the advanced endpoint:
+
+```http
 POST https://MAC-TAILSCALE-NAME:4318/voice/call
 Authorization: Bearer <paired token>
 Content-Type: application/json
@@ -102,6 +114,10 @@ retried once because it does not send a SIP INVITE; actual calls are never
 automatically redialed after no answer. The outbound Ringback account is
 deliberately not SIP-registered, so preflight can verify the local engine but
 remote Linphone reachability remains unknown until dialing.
+
+For the proposed secure in-call confirmation protocol, see
+[Voice approvals](voice-approvals.md). It is a design boundary and is not yet
+enabled by `/quick-call`.
 
 `GET /voice/status` reports detailed phases such as `preflighting`, `starting`,
 `ringing`, `speaking`, `listening`, `processing`, `ending`, and `failed`, plus

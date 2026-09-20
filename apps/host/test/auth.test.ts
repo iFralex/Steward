@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tokenOk } from "../src/server.ts";
+import { callStartRoute, parseCallStartBody, tokenOk } from "../src/server.ts";
 
 const TOKEN = "abcDEF123-_xyz789";
 
@@ -41,4 +41,20 @@ test("length mismatch does not throw and is rejected", () => {
 
 test("an unparseable url does not throw and is rejected (falls back to header)", () => {
   assert.doesNotThrow(() => tokenOk("::not a url::", `Bearer ${TOKEN}`, TOKEN));
+});
+
+test("quick-call and voice/call are exact call-start routes", () => {
+  assert.equal(callStartRoute("/quick-call"), "quick");
+  assert.equal(callStartRoute("/quick-call?token=x"), "quick");
+  assert.equal(callStartRoute("/voice/call"), "voice");
+  assert.equal(callStartRoute("/voice/call/status"), null);
+  assert.equal(callStartRoute("/quick-call-evil"), null);
+});
+
+test("quick-call accepts an empty body or idempotency key, but no text", () => {
+  assert.deepEqual(parseCallStartBody("quick", ""), {});
+  assert.deepEqual(parseCallStartBody("quick", '{"requestId":"shortcut-42"}'), { requestId: "shortcut-42" });
+  assert.throws(() => parseCallStartBody("quick", '{"openingLine":"ciao"}'), /does not accept/);
+  assert.throws(() => parseCallStartBody("quick", '{"text":"ciao"}'), /does not accept field/);
+  assert.deepEqual(parseCallStartBody("voice", '{"openingLine":"ciao"}'), { openingLine: "ciao" });
 });

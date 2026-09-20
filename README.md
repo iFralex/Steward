@@ -276,6 +276,12 @@ the Whisper runtime and model; the launcher passes the configured language to
 
 There is also a `/quick-send` path for shortcuts such as an iPhone Action Button. It can send text or audio into a headless chat runner. Gated writes still require approval; unattended sensitive actions time out rather than silently executing. The underlying `ChatManager.runTurn()` returns a discriminated result: success includes the persisted assistant `messageId` and text, while failure includes the error and whether generation was aborted. The WebSocket UI continues to stream events, but Quick Send can now decide whether to send a reply or failure notification without searching the chat transcript and guessing whether the turn succeeded.
 
+`POST /quick-call` is the zero-text companion for an iPhone Shortcut. It
+accepts an empty JSON body or an optional `requestId`, always creates a fresh
+chat and immediately starts Ringback with the configured opening line. The
+advanced `/voice/call` route remains available when the caller needs to supply
+a custom opening line.
+
 Optional voice calls use a transport-neutral `/voice/call` channel. The first
 adapter is Ringback over SIP/Linphone; it runs as an external MCP process and
 keeps the existing Steward agent, memory, tools, audit trail, and approval
@@ -1568,7 +1574,7 @@ Callers choose a tier. The gateway maps that tier to real providers. Non-streami
 
 | Port | Service |
 |---|---|
-| `4317` | Steward host HTTP on localhost. WebSocket protocol, static web app, `/health`, `/upload`, `/usage`, `/audit`, `/file/<token>`, `/resolve`, `/system/*`, `/settings/notification-lang`, `/push/*`, `/quick-send`, `/voice/*`, `/transcribe`. |
+| `4317` | Steward host HTTP on localhost. WebSocket protocol, static web app, `/health`, `/upload`, `/usage`, `/audit`, `/file/<token>`, `/resolve`, `/system/*`, `/settings/notification-lang`, `/push/*`, `/quick-send`, `/quick-call`, `/voice/*`, `/transcribe`. |
 | `4318` | Optional Steward HTTPS listener for phone/Tailscale when `STEWARD_TLS_CERT` and `STEWARD_TLS_KEY` are set; override with `STEWARD_TLS_PORT`. |
 | `4000` | LLM gateway. `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/rates`, `/health`. |
 | `11434` | Ollama. Used for local embeddings and optional local chat. |
