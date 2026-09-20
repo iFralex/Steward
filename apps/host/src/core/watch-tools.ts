@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { WatchRule, WatchToolGrant } from "@steward/watch-engine";
 import { sharedWatchEngine } from "./watch-runtime.ts";
+import { parseWatchGrant, watchCapabilityNames } from "./watch-capabilities.ts";
 
 export function buildWatchTools(chatId: string): ToolDefinition[] {
   return [createWatchTool(chatId, false), createWatchTool(chatId, true), stopWatchTool()];
@@ -11,7 +12,7 @@ function createWatchTool(chatId: string, agentWatch: boolean): ToolDefinition {
     name: agentWatch ? "create_agent_watch" : "create_watch",
     label: agentWatch ? "create_agent_watch" : "create_watch",
     description: agentWatch
-      ? "Create a persistent event watch that resumes this same conversation. Side-effecting capabilities are approved per rule in grants and enforced against exact constraints. This operation requires user approval. Use a voice grant to call, or a mail grant with an exact recipient, subject and body template. Read-only tools remain available. " + watchDomainDescription()
+      ? `Create a persistent event watch that resumes this same conversation. Side-effecting capabilities are approved per rule and deterministically constrained. This operation requires user approval. Registered capabilities: ${watchCapabilityNames().join(", ")}. Constraint kinds are exact, template, one_of and numeric range. Templates reference trusted values such as {{state.estimatedArrival}} or {{event.data.station}}. Read-only tools remain available. ` + watchDomainDescription()
       : "Create a persistent, read-only event watch that resumes this same conversation and sends its response by PWA push. It cannot perform side effects. " + watchDomainDescription(),
     parameters: watchParameters(agentWatch),
     prepareArguments: (args: unknown) => args as never,
@@ -60,13 +61,19 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
           where: { type: "object", additionalProperties: true, description: "Optional equality filters over event data." },
           once: { type: "boolean", description: "Fire this rule only once." },
           ...(agentWatch ? { grants: { type: "array", items: { type: "object", properties: {
-            tool: { type: "string", enum: ["mcp__voice__call_start", "mcp__mail__send_email"] },
-            maxInvocations: { type: "number", enum: [1] },
+            tool: { type: "string", enum: watchCapabilityNames() },
+            maxInvocations: { type: "number", minimum: 1 },
             constraints: { type: "object", properties: {
-              to: { type: "array", items: { type: "string" }, minItems: 1 },
-              subject: { type: "string" },
-              bodyTemplate: { type: "string", description: "Exact plain-text body. Supports {{estimatedArrival}}, {{delayMinutes}}, {{destination}}, and {{trainNumber}}." },
-            }, required: ["to", "subject", "bodyTemplate"], additionalProperties: false },
+              fields: { type: "object", additionalProperties: { type: "object", properties: {
+                kind: { type: "string", enum: ["exact", "template", "one_of", "range"] },
+                value: {},
+                template: { type: "string" },
+                values: { type: "array", items: {} },
+                min: { type: "number" },
+                max: { type: "number" },
+              }, required: ["kind"], additionalProperties: false } },
+              denyExtraFields: { type: "boolean", description: "Must be true for side-effecting capabilities." },
+            }, required: ["fields", "denyExtraFields"], additionalProperties: false },
           }, required: ["tool"], additionalProperties: false } } } : {}),
         }, required: ["id"], additionalProperties: false } },
         instruction: { type: "string", description: "The user's notification preference, preserved for the future agent turn." },
@@ -131,19 +138,6 @@ function parseTrigger(value: unknown): WatchRule["trigger"] | undefined {
 function parseGrants(value: unknown): WatchToolGrant[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error("grants must be an array");
-  return value.map((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Each grant must be an object");
-    const row = item as Record<string, unknown>;
-    if (row.maxInvocations !== undefined && row.maxInvocations !== 1) throw new Error("Watch grants permit exactly one invocation");
-    if (row.tool === "mcp__voice__call_start") return { tool: row.tool, maxInvocations: 1 };
-    if (row.tool !== "mcp__mail__send_email") throw new Error("Unsupported watch grant tool");
-    const constraints = row.constraints;
-    if (!constraints || typeof constraints !== "object" || Array.isArray(constraints)) throw new Error("Email grants require constraints");
-    const fields = constraints as Record<string, unknown>;
-    if (!Array.isArray(fields.to) || !fields.to.length || fields.to.some((entry) => typeof entry !== "string" || !entry.includes("@"))) throw new Error("Email grant requires exact recipient addresses");
-    const subject = required(fields, "subject");
-    const bodyTemplate = required(fields, "bodyTemplate");
-    return { tool: row.tool, maxInvocations: 1, constraints: { to: fields.to.map((entry) => String(entry).trim()), subject, bodyTemplate } };
-  });
+  return value.map(parseWatchGrant);
 }
 function result(value: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: {} }; }

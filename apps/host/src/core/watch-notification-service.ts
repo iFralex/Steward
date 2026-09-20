@@ -8,7 +8,7 @@ import { recordWatchDeliveryUsage } from "./watch-observability.ts";
 import { getNotificationLang, type NotificationLang } from "./notification-lang.ts";
 import type { TurnResult } from "./agent-runner.ts";
 import type { VoiceCallSummary } from "./voice-channel.ts";
-import { resolvedWatchGrants, watchHasGrant } from "./watch-grants.ts";
+import { resolvedWatchGrants, watchAgentGrantTools, watchHasGrant } from "./watch-grants.ts";
 
 let running = false;
 
@@ -16,7 +16,7 @@ export async function pollAndDeliverWatchEvents(args: {
   engine: WatchEngine;
   push: PushRegistry;
   runAgentTurn(chatId: string, prompt: string, pending: PendingWatchEvent): Promise<TurnResult>;
-  runVoiceTurn(chatId: string, prompt: string, eventId: string): Promise<VoiceCallSummary>;
+  runVoiceTurn(chatId: string, prompt: string, eventId: string, pending: PendingWatchEvent): Promise<VoiceCallSummary>;
 }): Promise<void> {
   if (running) return;
   running = true;
@@ -47,7 +47,7 @@ export async function pollAndDeliverWatchEvents(args: {
           // cached push instead of placing a second call.
           args.engine.store.setNotificationText(pending.id, pending.event.fallbackText);
           try {
-            const summary = await args.runVoiceTurn(chatId, watchAgentPrompt(pending, language), pending.id);
+            const summary = await args.runVoiceTurn(chatId, watchAgentPrompt(pending, language), pending.id, pending);
             if (!summary.ok) throw new Error(summary.error ?? "The automatic call failed");
             args.engine.store.delivered(pending.id);
             recordWatchDeliveryUsage(pending.watchId, Date.now() - startedAt, true);
@@ -157,7 +157,8 @@ function recordDeliveryFailure(
 export function watchAgentPrompt(pending: PendingWatchEvent, language: NotificationLang = "en"): string {
   const voice = voiceAuthorized(pending);
   const grants = resolvedWatchGrants(pending);
-  const mail = grants.filter((grant) => grant.tool === "mcp__mail__send_email");
+  const actionTools = watchAgentGrantTools(pending);
+  const invalidGrants = grants.filter((grant) => grant.error);
   const guidance = domainGuidance(pending.event, language);
   const lines = language === "it"
     ? [
@@ -169,11 +170,12 @@ export function watchAgentPrompt(pending: PendingWatchEvent, language: Notificat
         `Regole attivate: ${JSON.stringify(pending.rules)}`,
         `Evento strutturato: ${JSON.stringify(pending.event)}`,
         ...(grants.length ? [`Autorizzazioni esatte per questo solo evento: ${JSON.stringify(grants)}`] : []),
+        ...(invalidGrants.length ? ["Una o più autorizzazioni non possono essere risolte dai dati dell’evento: non dichiararle eseguite e segnala chiaramente il problema."] : []),
         ...(guidance ? [`Indicazioni del dominio: ${guidance}`] : []),
         voice
-          ? "L’utente ha preautorizzato mcp__voice__call_start per questo evento. Usa gli strumenti di lettura, incluso train_status con la risorsa osservata, per aggiornare i dati utili; poi chiama ora l’utente. Durante la telefonata rispondi naturalmente alle sue domande usando gli strumenti di lettura quando necessario e termina la chiamata quando saluta."
-          : mail.length
-            ? "Usa gli strumenti di lettura se servono, quindi esegui ora ciascuna email esattamente come indicata nelle autorizzazioni: non cambiare destinatari, oggetto o corpo e non aggiungere altri campi. Non compiere altre azioni. Poi scrivi una conferma breve nella stessa chat, adatta anche a una notifica push."
+          ? `L’utente ha preautorizzato mcp__voice__call_start per questo evento. Usa gli strumenti di lettura, incluso train_status con la risorsa osservata, per aggiornare i dati utili; poi chiama ora l’utente. Durante la telefonata rispondi naturalmente alle sue domande usando gli strumenti di lettura quando necessario${actionTools.length ? ", ed esegui anche le altre azioni autorizzate rispettando esattamente i vincoli risolti senza aggiungere campi" : ""}. Termina la chiamata quando saluta.`
+          : actionTools.length
+            ? "Usa gli strumenti di lettura se servono, quindi esegui ora ciascuna azione autorizzata rispettandone esattamente i vincoli risolti. Non aggiungere campi e non compiere altre azioni. Poi scrivi una conferma breve nella stessa chat, adatta anche a una notifica push."
             : "Usa gli strumenti di sola lettura se servono per aggiornare i dati. Non eseguire azioni e non chiamare l’utente. Scrivi una risposta breve e concreta nella stessa chat, adatta anche a una notifica push.",
       ]
     : [
@@ -185,11 +187,12 @@ export function watchAgentPrompt(pending: PendingWatchEvent, language: Notificat
         `Matched rules: ${JSON.stringify(pending.rules)}`,
         `Structured event: ${JSON.stringify(pending.event)}`,
         ...(grants.length ? [`Exact authorizations for this event only: ${JSON.stringify(grants)}`] : []),
+        ...(invalidGrants.length ? ["One or more authorizations cannot be resolved from this event data: do not claim they ran, and report the problem clearly."] : []),
         ...(guidance ? [`Domain guidance: ${guidance}`] : []),
         voice
-          ? "The user pre-authorized mcp__voice__call_start for this event. Use read-only tools, including train_status with the observed resource, to refresh useful facts; then call the user now. During the call, answer follow-up questions naturally with read-only tools when needed and end the call when they say goodbye."
-          : mail.length
-            ? "Use read-only tools if useful, then send each email now exactly as listed in the authorizations: do not change recipients, subject, or body and do not add fields. Perform no other actions. Then write a short confirmation in the same chat that also works as a push notification."
+          ? `The user pre-authorized mcp__voice__call_start for this event. Use read-only tools, including train_status with the observed resource, to refresh useful facts; then call the user now. During the call, answer follow-up questions naturally with read-only tools when needed${actionTools.length ? ", and execute the other authorized actions while following their resolved constraints exactly without adding fields" : ""}. End the call when they say goodbye.`
+          : actionTools.length
+            ? "Use read-only tools if useful, then execute each authorized action now while following its resolved constraints exactly. Do not add fields or perform other actions. Then write a short confirmation in the same chat that also works as a push notification."
             : "Use read-only tools when useful to refresh facts. Do not perform actions or call the user. Write a short concrete response in the same chat that also works as a push notification.",
       ];
   return lines.join("\n");

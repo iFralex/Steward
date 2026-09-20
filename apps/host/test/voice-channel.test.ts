@@ -158,6 +158,36 @@ test("a pre-authorized watch event continues the originating chat and waits for 
   assert.equal(coordinator.status().state, "idle");
 });
 
+test("a watch call carries other granted capabilities into the same scoped voice turn", async () => {
+  const chat = chatStore().createChat("Evento combinato");
+  let seenScope: { allowedTools: string[] } | undefined;
+  let closed = false;
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), undefined, {
+    bridge: async () => fakeBridge(),
+    createRunner: (emit, scope) => {
+      seenScope = scope;
+      return {
+        runTurn: async () => { throw new Error("unexpected interactive turn"); },
+        runAutomaticTurn: async () => {
+          emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+          emit({ type: "tool_result", tool: "mcp__voice__call_start", ok: true, output: "connected" } as any);
+          return { ok: true, messageId: "m", text: "done" };
+        },
+        abort: async () => {},
+        close: async () => { closed = true; },
+      };
+    },
+    audit: (() => {}) as any, usage: () => {}, sleep: async () => {},
+  });
+  const guard = { beforeExecute: async () => ({ allowed: true }) };
+  const summary = await coordinator.runWatchEvent(chat.id, "call and update", "combined-1", {
+    allowedTools: ["mcp__calendar__update_event"], executionGuard: guard,
+  });
+  assert.equal(summary.ok, true);
+  assert.deepEqual(seenScope?.allowedTools, ["mcp__calendar__update_event"]);
+  assert.equal(closed, true);
+});
+
 test("preflight retries once but never creates a chat when Ringback stays unhealthy", async () => {
   let attempts = 0;
   let chats = 0;

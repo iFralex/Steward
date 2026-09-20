@@ -1,12 +1,22 @@
-export interface WatchMailGrantConstraints {
-  to: string[];
-  subject: string;
-  bodyTemplate: string;
+export type WatchFieldConstraint =
+  | { kind: "exact"; value: unknown }
+  | { kind: "template"; template: string }
+  | { kind: "one_of"; values: unknown[] }
+  | { kind: "range"; min?: number; max?: number };
+
+export interface WatchToolConstraints {
+  fields: Record<string, WatchFieldConstraint>;
+  /** Reject arguments not explicitly constrained. Safe capabilities normally require this. */
+  denyExtraFields?: boolean;
 }
 
-export type WatchToolGrant =
-  | { tool: "mcp__voice__call_start"; maxInvocations?: 1 }
-  | { tool: "mcp__mail__send_email"; maxInvocations?: 1; constraints: WatchMailGrantConstraints };
+/** Source-neutral future capability. The host capability registry decides
+ * which tool names and argument fields may actually be pre-authorized. */
+export interface WatchToolGrant {
+  tool: string;
+  maxInvocations?: number;
+  constraints?: WatchToolConstraints;
+}
 
 export interface WatchTemporalTrigger {
   kind: "before_time";

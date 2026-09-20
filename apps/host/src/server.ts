@@ -27,7 +27,7 @@ import { getNotificationLang, setNotificationLang } from "./core/notification-la
 import { notificationCopy } from "./core/notification-copy.ts";
 import { sharedWatchEngine } from "./core/watch-runtime.ts";
 import { pollAndDeliverWatchEvents } from "./core/watch-notification-service.ts";
-import { createWatchExecutionGuard, watchHasGrant } from "./core/watch-grants.ts";
+import { createWatchExecutionGuard, watchAgentGrantTools } from "./core/watch-grants.ts";
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
@@ -752,8 +752,10 @@ export function startServer(config: HostConfig): WebSocketServer {
     engine: sharedWatchEngine(),
     push: pushRegistry,
     runAgentTurn: async (chatId, prompt, pending) => {
-      if (!watchHasGrant(pending, "mcp__mail__send_email")) return watchChats.runAutomaticTurn(chatId, prompt);
-      const scopedRules = { ...backgroundRules, "mcp__mail__send_email": "allow" as const };
+      const grantedTools = watchAgentGrantTools(pending);
+      if (!grantedTools.length) return watchChats.runAutomaticTurn(chatId, prompt);
+      const scopedRules = { ...backgroundRules };
+      for (const tool of grantedTools) scopedRules[tool] = "allow";
       const scoped = new ChatManager({
         ...config,
         gateway: { ...config.gateway, usageService: "host", usageAction: "watch-agent-turn" },
@@ -765,7 +767,13 @@ export function startServer(config: HostConfig): WebSocketServer {
         await scoped.close();
       }
     },
-    runVoiceTurn: (chatId, prompt, eventId) => voiceCalls.runWatchEvent(chatId, prompt, eventId),
+    runVoiceTurn: (chatId, prompt, eventId, pending) => {
+      const allowedTools = watchAgentGrantTools(pending);
+      return voiceCalls.runWatchEvent(chatId, prompt, eventId, {
+        allowedTools,
+        executionGuard: createWatchExecutionGuard(pending, sharedWatchEngine().store),
+      });
+    },
   });
   void pollWatches();
   const watchPollMs = Math.max(15_000, Number(process.env.WATCH_POLL_MS ?? 45_000));

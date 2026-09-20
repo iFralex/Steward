@@ -8,6 +8,7 @@ import { chatStore } from "./chat-store.ts";
 import { Session, type Emit } from "./session.ts";
 import { usageLedger, type VoiceCallRecord } from "@steward/usage-ledger";
 import { parseRingbackFailure, type VoiceFailureDiagnostic } from "./voice-diagnostics.ts";
+import type { ToolExecutionGuard } from "./permission-gate.ts";
 
 export type VoiceCallState =
   | "disabled" | "idle" | "preflighting" | "starting" | "ringing"
@@ -56,12 +57,13 @@ interface VoiceRunner {
   runTurn(chatId: string, prompt: string): Promise<TurnResult>;
   runAutomaticTurn?(chatId: string, prompt: string): Promise<TurnResult>;
   abort(chatId?: string): Promise<void>;
+  close?(): Promise<void>;
 }
 
 interface VoiceCoordinatorDeps {
   bridge?: () => Promise<McpBridge>;
   createChat?: () => { id: string };
-  createRunner?: (emit: Emit) => VoiceRunner;
+  createRunner?: (emit: Emit, scope?: { allowedTools: string[]; executionGuard?: ToolExecutionGuard }) => VoiceRunner;
   audit?: typeof recordAudit;
   usage?: (record: VoiceCallRecord) => void;
   now?: () => number;
@@ -71,6 +73,8 @@ interface VoiceCoordinatorDeps {
 interface VoiceStartOptions {
   chatId?: string;
   prompt?: string;
+  allowedTools?: string[];
+  executionGuard?: ToolExecutionGuard;
 }
 
 const PREFLIGHT_ATTEMPTS = 2;
@@ -183,8 +187,13 @@ export class VoiceCallCoordinator {
 
   /** Resume an existing chat for a pre-authorized automatic event and wait for
    * the whole conversational call turn to finish. */
-  async runWatchEvent(chatId: string, prompt: string, requestId: string): Promise<VoiceCallSummary> {
-    return (await this.begin(undefined, requestId, { chatId, prompt })).completion;
+  async runWatchEvent(
+    chatId: string,
+    prompt: string,
+    requestId: string,
+    scope?: { allowedTools?: string[]; executionGuard?: ToolExecutionGuard },
+  ): Promise<VoiceCallSummary> {
+    return (await this.begin(undefined, requestId, { chatId, prompt, ...scope })).completion;
   }
 
   private async begin(
@@ -245,7 +254,8 @@ export class VoiceCallCoordinator {
     let complete!: (summary: VoiceCallSummary) => void;
     const completion = new Promise<VoiceCallSummary>((resolve) => { complete = resolve; });
     let completedSummary: VoiceCallSummary | undefined;
-    const runner = this.getRunner();
+    const scoped = !!(options.allowedTools?.length || options.executionGuard);
+    const runner = scoped ? this.createScopedRunner(options.allowedTools ?? [], options.executionGuard) : this.getRunner();
     const turnPrompt = options.prompt ?? ringbackCallPrompt(line);
     const turn = options.chatId && runner.runAutomaticTurn
       ? runner.runAutomaticTurn(chat.id, turnPrompt)
@@ -279,7 +289,8 @@ export class VoiceCallCoordinator {
       if (!options.chatId) {
         try { await this.onFinished?.(chat.id, error); } catch { /* completion callback is best-effort */ }
       }
-    }).finally(() => {
+    }).finally(async () => {
+      if (scoped) await runner.close?.();
       if (this.activeChatId === chat.id) {
         this.activeChatId = null;
         this.activeRequestId = null;
@@ -417,5 +428,24 @@ export class VoiceCallCoordinator {
     const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
     this.runner = new ChatManager(voiceConfig, session, this.onAgentEvent);
     return this.runner;
+  }
+
+  private createScopedRunner(allowedTools: string[], executionGuard?: ToolExecutionGuard): VoiceRunner {
+    if (this.deps.createRunner) return this.deps.createRunner(this.onAgentEvent, { allowedTools, executionGuard });
+    const voiceConfig: HostConfig = {
+      ...this.config,
+      gateway: { ...this.config.gateway, usageService: "host", usageAction: "voice-call" },
+      policy: {
+        ...this.config.policy,
+        default: "deny",
+        rules: Object.fromEntries([
+          ...Object.entries(this.config.policy.rules),
+          ["mcp__voice__call_start", "allow"],
+          ...allowedTools.map((tool) => [tool, "allow"]),
+        ]) as HostConfig["policy"]["rules"],
+      },
+    };
+    const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
+    return new ChatManager(voiceConfig, session, this.onAgentEvent, executionGuard);
   }
 }

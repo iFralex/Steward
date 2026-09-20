@@ -1,81 +1,130 @@
 import { recordAudit } from "@steward/audit-log";
-import type { PendingWatchEvent, WatchStore, WatchToolGrant } from "@steward/watch-engine";
+import type { PendingWatchEvent, WatchFieldConstraint, WatchStore, WatchToolConstraints } from "@steward/watch-engine";
 import type { ToolExecutionGuard } from "./permission-gate.ts";
+import { normalizeStoredWatchGrant, watchCapability } from "./watch-capabilities.ts";
 
-interface ResolvedGrant {
+export interface ResolvedWatchGrant {
   ruleId: string;
-  tool: WatchToolGrant["tool"];
-  input?: Record<string, unknown>;
+  tool: string;
+  maxInvocations: number;
+  constraints?: WatchToolConstraints;
+  error?: string;
 }
 
-export function resolvedWatchGrants(pending: PendingWatchEvent): ResolvedGrant[] {
-  return pending.rules.flatMap((rule) => (rule.grants ?? []).map((grant) => {
-    if (grant.tool === "mcp__voice__call_start") return { ruleId: rule.id, tool: grant.tool };
-    return {
-      ruleId: rule.id,
-      tool: grant.tool,
-      input: {
-        to: grant.constraints.to,
-        subject: grant.constraints.subject,
-        body: renderTemplate(grant.constraints.bodyTemplate, pending),
-      },
-    };
+export function resolvedWatchGrants(pending: PendingWatchEvent): ResolvedWatchGrant[] {
+  return pending.rules.flatMap((rule) => (rule.grants ?? []).map((stored) => {
+    try {
+      const grant = normalizeStoredWatchGrant(stored);
+      const constraints = grant.constraints ? resolveConstraints(grant.constraints, pending) : undefined;
+      return { ruleId: rule.id, tool: grant.tool, maxInvocations: grant.maxInvocations ?? 1, ...(constraints ? { constraints } : {}) };
+    } catch (error) {
+      return {
+        ruleId: rule.id, tool: typeof stored.tool === "string" ? stored.tool : "invalid",
+        maxInvocations: 0, error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }));
 }
 
-export function watchHasGrant(pending: PendingWatchEvent, tool: WatchToolGrant["tool"]): boolean {
-  return resolvedWatchGrants(pending).some((grant) => grant.tool === tool);
+export function watchHasGrant(pending: PendingWatchEvent, tool: string): boolean {
+  return resolvedWatchGrants(pending).some((grant) => grant.tool === tool && !grant.error);
 }
 
-/** Enforces exact rule-scoped arguments and durable at-most-once execution. */
+export function watchAgentGrantTools(pending: PendingWatchEvent): string[] {
+  return [...new Set(resolvedWatchGrants(pending)
+    .filter((grant) => !grant.error && watchCapability(grant.tool)?.mode === "agent")
+    .map((grant) => grant.tool))];
+}
+
+/** Generic deterministic constraint enforcement plus durable at-most-once
+ * claiming. Read-only tools still pass through the ordinary background policy. */
 export function createWatchExecutionGuard(pending: PendingWatchEvent, store: WatchStore): ToolExecutionGuard {
   const grants = resolvedWatchGrants(pending);
   const claimed = new Map<string, string>();
   return {
     async beforeExecute(tool, input) {
-      // Read-only tools are governed by the background policy. This guard adds
-      // a second boundary only for capabilities granted by a watch rule.
-      if (tool !== "mcp__mail__send_email") return { allowed: true };
-      const grant = grants.find((candidate) => candidate.tool === tool && exactInput(candidate.input, input));
+      const capability = watchCapability(tool);
+      if (!capability) return { allowed: true };
+      const grant = grants.find((candidate) => !candidate.error && candidate.tool === tool
+        && (!capability.constraintsRequired || matchesConstraints(candidate.constraints, input)));
       if (!grant) {
         audit(pending, "watch.grant_denied", "Watch tool arguments exceeded the approved constraints", false, { tool, input });
-        return { allowed: false, reason: "Email not sent: recipient, subject, or body differs from the exact watch authorization." };
+        return { allowed: false, reason: `${tool} was not executed: its arguments differ from this event's approved constraints.` };
       }
       if (!store.claimAction(pending.id, grant.ruleId, tool)) {
         audit(pending, "watch.grant_duplicate_blocked", "Blocked a repeated watch action", false, { tool, ruleId: grant.ruleId });
-        return { allowed: false, reason: "Email not sent again: this pre-authorized watch action was already attempted." };
+        return { allowed: false, reason: `${tool} was not executed again: this watch action was already attempted.` };
       }
-      claimed.set(tool, grant.ruleId);
+      claimed.set(claimKey(tool, input), grant.ruleId);
       audit(pending, "watch.grant_claimed", "Claimed a pre-authorized watch action", true, { tool, ruleId: grant.ruleId, input });
       return { allowed: true };
     },
-    async afterExecute(tool, _input, error) {
-      const ruleId = claimed.get(tool);
+    async afterExecute(tool, input, error) {
+      const key = claimKey(tool, input);
+      const ruleId = claimed.get(key);
       if (!ruleId) return;
       store.finishAction(pending.id, ruleId, tool, error);
       audit(pending, error ? "watch.action_failed" : "watch.action_completed", error ?? "Pre-authorized watch action completed", !error, { tool, ruleId });
-      claimed.delete(tool);
+      claimed.delete(key);
     },
   };
 }
 
-function renderTemplate(template: string, pending: PendingWatchEvent): string {
-  const state = isRecord(pending.event.currentState) ? pending.event.currentState : {};
-  const values: Record<string, unknown> = {
-    estimatedArrival: state.estimatedArrival,
-    delayMinutes: state.delayMinutes,
-    destination: state.destination ?? state.to,
-    trainNumber: state.trainNumber,
+function resolveConstraints(constraints: WatchToolConstraints, pending: PendingWatchEvent): WatchToolConstraints {
+  return {
+    ...constraints,
+    fields: Object.fromEntries(Object.entries(constraints.fields).map(([field, constraint]) => [field, resolveConstraint(constraint, pending)])),
   };
-  return template.replace(/\{\{(estimatedArrival|delayMinutes|destination|trainNumber)\}\}/g, (_match, key: string) => {
-    const value = values[key];
-    return value === undefined || value === null ? "" : String(value);
+}
+
+function resolveConstraint(constraint: WatchFieldConstraint, pending: PendingWatchEvent): WatchFieldConstraint {
+  if (constraint.kind !== "template") return constraint;
+  return { kind: "exact", value: renderTemplate(constraint.template, pending) };
+}
+
+function renderTemplate(template: string, pending: PendingWatchEvent): string {
+  return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_match, reference: string) => {
+    const value = reference.startsWith("state.")
+      ? readPath(pending.event.currentState, reference.slice("state.".length))
+      : reference.startsWith("event.")
+        ? readPath(pending.event, reference.slice("event.".length))
+        : undefined;
+    if (value === undefined || value === null) throw new Error(`Watch template value is unavailable: ${reference}`);
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
   });
 }
 
-function exactInput(expected: Record<string, unknown> | undefined, actual: Record<string, unknown>): boolean {
-  if (!expected) return false;
-  return JSON.stringify(canonical(expected)) === JSON.stringify(canonical(actual));
+function matchesConstraints(constraints: WatchToolConstraints | undefined, input: Record<string, unknown>): boolean {
+  if (!constraints) return Object.keys(input).length === 0;
+  const constrainedFields = Object.keys(constraints.fields);
+  const inputFields = Object.keys(input);
+  if (constraints.denyExtraFields && inputFields.some((field) => !constrainedFields.includes(field))) return false;
+  if (constrainedFields.some((field) => !(field in input))) return false;
+  return Object.entries(constraints.fields).every(([field, constraint]) => matchesField(constraint, input[field]));
+}
+
+function matchesField(constraint: WatchFieldConstraint, actual: unknown): boolean {
+  if (constraint.kind === "exact") return deepEqual(constraint.value, actual);
+  if (constraint.kind === "one_of") return constraint.values.some((value) => deepEqual(value, actual));
+  if (constraint.kind === "range") {
+    return typeof actual === "number" && Number.isFinite(actual)
+      && (constraint.min === undefined || actual >= constraint.min)
+      && (constraint.max === undefined || actual <= constraint.max);
+  }
+  return false;
+}
+
+function readPath(value: unknown, path: string): unknown {
+  return path.split(".").reduce<unknown>((current, key) => isRecord(current) ? current[key] : undefined, value);
+}
+
+function claimKey(tool: string, input: Record<string, unknown>): string {
+  return `${tool}:${JSON.stringify(canonical(input))}`;
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }
 
 function canonical(value: unknown): unknown {
