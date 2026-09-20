@@ -93,6 +93,15 @@ export const defaultPolicy: ToolPolicy = {
     // Trains MCP — live lookups are read-only.
     "mcp__trains__find_next_train": "allow",
     "mcp__trains__train_status": "allow",
+    // Voice lifecycle after a call has started. call_start intentionally falls
+    // through to the approval gate in ordinary chat; the authenticated
+    // /voice/call channel uses a narrowly-scoped policy override for it.
+    "mcp__voice__converse": "allow",
+    "mcp__voice__listen": "allow",
+    "mcp__voice__speak": "allow",
+    "mcp__voice__call_end": "allow",
+    "mcp__voice__call_status": "allow",
+    "mcp__voice__get_conversation": "allow",
     // Generic read-only background monitors. They can only observe and return
     // an event to the agent; any later sensitive action remains separately gated.
     "create_watch": "allow",

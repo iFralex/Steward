@@ -133,16 +133,36 @@
       "enable": "Enable",
       "pathUnavailable": "App path not available."
     },
-    "actionsAutomation": {
+  "actionsAutomation": {
       "title": "Automatic Action creation",
       "description": "When disabled, Steward does not analyze mail or calendars to create new Actions and uses no tokens for this feature. When re-enabled, it considers only items acquired or modified from that moment on.",
       "on": "on",
       "off": "off",
       "saving": "Saving...",
       "disable": "Disable",
-      "enable": "Enable"
-    },
-    "pairing": {
+    "enable": "Enable"
+  },
+  "voice": {
+    "title": "Voice call",
+    "description": "Ring the iPhone and continue the conversation with Steward’s existing agent, memory, and tools.",
+    "call": "Call this phone",
+    "starting": "Starting…",
+    "started": "Request received: Steward is preparing the call.",
+    "states": {
+      "disabled": "disabled",
+      "idle": "ready",
+      "preflighting": "checking Ringback",
+      "starting": "starting",
+      "ringing": "ringing",
+      "connected": "connected",
+      "speaking": "Steward speaking",
+      "listening": "Steward listening",
+      "processing": "processing",
+      "ending": "ending",
+      "failed": "failed"
+    }
+  },
+  "pairing": {
       "title": "Connect your phone",
       "description": "Scan from your phone (same Tailscale network) to connect it.",
       "qrAlt": "Pairing QR"

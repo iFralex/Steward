@@ -1,0 +1,12 @@
+diff --git a/voice_agent.py b/voice_agent.py
+index 9ddaf1c..0b6dc72 100644
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -624,6 +624,7 @@ class CallSession:
+         self.ep.libInit(cfg)
+ 
+         self.ep.transportCreate(pj.PJSIP_TRANSPORT_UDP, pj.TransportConfig())
++        self.ep.transportCreate(pj.PJSIP_TRANSPORT_TCP, pj.TransportConfig())
+         tls = pj.TransportConfig()
+         tls.tlsConfig.verifyServer = False
+         tls.tlsConfig.method = pj.PJSIP_TLSV1_2_METHOD

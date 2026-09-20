@@ -276,6 +276,12 @@ the Whisper runtime and model; the launcher passes the configured language to
 
 There is also a `/quick-send` path for shortcuts such as an iPhone Action Button. It can send text or audio into a headless chat runner. Gated writes still require approval; unattended sensitive actions time out rather than silently executing. The underlying `ChatManager.runTurn()` returns a discriminated result: success includes the persisted assistant `messageId` and text, while failure includes the error and whether generation was aborted. The WebSocket UI continues to stream events, but Quick Send can now decide whether to send a reply or failure notification without searching the chat transcript and guessing whether the turn succeeded.
 
+Optional voice calls use a transport-neutral `/voice/call` channel. The first
+adapter is Ringback over SIP/Linphone; it runs as an external MCP process and
+keeps the existing Steward agent, memory, tools, audit trail, and approval
+boundary. The coordinator already reserves a StreamCore transport for a future
+streaming WebRTC media path. See [Voice calls](docs/voice-calls.md).
+
 ### Live Trains And Event Monitors
 
 `apps/train-mcp` reads live Italian railway data from ViaggiaTreno and exposes
@@ -1507,7 +1513,7 @@ Callers choose a tier. The gateway maps that tier to real providers. Non-streami
 
 | Port | Service |
 |---|---|
-| `4317` | Steward host HTTP on localhost. WebSocket protocol, static web app, `/health`, `/upload`, `/usage`, `/audit`, `/file/<token>`, `/resolve`, `/system/*`, `/settings/notification-lang`, `/push/*`, `/quick-send`, `/transcribe`. |
+| `4317` | Steward host HTTP on localhost. WebSocket protocol, static web app, `/health`, `/upload`, `/usage`, `/audit`, `/file/<token>`, `/resolve`, `/system/*`, `/settings/notification-lang`, `/push/*`, `/quick-send`, `/voice/*`, `/transcribe`. |
 | `4318` | Optional Steward HTTPS listener for phone/Tailscale when `STEWARD_TLS_CERT` and `STEWARD_TLS_KEY` are set; override with `STEWARD_TLS_PORT`. |
 | `4000` | LLM gateway. `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/rates`, `/health`. |
 | `11434` | Ollama. Used for local embeddings and optional local chat. |
@@ -1720,6 +1726,10 @@ Logs go in:
 | `STEWARD_WHISPER_MODEL` | Path to local Whisper model file. |
 | `STEWARD_SPEECH_LANGUAGE` | Whisper language code, default `en`; set `it` explicitly for Italian dictation. |
 | `STEWARD_SPEECH_ENABLED` | Set `0` to disable transcription. |
+| `STEWARD_VOICE_TRANSPORT` | Optional voice transport: `ringback`; `streamcore` is reserved for the future adapter. |
+| `STEWARD_RINGBACK_LAUNCHER` | Absolute path to Ringback's `run_voice_mcp.sh`. |
+| `STEWARD_VOICE_OPENING_LINE` | Default first sentence spoken when `/voice/call` starts. |
+| `STEWARD_STREAMCORE_URL` | Reserved base URL for the future StreamCore adapter. |
 | `TRAIN_MCP_ENTRY` | Override the train MCP entrypoint; normally set automatically by the packaged launcher. |
 | `VIAGGIATRENO_BASE_URL` | Override the ViaggiaTreno endpoint, primarily for testing or a compatible proxy. |
 | `WATCH_DB` | Override the generic watch SQLite path; defaults to `Steward/watches.db`. |

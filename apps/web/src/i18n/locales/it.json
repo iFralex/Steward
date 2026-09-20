@@ -133,16 +133,36 @@
       "enable": "Attiva",
       "pathUnavailable": "Path app non disponibile."
     },
-    "actionsAutomation": {
+  "actionsAutomation": {
       "title": "Creazione automatica delle Actions",
       "description": "Se la disattivi, Steward non analizza email o calendario per creare nuove Actions e non consuma token per questa funzione. Quando la riattivi, considera solo gli elementi acquisiti o modificati da quel momento.",
       "on": "attiva",
       "off": "disattiva",
       "saving": "Salvo...",
       "disable": "Disattiva",
-      "enable": "Attiva"
-    },
-    "pairing": {
+    "enable": "Attiva"
+  },
+  "voice": {
+    "title": "Chiamata vocale",
+    "description": "Fai squillare l’iPhone e continua la conversazione con lo stesso agente, memoria e strumenti di Steward.",
+    "call": "Chiama questo telefono",
+    "starting": "Avvio…",
+    "started": "Richiesta ricevuta: Steward sta preparando la chiamata.",
+    "states": {
+      "disabled": "disattivata",
+      "idle": "pronta",
+      "preflighting": "verifica Ringback",
+      "starting": "avvio",
+      "ringing": "squilla",
+      "connected": "connessa",
+      "speaking": "Steward parla",
+      "listening": "Steward ascolta",
+      "processing": "elaborazione",
+      "ending": "chiusura",
+      "failed": "errore"
+    }
+  },
+  "pairing": {
       "title": "Connetti il telefono",
       "description": "Scansiona dal telefono (stessa rete Tailscale) per collegarlo.",
       "qrAlt": "QR di pairing"

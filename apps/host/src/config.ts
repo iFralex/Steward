@@ -38,12 +38,23 @@ export interface HostConfig {
   approvalTimeoutMs: number;
   gateway: GatewayConfig;
   speech: SpeechConfig;
+  voice: VoiceChannelConfig;
   mcpServers: Record<string, McpServerSpec>;
   /** Shared secret gating the WS + HTTP data routes (mobile-access M0). */
   authToken: string;
   /** VAPID keypair for Web Push (mobile-access M2/M3). */
   vapid: VapidKeys;
 }
+
+/**
+ * Voice is a channel, not a second agent. Ringback is the first transport;
+ * StreamCore deliberately has a configuration shape already so it can later
+ * replace the media path without changing the public `/voice/*` API.
+ */
+export type VoiceChannelConfig =
+  | { transport: "disabled" }
+  | { transport: "ringback"; launcher: string; openingLine: string; preflightTimeoutMs: number }
+  | { transport: "streamcore"; baseUrl: string; openingLine: string };
 
 /** ~/Library/Application Support/Steward — created on demand. */
 export function stewardConfigDir(): string {
@@ -69,6 +80,27 @@ export interface SpeechConfig {
   language: string;
   timeoutMs: number;
   convertTimeoutMs: number;
+}
+
+export function loadVoiceChannelConfig(env: NodeJS.ProcessEnv = process.env): VoiceChannelConfig {
+  const transport = (env.STEWARD_VOICE_TRANSPORT ?? "disabled").trim().toLowerCase();
+  const openingLine = (env.STEWARD_VOICE_OPENING_LINE ?? "Ciao, sono Steward. Come posso aiutarti?").trim();
+  if (transport === "ringback") {
+    return {
+      transport,
+      launcher: (env.STEWARD_RINGBACK_LAUNCHER ?? "").trim(),
+      openingLine,
+      preflightTimeoutMs: Math.max(1_000, Number(env.STEWARD_VOICE_PREFLIGHT_TIMEOUT_MS ?? 10_000)),
+    };
+  }
+  if (transport === "streamcore") {
+    return {
+      transport,
+      baseUrl: (env.STEWARD_STREAMCORE_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, ""),
+      openingLine,
+    };
+  }
+  return { transport: "disabled" };
 }
 
 /**
@@ -183,6 +215,7 @@ export function loadConfig(): HostConfig {
     process.env.SHELL_MCP_ENTRY ?? fileURLToPath(new URL("../../shell-mcp/src/index.ts", import.meta.url));
   const trainMcpEntry =
     process.env.TRAIN_MCP_ENTRY ?? fileURLToPath(new URL("../../train-mcp/src/index.ts", import.meta.url));
+  const voice = loadVoiceChannelConfig();
 
   const vapid = loadVapidKeys();
   // Apple's push service (web.push.apple.com) VALIDATES the VAPID subject and
@@ -191,9 +224,33 @@ export function loadConfig(): HostConfig {
   const pushContact = process.env.STEWARD_PUSH_CONTACT ?? "mailto:ifralex.developer@gmail.com";
   webpush.setVapidDetails(pushContact, vapid.publicKey, vapid.privateKey);
 
+  const mcpServers: Record<string, McpServerSpec> = {
+    "llm-wiki": { command: node, args: [llmWikiMcpEntry] },
+    mail: { command: node, args: nodeArgs(mailMcpEntry) },
+    calendar: { command: node, args: nodeArgs(calendarMcpEntry) },
+    contacts: { command: node, args: nodeArgs(contactsMcpEntry) },
+    "action-center": { command: node, args: nodeArgs(actionCenterMcpEntry) },
+    shell: { command: node, args: nodeArgs(shellMcpEntry) },
+    trains: { command: node, args: nodeArgs(trainMcpEntry) },
+  };
+  // Keep the MCP id transport-neutral. A future StreamCore adapter can expose
+  // the same host-facing voice channel without renaming tools throughout Steward.
+  if (voice.transport === "ringback" && voice.launcher) {
+    mcpServers.voice = { command: voice.launcher, args: [] };
+  }
+
+  const voicePrompt = voice.transport === "ringback"
+    ? [
+        "Voice calls use mcp__voice__call_start, then mcp__voice__converse for every turn, and mcp__voice__call_end when finished.",
+        "Start a call only after an explicit user request or a host voice-call instruction.",
+        "Keep spoken lines short, natural, and in the user's language.",
+        "A spoken confirmation never bypasses Steward's normal approval gate for sensitive actions; ask the user to approve those in the app.",
+      ].join(" ")
+    : "";
+
   return {
     port: Number(process.env.HOST_PORT ?? 4317),
-    systemPrompt: process.env.HOST_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT,
+    systemPrompt: [process.env.HOST_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT, voicePrompt].filter(Boolean).join(" "),
     policy: defaultPolicy,
     approvalTimeoutMs: Number(process.env.APPROVAL_TIMEOUT_MS ?? 5 * 60_000),
     authToken: loadAuthToken(),
@@ -216,14 +273,7 @@ export function loadConfig(): HostConfig {
       timeoutMs: Number(process.env.STEWARD_SPEECH_TIMEOUT_MS ?? 120_000),
       convertTimeoutMs: Number(process.env.STEWARD_AUDIO_CONVERT_TIMEOUT_MS ?? 30_000),
     },
-    mcpServers: {
-      "llm-wiki": { command: node, args: [llmWikiMcpEntry] },
-      mail: { command: node, args: nodeArgs(mailMcpEntry) },
-      calendar: { command: node, args: nodeArgs(calendarMcpEntry) },
-      contacts: { command: node, args: nodeArgs(contactsMcpEntry) },
-      "action-center": { command: node, args: nodeArgs(actionCenterMcpEntry) },
-      shell: { command: node, args: nodeArgs(shellMcpEntry) },
-      trains: { command: node, args: nodeArgs(trainMcpEntry) },
-    },
+    voice,
+    mcpServers,
   };
 }

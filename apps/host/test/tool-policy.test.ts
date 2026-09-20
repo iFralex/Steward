@@ -51,3 +51,13 @@ test("train reads and generic watch lifecycle are automatic", () => {
   assert.equal(decideTool(defaultPolicy, "create_watch"), "allow");
   assert.equal(decideTool(defaultPolicy, "stop_watch"), "allow");
 });
+
+test("voice continuation is automatic but dialing remains gated", () => {
+  assert.equal(decideTool(defaultPolicy, "mcp__voice__call_start"), "gate");
+  assert.equal(decideTool(defaultPolicy, "mcp__voice__converse"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__voice__listen"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__voice__speak"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__voice__call_end"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__voice__call_status"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__voice__get_conversation"), "allow");
+});

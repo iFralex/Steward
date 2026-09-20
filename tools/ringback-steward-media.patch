@@ -1,0 +1,58 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -548,10 +548,10 @@ class _Call(pj.Call):
+     def onCallMediaState(self, prm):
+         ci = self.getInfo()
+-        for i, mi in enumerate(ci.media):
++        for mi in ci.media:
+             if (mi.type == pj.PJMEDIA_TYPE_AUDIO
+                     and mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE):
+-                self.session.aud = self.getAudioMedia(i)
++                self.session.aud = self.getAudioMedia(mi.index)
+ 
+ 
+ class CallSession:
+@@ -575,6 +575,20 @@ class CallSession:
+         except Exception:
+             pass
+ 
++    def _refresh_audio(self):
++        """Return the current confirmed call media, not a stale provisional port."""
++        if self.call is None:
++            return self.aud
++        try:
++            ci = self.call.getInfo()
++            for mi in ci.media:
++                if (mi.type == pj.PJMEDIA_TYPE_AUDIO
++                        and mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE):
++                    self.aud = self.call.getAudioMedia(mi.index)
++                    return self.aud
++        except Exception:
++            pass
++        return self.aud
++
+     def _measure_rms(self, duration: float = 0.6) -> float:
+         """Sample ambient audio (right after answer, before anyone speaks) to learn
+         the background noise floor, so thresholds can be raised to clear it."""
+@@ -582,6 +596,7 @@ class CallSession:
+         self._reg()
++        self._refresh_audio()
+         if not (self.connected and self.aud):
+             return 0.0
+@@ -680,6 +695,7 @@ class CallSession:
+         self._reg()
++        self._refresh_audio()
+         if not (self.connected and self.aud):
+             return "not connected"
+@@ -724,6 +740,7 @@ class CallSession:
+         hang-up (caller surfaces [SILENCE] / [CALL ENDED])."""
+         self._reg()
++        self._refresh_audio()
+         if not (self.connected and self.aud):
+             _dlog("listen: no active media (connected=%s, disconnected=%s) -> [SILENCE]"
+@@ -785,6 +802,7 @@ class CallSession:
+         """
+         self._reg()
++        self._refresh_audio()
+         _t0 = time.time()

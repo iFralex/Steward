@@ -30,6 +30,7 @@ import { pollAndDeliverWatchEvents } from "./core/watch-notification-service.ts"
 import { createWatchNotificationComposer } from "./core/watch-notification-composer.ts";
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
+import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -107,7 +108,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/settings/actions", "/push/", "/quick-send", "/transcribe"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/settings/actions", "/push/", "/quick-send", "/transcribe", "/voice/"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -271,7 +272,7 @@ async function gatewayRatesMap(baseUrl: string): Promise<Record<string, FlatRate
 }
 
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
-function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: IncomingMessage, res: ServerResponse): void {
+function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: VoiceCallCoordinator, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
   if (
     req.headers.origin !== undefined &&
@@ -394,6 +395,40 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, req: Incomin
       });
       res.writeHead(status, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  if (req.method === "GET" && url.startsWith("/voice/status")) {
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify(voiceCalls.status()));
+    return;
+  }
+  // Explicit, authenticated call initiation for the PWA and iPhone Shortcuts.
+  // This is the only headless path allowed to bypass call_start's normal
+  // approval card; all other sensitive tools remain deterministically denied.
+  if (req.method === "POST" && url.startsWith("/voice/call")) {
+    void readRequestBody(req).then(async (raw) => {
+      const body = raw ? (JSON.parse(raw) as { openingLine?: unknown; requestId?: unknown }) : {};
+      if (body.openingLine !== undefined && typeof body.openingLine !== "string") {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "openingLine must be a string" }));
+        return;
+      }
+      if (body.requestId !== undefined && (typeof body.requestId !== "string" || body.requestId.trim().length > 128)) {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "requestId must be a string of at most 128 characters" }));
+        return;
+      }
+      const started = await voiceCalls.start(body.openingLine, body.requestId);
+      res.writeHead(202, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(started));
+    }).catch((err) => {
+      const status = err instanceof VoiceBusyError ? 409 : err instanceof VoiceUnavailableError ? 503 : 400;
+      res.writeHead(status, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+        ...(err instanceof VoiceBusyError ? { retryAfterMs: err.retryAfterMs, voice: voiceCalls.status() } : {}),
+      }));
     });
     return;
   }
@@ -681,6 +716,18 @@ function isAuditRisk(value: string | null): value is AuditRisk {
 
 export function startServer(config: HostConfig): WebSocketServer {
   const pushRegistry = new PushRegistry(pushSubscriptionsPath());
+  const voiceCalls = new VoiceCallCoordinator(config, async (chatId, error) => {
+    const italian = getNotificationLang() === "it";
+    await pushRegistry.sendAll({
+      title: "Steward",
+      body: error
+        ? (italian ? "La chiamata vocale non è riuscita." : "The voice call failed.")
+        : (italian ? "Chiamata terminata. Tocca per vedere la trascrizione." : "Call ended. Tap to view the transcript."),
+      tag: `voice-${chatId}`,
+      chatId,
+      type: "chat-reply",
+    }).catch(() => { /* best-effort: the transcript is already persisted */ });
+  });
   setPushRegistry(pushRegistry);
   // The scheduler writes Actions in a separate process. Polling this local
   // SQLite DB lets the host push them even when no browser/PWA is connected.
@@ -1082,7 +1129,7 @@ export function startServer(config: HostConfig): WebSocketServer {
   });
 
   // HTTP for the Mac's own WebView — localhost only, never exposed on the tailnet.
-  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, req, res));
+  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, voiceCalls, req, res));
   httpServer.on("upgrade", acceptUpgrade);
   httpServer.listen(config.port, "127.0.0.1", () => {
     console.log(`[host] http://127.0.0.1:${config.port} (localhost)`);
@@ -1093,7 +1140,7 @@ export function startServer(config: HostConfig): WebSocketServer {
     const tlsPort = Number(process.env.STEWARD_TLS_PORT ?? config.port + 1);
     const httpsServer = createHttpsServer(
       { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) },
-      (req, res) => handleHttp(config, pushRegistry, req, res),
+      (req, res) => handleHttp(config, pushRegistry, voiceCalls, req, res),
     );
     httpsServer.on("upgrade", acceptUpgrade);
     httpsServer.listen(tlsPort, "0.0.0.0", () => {

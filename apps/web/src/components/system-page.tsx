@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Globe, ListChecks, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Globe, ListChecks, PhoneCall, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
 import QRCode from "qrcode";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +51,19 @@ interface ActionAutomationSettings {
   updatedAt: number | null;
 }
 
+interface VoiceChannelStatus {
+  enabled: boolean;
+  transport: "disabled" | "ringback" | "streamcore";
+  state: "disabled" | "idle" | "preflighting" | "starting" | "ringing" | "connected" | "speaking" | "listening" | "processing" | "ending" | "failed";
+  chatId?: string;
+  requestId?: string;
+  startedAt?: number;
+  updatedAt: number;
+  detail?: string;
+  retryable?: boolean;
+  lastCall?: { chatId: string; requestId: string; startedAt: number; finishedAt: number; ok: boolean; error?: string };
+}
+
 export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -64,19 +77,26 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState<EnablePushResult | null>(null);
   const [pushTest, setPushTest] = useState<"idle" | "scheduled" | "error">("idle");
+  const [voice, setVoice] = useState<VoiceChannelStatus | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
+  const voiceRequestId = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [statusRes, actionsRes] = await Promise.all([
+      const [statusRes, actionsRes, voiceRes] = await Promise.all([
         authFetch(`${httpBase}/system/status`, token, onUnauthorized),
         authFetch(`${httpBase}/settings/actions`, token, onUnauthorized),
+        authFetch(`${httpBase}/voice/status`, token, onUnauthorized),
       ]);
       if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
       if (!actionsRes.ok) throw new Error(`HTTP ${actionsRes.status}`);
+      if (!voiceRes.ok) throw new Error(`HTTP ${voiceRes.status}`);
       setStatus(await statusRes.json() as SystemStatus);
       setActionAutomation(await actionsRes.json() as ActionAutomationSettings);
+      setVoice(await voiceRes.json() as VoiceChannelStatus);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -89,6 +109,20 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  // A call changes phase much faster than the general 30-second system poll.
+  // Poll only while a call is moving so the PWA shows ringing/listening/etc.
+  useEffect(() => {
+    if (!voice?.enabled || voice.state === "idle" || voice.state === "disabled") return;
+    const poll = async () => {
+      try {
+        const res = await authFetch(`${httpBase}/voice/status`, token, onUnauthorized);
+        if (res.ok) setVoice(await res.json() as VoiceChannelStatus);
+      } catch { /* the general refresh will surface persistent host errors */ }
+    };
+    const timer = window.setInterval(() => void poll(), 1_000);
+    return () => window.clearInterval(timer);
+  }, [httpBase, token, onUnauthorized, voice?.enabled, voice?.state]);
 
   // /pair is localhost-only (403 from a phone/Tailscale caller) — that's expected,
   // it just means the "Connetti il telefono" section stays hidden there.
@@ -169,6 +203,29 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     }
   };
 
+  const startVoiceCall = async () => {
+    setVoiceBusy(true);
+    setVoiceMessage(null);
+    const requestId = voiceRequestId.current ?? crypto.randomUUID();
+    voiceRequestId.current = requestId;
+    try {
+      const res = await authFetch(`${httpBase}/voice/call`, token, onUnauthorized, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      voiceRequestId.current = null;
+      setVoiceMessage(t("system.voice.started"));
+      void refresh();
+    } catch (err) {
+      setVoiceMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
+
   const counts = countStates(status?.services ?? []);
 
   return (
@@ -209,6 +266,31 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
         busy={savingActionAutomation}
         onToggle={setActionsEnabled}
       />
+
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <PhoneCall className="size-4" />
+            {t("system.voice.title")}
+          </CardTitle>
+          <CardDescription>{t("system.voice.description")}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <Badge variant={voice?.enabled ? "default" : "outline"}>
+            {voice?.transport ?? "disabled"} · {t(`system.voice.states.${voice?.state ?? "disabled"}`)}
+          </Badge>
+          <Button
+            size="sm"
+            disabled={!voice?.enabled || voice.state !== "idle" || voiceBusy}
+            onClick={() => void startVoiceCall()}
+          >
+            {voiceBusy ? t("system.voice.starting") : t("system.voice.call")}
+          </Button>
+          {(voiceMessage || voice?.detail) && (
+            <span className="text-muted-foreground text-sm">{voiceMessage ?? voice?.detail}</span>
+          )}
+        </CardContent>
+      </Card>
 
       {pairToken && <PairingPanel token={pairToken} />}
 

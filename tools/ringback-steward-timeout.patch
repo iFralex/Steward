@@ -1,0 +1,13 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -681,7 +681,8 @@ class CallSession:
+         self.acc = pj.Account()
+         self.acc.create(acfg)
+ 
+-    def place_call(self, answer_timeout: float = 25.0, callee: str | None = None) -> bool:
++    def place_call(self, answer_timeout: float = float(
++            os.environ.get("VOICE_ANSWER_TIMEOUT", "60")), callee: str | None = None) -> bool:
+         # `callee` lets a caller dial a specific SIP address (the remote/multi-user server
+         # passes each user's Linphone address); defaults to env SIP_CALLEE (local self-call),
+         # so the local stdio MCP is unchanged.

@@ -151,6 +151,9 @@ function copyRuntimeNodeModules(): void {
   for (const pkg of ["better-sqlite3", "sqlite-vec", "ws"]) {
     copyPackageClosure(pkg, seen);
   }
+  // npm's nested command shim may be an absolute symlink back into the source
+  // checkout. It is not needed at runtime and makes the macOS bundle invalid.
+  rmSync(join(nodeModulesDir, "node-abi", "node_modules", ".bin"), { recursive: true, force: true });
   console.log(`Copied ${seen.size} runtime packages into ${nodeModulesDir}`);
 }
 
@@ -200,6 +203,7 @@ function findLLMWikiAppBundle(): string {
     join(repoRoot, "apps", "llm-wiki", "src-tauri", "target", "release", "bundle", "macos", "LLM Wiki.app"),
     join(repoRoot, "apps", "llm-wiki", "src-tauri", "target", "aarch64-apple-darwin", "release", "bundle", "macos", "LLM Wiki.app"),
     join(repoRoot, "apps", "llm-wiki", "src-tauri", "target", "x86_64-apple-darwin", "release", "bundle", "macos", "LLM Wiki.app"),
+    "/Applications/Steward.app/Contents/Resources/llm-wiki/LLM Wiki.app",
   ];
   const found = candidates.find((candidate) => existsSync(candidate));
   if (!found) {

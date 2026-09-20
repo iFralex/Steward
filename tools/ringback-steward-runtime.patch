@@ -1,0 +1,62 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -47,6 +47,7 @@ WHISPER_BIN = os.environ.get("WHISPER_BIN", "whisper-cli")
+ WHISPER_MODEL = os.environ.get("WHISPER_MODEL",
+                                os.path.expanduser("~/.whisper-models/ggml-small.en.bin"))
++WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "auto").strip() or "auto"
+ FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
+ 
+ # Voice-activity thresholds. Background noise was falsely triggering barge-in, so
+@@ -221,7 +222,8 @@ def _clean_text(text: str) -> str:
+ 
+ 
+ def _transcribe(wav: str) -> str:
+-    out = subprocess.run([WHISPER_BIN, "-m", WHISPER_MODEL, "-f", wav, "-nt", "-t", "8"],
++    out = subprocess.run([WHISPER_BIN, "-m", WHISPER_MODEL, "-f", wav, "-nt", "-t", "8",
++                          "-l", WHISPER_LANGUAGE],
+                          capture_output=True, text=True)
+     if out.returncode != 0:
+         _dlog(f"whisper-cli failed (rc={out.returncode}): {out.stderr.strip()[-200:]}")
+@@ -322,14 +324,16 @@ def _wsrv_spawn():
+             if IS_WIN:
+                 _wsrv_proc = subprocess.Popen(
+                     [WHISPER_SERVER_BIN, "-m", WHISPER_SERVER_MODEL,
+-                     "--host", WHISPER_SERVER_HOST, "--port", str(WHISPER_SERVER_PORT)],
++                     "--host", WHISPER_SERVER_HOST, "--port", str(WHISPER_SERVER_PORT),
++                     "--language", WHISPER_LANGUAGE],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     **detached_popen_kwargs())
+             else:
+                 # sh watchdog: run the server, then exit (killing it) once our PID is gone.
+                 # Own session so the reaper / atexit can killpg the whole group.
+-                watchdog = ('"$1" -m "$2" --host "$3" --port "$4" & srv=$!; '
++                watchdog = ('"$1" -m "$2" --host "$3" --port "$4" --language "$5" & srv=$!; '
+                             f'while kill -0 {os.getpid()} 2>/dev/null; do sleep 5; done; '
+                             'kill "$srv" 2>/dev/null')
+                 _wsrv_proc = subprocess.Popen(
+                     ["/bin/sh", "-c", watchdog, "sh", WHISPER_SERVER_BIN, WHISPER_SERVER_MODEL,
+-                     WHISPER_SERVER_HOST, str(WHISPER_SERVER_PORT)],
++                     WHISPER_SERVER_HOST, str(WHISPER_SERVER_PORT), WHISPER_LANGUAGE],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+             _wsrv_last_use = time.time()
+@@ -647,6 +651,17 @@ class CallSession:
+                 # on stderr (stdout is the MCP transport). Non-fatal: pjsua may still cope.
+                 print(f"[ringback] setNullDev() failed: {e}", file=sys.stderr)
+ 
++        preferred_codec = os.environ.get("VOICE_AUDIO_CODEC", "").strip()
++        if preferred_codec:
++            try:
++                codecs = self.ep.codecEnum2()
++                if not any(codec.codecId == preferred_codec for codec in codecs):
++                    raise ValueError(f"codec not available: {preferred_codec}")
++                for codec in codecs:
++                    self.ep.codecSetPriority(codec.codecId, 0)
++                self.ep.codecSetPriority(preferred_codec, 255)
++            except Exception as e:
++                print(f"[ringback] preferred codec failed: {e}", file=sys.stderr)
++
+         acfg = pj.AccountConfig()
+         # add the caller-ID display name to the From header if configured
+         acfg.idUri = f'"{SIP_DISPLAY_NAME}" <{SIP_ID}>' if SIP_DISPLAY_NAME else SIP_ID

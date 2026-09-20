@@ -1,0 +1,38 @@
+diff --git a/voice_mcp.py b/voice_mcp.py
+--- a/voice_mcp.py
++++ b/voice_mcp.py
+@@ -10,6 +10,7 @@ Launched via run_voice_mcp.sh (macOS) or run_voice_mcp.py (cross-platform), which set
+ PYTHONPATH + the OS dynamic-linker path so `import voice_agent` (pjsua2) resolves.
+ """
++import json
+ import os
+ import time
+ from mcp.server.fastmcp import FastMCP
+@@ -206,10 +207,21 @@ def call_end(text: str = "") -> str:
+ 
+ @mcp.tool()
+ def call_status() -> str:
+-    """Report whether a call is currently active (debug/sanity)."""
+-    s = _session
+-    if s is None:
+-        return "engine not started; no call"
+-    return f"connected={s.connected} disconnected={s.disconnected}"
++    """Initialize Ringback if needed and report machine-readable health/state.
++
++    This safe preflight loads pjsua and the outbound SIP account but never
++    sends an INVITE. Remote Linphone reachability is known only after dialing.
++    """
++    try:
++        s = _get()
++        phase = ("connected" if s.connected else
++                 "ended" if s.disconnected else "idle")
++        return json.dumps({
++            "ready": True, "phase": phase, "connected": s.connected,
++            "disconnected": s.disconnected,
++            "remote_reachability": "unknown_until_dial",
++        })
++    except Exception as exc:
++        return json.dumps({"ready": False, "phase": "failed", "error": str(exc)})
+ 
+ 
+ def main():
