@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import QuartzCore
 import WebKit
 
 private let defaultURL = "http://127.0.0.1:4317"
@@ -10,9 +11,150 @@ private let webDevURL = URL(string: "http://127.0.0.1:5173")!
 private let llmWikiAPIURL = URL(string: "http://127.0.0.1:19828/api/v1")!
 private let defaultHotKey = "Command+Shift+Space"
 
+private enum SplashLanguage: Equatable { case en, it }
+
+private enum SplashStage {
+    case starting, ollama, gateway, wiki, host, web
+    case ollamaUnavailable, embeddingModelMissing, repositoryMissing
+    case loadFailed(String)
+
+    var isFailure: Bool {
+        if case .loadFailed = self { return true }
+        if case .repositoryMissing = self { return true }
+        return false
+    }
+
+    func text(_ language: SplashLanguage) -> String {
+        switch (language, self) {
+        case (.it, .starting): return "Preparazione di Steward…"
+        case (.it, .ollama): return "Avvio dei modelli locali…"
+        case (.it, .gateway): return "Avvio del gateway dei modelli…"
+        case (.it, .wiki): return "Avvio della memoria…"
+        case (.it, .host): return "Avvio dell’assistente…"
+        case (.it, .web): return "Preparazione dell’interfaccia…"
+        case (.it, .ollamaUnavailable): return "Ollama non è raggiungibile. Le funzioni di embedding non saranno disponibili."
+        case (.it, .embeddingModelMissing): return "Il modello bge-m3 non è installato. Esegui: ollama pull bge-m3"
+        case (.it, .repositoryMissing): return "Impossibile trovare i componenti di Steward."
+        case (.it, .loadFailed(let detail)): return "Impossibile caricare Steward: \(detail)"
+        case (.en, .starting): return "Preparing Steward…"
+        case (.en, .ollama): return "Starting local models…"
+        case (.en, .gateway): return "Starting the model gateway…"
+        case (.en, .wiki): return "Starting memory…"
+        case (.en, .host): return "Starting the assistant…"
+        case (.en, .web): return "Preparing the interface…"
+        case (.en, .ollamaUnavailable): return "Ollama is unavailable. Embedding features will not be available."
+        case (.en, .embeddingModelMissing): return "The bge-m3 model is missing. Run: ollama pull bge-m3"
+        case (.en, .repositoryMissing): return "Steward’s components could not be found."
+        case (.en, .loadFailed(let detail)): return "Steward could not be loaded: \(detail)"
+        }
+    }
+}
+
+private final class SplashView: NSView {
+    private let language: SplashLanguage
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let spinner = NSProgressIndicator()
+    private let retryButton = NSButton()
+    var onRetry: (() -> Void)?
+
+    init(icon: NSImage?, language: SplashLanguage) {
+        self.language = language
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(calibratedWhite: 0.035, alpha: 1).cgColor
+
+        let iconView = NSImageView()
+        iconView.image = icon
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 76),
+            iconView.heightAnchor.constraint(equalToConstant: 76),
+        ])
+        iconView.wantsLayer = true
+        iconView.layer?.shadowColor = NSColor.black.cgColor
+        iconView.layer?.shadowOpacity = 0.35
+        iconView.layer?.shadowRadius = 18
+        iconView.layer?.shadowOffset = .zero
+
+        let title = NSTextField(labelWithString: "Steward")
+        title.font = .systemFont(ofSize: 28, weight: .semibold)
+        title.textColor = .white
+        title.alignment = .center
+
+        let subtitle = NSTextField(labelWithString: language == .it ? "Il tuo assistente personale" : "Your personal assistant")
+        subtitle.font = .systemFont(ofSize: 14, weight: .regular)
+        subtitle.textColor = NSColor.white.withAlphaComponent(0.5)
+        subtitle.alignment = .center
+
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isIndeterminate = true
+        spinner.startAnimation(nil)
+
+        statusLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        statusLabel.textColor = NSColor.white.withAlphaComponent(0.68)
+        statusLabel.alignment = .center
+        statusLabel.maximumNumberOfLines = 3
+        statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.preferredMaxLayoutWidth = 440
+
+        let statusRow = NSStackView(views: [spinner, statusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = 9
+
+        retryButton.title = language == .it ? "Riprova" : "Try again"
+        retryButton.bezelStyle = .rounded
+        retryButton.target = self
+        retryButton.action = #selector(retry)
+        retryButton.isHidden = true
+
+        let stack = NSStackView(views: [iconView, title, subtitle, statusRow, retryButton])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 10
+        stack.setCustomSpacing(18, after: iconView)
+        stack.setCustomSpacing(30, after: subtitle)
+        stack.setCustomSpacing(18, after: statusRow)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -12),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
+        ])
+        setStage(.starting)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func setStage(_ stage: SplashStage) {
+        statusLabel.stringValue = stage.text(language)
+        statusLabel.textColor = stage.isFailure ? NSColor.systemRed : NSColor.white.withAlphaComponent(0.68)
+        retryButton.isHidden = !stage.isFailure
+        stage.isFailure ? spinner.stopAnimation(nil) : spinner.startAnimation(nil)
+        setAccessibilityLabel(statusLabel.stringValue)
+    }
+
+    func dismiss() {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.32
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            animator().alphaValue = 0
+        } completionHandler: { [weak self] in self?.removeFromSuperview() }
+    }
+
+    @objc private func retry() { onRetry?() }
+}
+
 final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var webView: WKWebView?
+    private var splashView: SplashView?
+    private var lastLoadURL: URL?
+    private let splashLanguage = currentSplashLanguage()
     private var statusItem: NSStatusItem?
     private var hotKeyRef: EventHotKeyRef?
     private var childProcesses: [Process] = []
@@ -178,9 +320,32 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.autoresizingMask = [.width, .height]
+        webView.translatesAutoresizingMaskIntoConstraints = false
         webView.uiDelegate = self
         webView.navigationDelegate = self
+        webView.underPageBackgroundColor = NSColor(calibratedWhite: 0.035, alpha: 1)
+
+        let contentView = NSView()
+        contentView.wantsLayer = true
+        contentView.layer?.backgroundColor = NSColor(calibratedWhite: 0.035, alpha: 1).cgColor
+        contentView.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+
+        let splash = SplashView(icon: Self.loadStatusBarIcon(), language: splashLanguage)
+        splash.translatesAutoresizingMaskIntoConstraints = false
+        splash.onRetry = { [weak self] in self?.retryLastLoad() }
+        contentView.addSubview(splash)
+        NSLayoutConstraint.activate([
+            splash.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            splash.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            splash.topAnchor.constraint(equalTo: contentView.topAnchor),
+            splash.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
@@ -193,17 +358,18 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         window.titlebarAppearsTransparent = false
         window.isReleasedWhenClosed = false
         window.center()
-        window.contentView = webView
+        window.contentView = contentView
         window.delegate = self
 
         self.webView = webView
+        self.splashView = splash
         self.window = window
-        loadStatus("Starting Steward...")
+        loadStatus(.starting)
     }
 
     private func showWindow() {
         if webView?.url == nil {
-            loadStatus("Starting Steward...")
+            loadStatus(.starting)
         }
         NSApp.setActivationPolicy(.regular)
         window?.makeKeyAndOrderFront(nil)
@@ -220,7 +386,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             return
         }
         guard let repoRoot else {
-            loadStatus("Could not find the Steward repository root. Set STEWARD_REPO_ROOT or launch from the repo.")
+            loadStatus(.repositoryMissing)
             load(appURL, after: 2)
             return
         }
@@ -236,7 +402,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             let gatewayIsUp = await isReachable(modelGatewayURL.appendingPathComponent("health"))
             if !gatewayIsUp {
                 await MainActor.run {
-                    loadStatus("Starting model gateway on 127.0.0.1:4000...")
+                    loadStatus(.gateway)
                     startProcess(["npm", "run", "dev", "-w", "@steward/llm-gateway"], in: repoRoot, logName: "llm-gateway")
                 }
                 _ = await waitUntilReachable(modelGatewayURL.appendingPathComponent("health"), timeoutSeconds: 20)
@@ -245,7 +411,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             let hostIsUp = await isReachable(hostURL.appendingPathComponent("health"))
             if !hostIsUp {
                 await MainActor.run {
-                    loadStatus("Starting host on 127.0.0.1:4317...")
+                    loadStatus(.host)
                     startProcess(["npm", "run", "dev", "-w", "@steward/host"], in: repoRoot, logName: "host")
                 }
                 _ = await waitUntilReachable(hostURL.appendingPathComponent("health"), timeoutSeconds: 20)
@@ -255,7 +421,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
                 let webIsUp = await isReachable(webDevURL)
                 if !webIsUp {
                     await MainActor.run {
-                        loadStatus("Starting web UI on 127.0.0.1:5173...")
+                        loadStatus(.web)
                         startProcess(["npm", "run", "dev", "-w", "@steward/web", "--", "--host", "127.0.0.1"], in: repoRoot, logName: "web")
                     }
                     _ = await waitUntilReachable(webDevURL, timeoutSeconds: 30)
@@ -278,7 +444,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             let gatewayIsUp = await isReachable(modelGatewayURL.appendingPathComponent("health"))
             if !gatewayIsUp {
                 await MainActor.run {
-                    loadStatus("Starting model gateway on 127.0.0.1:4000...")
+                    loadStatus(.gateway)
                     startProcess([node.path, servicesRoot.appendingPathComponent("llm-gateway/gateway.js").path], in: resourcesRoot, logName: "llm-gateway")
                 }
                 _ = await waitUntilReachable(modelGatewayURL.appendingPathComponent("health"), timeoutSeconds: 20)
@@ -294,7 +460,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             let llmWikiAPIIsUp = await isReachable(llmWikiAPIHealthURL)
             if !llmWikiAPIIsUp {
                 await MainActor.run {
-                    loadStatus("Starting LLM Wiki API in background...")
+                    loadStatus(.wiki)
                     startBundledLLMWiki(resourcesRoot: resourcesRoot)
                 }
                 _ = await waitUntilReachable(llmWikiAPIHealthURL, timeoutSeconds: 30)
@@ -303,7 +469,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             let hostIsUp = await isReachable(hostURL.appendingPathComponent("health"))
             if !hostIsUp {
                 await MainActor.run {
-                    loadStatus("Starting host on 127.0.0.1:4317...")
+                    loadStatus(.host)
                     startProcess([node.path, servicesRoot.appendingPathComponent("host/index.js").path], in: resourcesRoot, logName: "host")
                 }
                 _ = await waitUntilReachable(hostURL.appendingPathComponent("health"), timeoutSeconds: 20)
@@ -396,13 +562,13 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         let ollamaIsUp = await isReachable(ollamaURL)
         if !ollamaIsUp {
             await MainActor.run {
-                loadStatus("Starting Ollama on 127.0.0.1:11434...")
+                loadStatus(.ollama)
                 startProcess(["ollama", "serve"], in: repoRoot ?? URL(fileURLWithPath: NSHomeDirectory()), logName: "ollama")
             }
             let started = await waitUntilReachable(ollamaURL, timeoutSeconds: 20)
             if !started {
                 await MainActor.run {
-                    loadStatus("Ollama is not reachable. Install Ollama or start it manually; embeddings will be unavailable.")
+                    loadStatus(.ollamaUnavailable)
                 }
                 NSLog("Ollama is not reachable on \(ollamaURL.absoluteString)")
             }
@@ -411,7 +577,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         let hasEmbeddingModel = await ollamaHasModel("bge-m3")
         if !hasEmbeddingModel {
             await MainActor.run {
-                loadStatus("Ollama is running, but bge-m3 is missing. Run: ollama pull bge-m3")
+                loadStatus(.embeddingModelMissing)
             }
             NSLog("Ollama model bge-m3 is missing. Run: ollama pull bge-m3")
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -497,27 +663,25 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
 
     private func load(_ url: URL, after delay: TimeInterval = 0) {
+        lastLoadURL = url
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.loadStatus(.web)
             self?.webView?.load(URLRequest(url: url))
         }
     }
 
-    private func loadStatus(_ message: String) {
-        let html = """
-        <!doctype html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { margin: 0; height: 100vh; display: grid; place-items: center; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #1f2937; background: #f8fafc; }
-            main { text-align: center; line-height: 1.5; }
-            strong { display: block; font-size: 16px; margin-bottom: 6px; }
-          </style>
-        </head>
-        <body><main><strong>Steward</strong>\(escapeHTML(message))</main></body>
-        </html>
-        """
-        webView?.loadHTMLString(html, baseURL: nil)
+    private func loadStatus(_ stage: SplashStage) {
+        splashView?.setStage(stage)
+    }
+
+    private func retryLastLoad() {
+        guard let lastLoadURL else {
+            loadStatus(.starting)
+            bootstrap()
+            return
+        }
+        loadStatus(.web)
+        webView?.load(URLRequest(url: lastLoadURL, cachePolicy: .reloadIgnoringLocalCacheData))
     }
 
     private func registerGlobalHotKey() {
@@ -634,6 +798,20 @@ extension LauncherDelegate: WKUIDelegate {
 }
 
 extension LauncherDelegate: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView.url?.scheme != "about" else { return }
+        splashView?.dismiss()
+        splashView = nil
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        loadStatus(.loadFailed(error.localizedDescription))
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        loadStatus(.loadFailed(error.localizedDescription))
+    }
+
     // Links without target="_blank" (including message:// links on mail cards)
     // arrive here. Never hand arbitrary schemes to Launch Services.
     func webView(
@@ -676,6 +854,17 @@ private func fourCharCode(_ string: String) -> FourCharCode {
         result = (result << 8) + FourCharCode(scalar.value)
     }
     return result
+}
+
+private func currentSplashLanguage() -> SplashLanguage {
+    let path = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Steward/notification-lang.json")
+    if let data = try? Data(contentsOf: path),
+       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       object["lang"] as? String == "it" {
+        return .it
+    }
+    return Locale.preferredLanguages.first?.lowercased().hasPrefix("it") == true ? .it : .en
 }
 
 private func findRepoRoot() -> URL? {
@@ -767,14 +956,6 @@ private func ollamaHasModel(_ name: String) async -> Bool {
     } catch {
         return false
     }
-}
-
-private func escapeHTML(_ value: String) -> String {
-    value
-        .replacingOccurrences(of: "&", with: "&amp;")
-        .replacingOccurrences(of: "<", with: "&lt;")
-        .replacingOccurrences(of: ">", with: "&gt;")
-        .replacingOccurrences(of: "\"", with: "&quot;")
 }
 
 private func quickActionInfoPlist(menuName: String) -> String {
