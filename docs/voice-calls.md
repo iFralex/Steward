@@ -153,7 +153,9 @@ in the PWA. Explicit policy denials remain non-overridable.
 The System page also stores the default speech rate (100–300 words per minute,
 175 by default) and a separate voice for each Steward language. The selector is
 populated from the installed macOS `say` voices matching the current language;
-`Automatic` remains available. During a call,
+`Automatic` remains available. **Test voice** renders a localized sample with
+the unsaved voice and speed and streams the WAV back to the PWA, where visible
+audio controls remain available if iOS blocks automatic playback. During a call,
 the agent alone receives `set_voice_speech_rate`: it can change the current
 call immediately, or propose a persistent default. A persistent change uses
 the same spoken approval protocol and is written to Audit. The per-call

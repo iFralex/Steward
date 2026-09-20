@@ -32,6 +32,7 @@ import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
 import { getVoiceSettings, listSystemVoices, setVoiceSettings } from "./core/voice-settings.ts";
+import { renderVoicePreview } from "./core/voice-preview.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -583,6 +584,24 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
       });
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(settings));
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/settings/voice/preview")) {
+    void readRequestBody(req).then(async (raw) => {
+      const body = raw ? JSON.parse(raw) as { rateWpm?: unknown; voice?: unknown } : {};
+      const language = getNotificationLang();
+      const audio = await renderVoicePreview({ language, rateWpm: body.rateWpm, voice: body.voice });
+      recordAudit({
+        actor: "user", eventType: "settings.voice_preview", risk: "low",
+        summary: "Voice preview generated", ok: true,
+        payload: { language, rateWpm: body.rateWpm, voice: body.voice },
+      });
+      res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": audio.length, "Cache-Control": "no-store", ...CORS });
+      res.end(audio);
     }).catch((err) => {
       res.writeHead(400, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));

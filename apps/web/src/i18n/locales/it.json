@@ -153,6 +153,8 @@
     "defaultVoice": "Voce per questa lingua",
     "voiceAuto": "Automatica in base alla lingua",
     "voiceHint": "Mostra le voci di sistema macOS installate per la lingua corrente di Steward.",
+    "testVoice": "Prova voce",
+    "testingVoice": "Preparazione…",
     "saveSettings": "Salva impostazioni voce",
     "saving": "Salvataggio…",
     "settingsSaved": "Impostazioni voce salvate.",

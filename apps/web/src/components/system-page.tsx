@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Globe, ListChecks, PhoneCall, Power, RefreshCw, Smartphone, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Globe, ListChecks, PhoneCall, Power, RefreshCw, Smartphone, Volume2, XCircle } from "lucide-react";
 import QRCode from "qrcode";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -91,6 +91,10 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   const [voiceRate, setVoiceRate] = useState(175);
   const [voiceName, setVoiceName] = useState<VoiceSettings["voice"]>("auto");
   const [voiceSettingsBusy, setVoiceSettingsBusy] = useState(false);
+  const [voicePreviewBusy, setVoicePreviewBusy] = useState(false);
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState<string | null>(null);
+  const [voicePreviewError, setVoicePreviewError] = useState<string | null>(null);
+  const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
   const voiceRequestId = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -126,6 +130,12 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    if (!voicePreviewUrl) return;
+    void voicePreviewRef.current?.play().catch(() => { /* iOS can require a second tap on the visible controls */ });
+    return () => URL.revokeObjectURL(voicePreviewUrl);
+  }, [voicePreviewUrl]);
 
   // A call changes phase much faster than the general 30-second system poll.
   // Poll only while a call is moving so the PWA shows ringing/listening/etc.
@@ -263,6 +273,27 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     }
   };
 
+  const previewVoiceSettings = async () => {
+    setVoicePreviewBusy(true);
+    setVoicePreviewError(null);
+    try {
+      const res = await authFetch(`${httpBase}/settings/voice/preview`, token, onUnauthorized, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rateWpm: voiceRate, voice: voiceName }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setVoicePreviewUrl(URL.createObjectURL(await res.blob()));
+    } catch (err) {
+      setVoicePreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVoicePreviewBusy(false);
+    }
+  };
+
   const counts = countStates(status?.services ?? []);
 
   return (
@@ -354,12 +385,28 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
               </select>
               <span className="text-muted-foreground text-xs">{t("system.voice.voiceHint")}</span>
             </label>
-            <Button
-              size="sm" disabled={!voiceSettings || voiceSettingsBusy || voiceRate < 100 || voiceRate > 300}
-              onClick={() => void saveVoiceSettings()}
-            >
-              {voiceSettingsBusy ? t("system.voice.saving") : t("system.voice.saveSettings")}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm" variant="outline"
+                disabled={!voiceSettings || voicePreviewBusy || voiceRate < 100 || voiceRate > 300}
+                onClick={() => void previewVoiceSettings()}
+              >
+                <Volume2 className="mr-2 size-4" />
+                {voicePreviewBusy ? t("system.voice.testingVoice") : t("system.voice.testVoice")}
+              </Button>
+              <Button
+                size="sm" disabled={!voiceSettings || voiceSettingsBusy || voiceRate < 100 || voiceRate > 300}
+                onClick={() => void saveVoiceSettings()}
+              >
+                {voiceSettingsBusy ? t("system.voice.saving") : t("system.voice.saveSettings")}
+              </Button>
+            </div>
+            {(voicePreviewUrl || voicePreviewError) && (
+              <div className="sm:col-span-3">
+                {voicePreviewUrl && <audio ref={voicePreviewRef} controls src={voicePreviewUrl} className="h-10 max-w-full" />}
+                {voicePreviewError && <p className="text-destructive text-sm">{voicePreviewError}</p>}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

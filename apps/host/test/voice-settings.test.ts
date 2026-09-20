@@ -1,6 +1,6 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +24,7 @@ import {
 } from "../src/core/voice-settings.ts";
 import { buildVoiceSettingsTool } from "../src/core/voice-settings-tool.ts";
 import { Session } from "../src/core/session.ts";
+import { renderVoicePreview } from "../src/core/voice-preview.ts";
 
 before(() => clearCallVoiceOverride());
 after(() => {
@@ -78,4 +79,33 @@ test("persisting a speech rate through the call-only tool requires approval", as
   const output = await pending;
   assert.equal(JSON.parse(output.content[0].text).rateWpm, 190);
   assert.equal(getVoiceSettings("en").rateWpm, 190);
+});
+
+test("voice preview renders the unsaved voice, rate, and localized sample", async () => {
+  let args: string[] = [];
+  const audio = await renderVoicePreview({ language: "it", rateWpm: 155, voice: "Eddy (Italiano (Italia))" }, {
+    runSay: async (received) => {
+      args = received;
+      const output = received[received.indexOf("-o") + 1];
+      writeFileSync(output, Buffer.alloc(64, 1));
+    },
+  });
+  assert.equal(audio.length, 64);
+  assert.deepEqual(args.slice(0, 4), ["-v", "Eddy (Italiano (Italia))", "-r", "155"]);
+  assert.match(args.at(-1) ?? "", /Ciao, sono Steward/);
+});
+
+test("automatic preview chooses the preferred installed voice for the language", async () => {
+  let selected = "";
+  await renderVoicePreview({ language: "en", rateWpm: 175, voice: "auto" }, {
+    runSay: async (args) => {
+      selected = args[1];
+      writeFileSync(args[args.indexOf("-o") + 1], Buffer.alloc(64, 1));
+    },
+  });
+  assert.equal(selected, "Samantha");
+  await assert.rejects(
+    renderVoicePreview({ language: "it", rateWpm: 175, voice: "Samantha" }, { runSay: async () => {} }),
+    /No matching installed it system voice/,
+  );
 });
