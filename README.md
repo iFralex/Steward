@@ -1790,6 +1790,8 @@ Logs go in:
 | `STEWARD_VOICE_TRANSPORT` | Optional voice transport: `ringback`; `streamcore` is reserved for the future adapter. |
 | `STEWARD_RINGBACK_LAUNCHER` | Absolute path to Ringback's Steward-managed MCP launcher. |
 | `STEWARD_VOICE_OPENING_LINE` | Default first sentence spoken when `/voice/call` starts. |
+| `STEWARD_VOICE_SETTINGS_FILE` | Optional override for persisted default speech rate and voice; normally managed from System settings. |
+| `STEWARD_VOICE_CALL_SETTINGS_FILE` | Optional override for the ephemeral per-call speech-rate file. |
 | `STEWARD_STREAMCORE_URL` | Reserved base URL for the future StreamCore adapter. |
 | `TRAIN_MCP_ENTRY` | Override the train MCP entrypoint; normally set automatically by the packaged launcher. |
 | `VIAGGIATRENO_BASE_URL` | Override the ViaggiaTreno endpoint, primarily for testing or a compatible proxy. |

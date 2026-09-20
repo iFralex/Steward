@@ -13,6 +13,8 @@ import type { ToolExecutionGuard } from "./permission-gate.ts";
 import type { ToolPolicy } from "./tool-policy.ts";
 import { getUserLang } from "./notification-lang.ts";
 import { localizedOpeningLine, voiceMessages, type VoiceLang } from "./voice-i18n.ts";
+import { clearCallVoiceOverride } from "./voice-settings.ts";
+import { buildVoiceSettingsTool } from "./voice-settings-tool.ts";
 
 export type VoiceCallState =
   | "disabled" | "idle" | "preflighting" | "starting" | "ringing"
@@ -300,6 +302,7 @@ export class VoiceCallCoordinator {
     const language = this.currentLanguage();
     const voiceCopy = voiceMessages(language);
     this.activeLanguage = language;
+    clearCallVoiceOverride();
     this.activeRequestId = requestId;
     this.startedAt = this.deps.now();
     this.terminalError = null;
@@ -383,6 +386,7 @@ export class VoiceCallCoordinator {
     }).finally(async () => {
       if (scoped) await runner.close?.();
       if (scoped && callApprovalSession) callApprovalSession.closed = true;
+      clearCallVoiceOverride();
       if (this.activeChatId === chat.id) {
         if (this.activeApprovalSession === callApprovalSession) this.activeApprovalSession = null;
         this.activeLanguage = null;
@@ -610,7 +614,10 @@ export class VoiceCallCoordinator {
     const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
     this.runnerSession = session;
     this.activeApprovalSession = session;
-    this.runner = new ChatManager(voiceConfig, session, this.onAgentEvent);
+    this.runner = new ChatManager(
+      voiceConfig, session, this.onAgentEvent, undefined,
+      (chatId) => [buildVoiceSettingsTool(session, chatId, this.activeLanguage ?? this.currentLanguage())],
+    );
     return this.runner;
   }
 
@@ -627,6 +634,9 @@ export class VoiceCallCoordinator {
     };
     const session = new Session(this.onAgentEvent, this.config.approvalTimeoutMs);
     this.activeApprovalSession = session;
-    return new ChatManager(voiceConfig, session, this.onAgentEvent, executionGuard);
+    return new ChatManager(
+      voiceConfig, session, this.onAgentEvent, executionGuard,
+      (chatId) => [buildVoiceSettingsTool(session, chatId, this.activeLanguage ?? this.currentLanguage())],
+    );
   }
 }

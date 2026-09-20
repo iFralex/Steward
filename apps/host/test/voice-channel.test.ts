@@ -115,9 +115,11 @@ test("default and legacy opening lines follow the selected language, custom text
   assert.equal(localizedOpeningLine("Pronto, test personalizzato", "en"), "Pronto, test personalizzato");
 });
 
-test("Ringback macOS TTS adapter selects its voice from the persisted user locale", () => {
+test("Ringback macOS TTS adapter applies locale, persistent voice settings, and the call override", () => {
   const dir = mkdtempSync(join(tmpdir(), "voice-tts-i18n-"));
   const langFile = join(dir, "lang.json");
+  const settingsFile = join(dir, "voice-settings.json");
+  const callSettingsFile = join(dir, "voice-call-settings.json");
   const sayLog = join(dir, "say.log");
   const fakeSay = join(dir, "say");
   const adapter = new URL("../../../tools/ringback-say-localized.sh", import.meta.url).pathname;
@@ -126,13 +128,24 @@ test("Ringback macOS TTS adapter selects its voice from the persisted user local
   const run = (lang: "en" | "it") => {
     writeFileSync(langFile, JSON.stringify({ lang }));
     const result = spawnSync("/bin/bash", [adapter, join(dir, "out.wav"), "Test"], {
-      env: { ...process.env, STEWARD_USER_LANG_FILE: langFile, STEWARD_SAY_BIN: fakeSay, STEWARD_SAY_LOG: sayLog },
+      env: {
+        ...process.env,
+        STEWARD_USER_LANG_FILE: langFile,
+        STEWARD_VOICE_SETTINGS_FILE: settingsFile,
+        STEWARD_VOICE_CALL_SETTINGS_FILE: callSettingsFile,
+        STEWARD_SAY_BIN: fakeSay,
+        STEWARD_SAY_LOG: sayLog,
+      },
     });
     assert.equal(result.status, 0, result.stderr.toString());
     return readFileSync(sayLog, "utf8");
   };
   assert.match(run("it"), /Alice/);
   assert.match(run("en"), /Samantha/);
+  writeFileSync(settingsFile, JSON.stringify({ rateWpm: 205, voice: "Alice" }));
+  assert.match(run("en"), /Alice\n-r\n205/);
+  writeFileSync(callSettingsFile, JSON.stringify({ rateWpm: 120 }));
+  assert.match(run("en"), /Alice\n-r\n120/);
 });
 
 test("a gated call tool is approved through Ringback and recorded in Usage and Audit", async () => {

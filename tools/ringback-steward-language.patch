@@ -1,0 +1,72 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -11,6 +11,7 @@ Run env (set by the launcher):
+ from __future__ import annotations
+ 
+ import atexit
++import json
+ import math
+ import os
+ import signal
+@@ -47,6 +48,8 @@ WHISPER_MODEL = os.environ.get("WHISPER_MODEL",
+                                os.path.expanduser("~/.whisper-models/ggml-small.en.bin"))
+ WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "auto").strip() or "auto"
++STEWARD_LANGUAGE_FILE = os.environ.get("STEWARD_LANGUAGE_FILE",
++    os.path.expanduser("~/Library/Application Support/Steward/notification-lang.json"))
+ FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
+ 
+ # Voice-activity thresholds. Background noise was falsely triggering barge-in, so
+@@ -220,10 +223,21 @@ def _clean_text(text: str) -> str:
+     return text
+ 
+ 
++def _steward_whisper_language() -> str:
++    """Use Steward's persisted UI language for every transcription request."""
++    try:
++        with open(STEWARD_LANGUAGE_FILE, "r", encoding="utf-8") as f:
++            lang = json.load(f).get("lang")
++        if lang in ("en", "it"):
++            return lang
++    except (OSError, ValueError, TypeError, AttributeError):
++        pass
++    return WHISPER_LANGUAGE
++
++
+ def _transcribe(wav: str) -> str:
+     out = subprocess.run([WHISPER_BIN, "-m", WHISPER_MODEL, "-f", wav, "-nt", "-t", "8",
+-                          "-l", WHISPER_LANGUAGE],
++                          "-l", _steward_whisper_language()],
+                          capture_output=True, text=True)
+     if out.returncode != 0:
+         _dlog(f"whisper-cli failed (rc={out.returncode}): {out.stderr.strip()[-200:]}")
+@@ -322,7 +336,7 @@ def _wsrv_spawn():
+             if IS_WIN:
+                 _wsrv_proc = subprocess.Popen(
+                     [WHISPER_SERVER_BIN, "-m", WHISPER_SERVER_MODEL,
+-                     "--host", WHISPER_SERVER_HOST, "--port", str(WHISPER_SERVER_PORT),
+-                     "--language", WHISPER_LANGUAGE],
++                     "--host", WHISPER_SERVER_HOST, "--port", str(WHISPER_SERVER_PORT), "--language", "auto"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     **detached_popen_kwargs())
+             else:
+@@ -334,7 +348,7 @@ def _wsrv_spawn():
+                 _wsrv_proc = subprocess.Popen(
+                     ["/bin/sh", "-c", watchdog, "sh", WHISPER_SERVER_BIN, WHISPER_SERVER_MODEL,
+-                     WHISPER_SERVER_HOST, str(WHISPER_SERVER_PORT), WHISPER_LANGUAGE],
++                     WHISPER_SERVER_HOST, str(WHISPER_SERVER_PORT), "auto"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+             _wsrv_last_use = time.time()
+@@ -380,9 +394,12 @@ def _transcribe_stream(wav: str) -> str:
+         b = "----rbkboundary"
+         body = (
+             (f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="a.wav"\r\n'
+              f'Content-Type: audio/wav\r\n\r\n').encode() + audio +
+-            (f'\r\n--{b}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\n'
++            (f'\r\n--{b}\r\nContent-Disposition: form-data; name="language"\r\n\r\n'
++             f'{_steward_whisper_language()}\r\n').encode() +
++            (f'--{b}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\n'
+              f'text\r\n--{b}--\r\n').encode())
+         req = urllib.request.Request(
+             _WSRV_URL + "/inference", data=body,

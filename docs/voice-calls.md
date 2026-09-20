@@ -30,9 +30,13 @@ security model.
    On Apple Silicon, install native Homebrew in `/opt/homebrew` first. The
    helper deliberately uses its ARM Python and libraries, even if an older
    Intel Homebrew still exists in `/usr/local`. This keeps Ringback native and
-   avoids requiring Docker Desktop at runtime. When the packaged Steward app
-   already contains its multilingual Whisper model, Ringback reuses it instead
-   of downloading a duplicate; macOS `say` provides Italian speech output.
+   avoids requiring Docker Desktop at runtime. The installer keeps Steward's
+   packaged `base` model as an offline fallback and downloads the multilingual
+   `large-v3-turbo-q5_0` model (about 547 MiB) for Ringback. It is substantially
+   more accurate than `base` while remaining practical for low-latency calls on
+   Apple Silicon. It uses the M4 CPU/BLAS path by default because Metal can fail
+   under high unified-memory pressure; the model server is stopped again after
+   its idle timeout. macOS `say` provides speech output.
 
    Docker remains an explicit fallback via `./tools/setup-ringback.sh docker`,
    but it is never selected automatically.
@@ -59,8 +63,9 @@ security model.
    prompts follow the language selected in Steward (English or Italian).
    `STEWARD_VOICE_OPENING_LINE` remains available only as an explicit custom
    override; older built-in English/Italian defaults are migrated dynamically.
-   Ringback uses Whisper language auto-detection and selects the matching
-   macOS English/Italian TTS voice from the same persisted setting.
+   Ringback reads Steward's selected language for every Whisper request, so a
+   language change takes effect without reloading the model. Speech uses the
+   matching macOS English/Italian voice when **Automatic** is selected.
 
 5. Restart Steward. The System page shows the Ringback MCP health and a
    **Call this phone** button.
@@ -144,6 +149,13 @@ Ringback reads the complete request and accepts `approva`, `rifiuta`, or
 `ripeti` in Italian, or `approve`, `reject`, and `repeat` in English. The
 request reading and every fixed control phrase use the same language selected
 in the PWA. Explicit policy denials remain non-overridable.
+
+The System page also stores the default speech rate (100–300 words per minute,
+175 by default) and voice (`Automatic`, `Alice`, or `Samantha`). During a call,
+the agent alone receives `set_voice_speech_rate`: it can change the current
+call immediately, or propose a persistent default. A persistent change uses
+the same spoken approval protocol and is written to Audit. The per-call
+override is deleted when the call ends and is never exposed to ordinary chat.
 
 ## Calls started by a watch
 

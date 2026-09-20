@@ -10,7 +10,7 @@ STEWARD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-auto}"
 ARM_BREW="/opt/homebrew/bin/brew"
 PACKAGED_WHISPER_MODEL="/Applications/Steward.app/Contents/Resources/speech/models/ggml-base.bin"
-WHISPER_MODEL_NAME="ggml-small.bin"
+WHISPER_MODEL_NAME="ggml-large-v3-turbo-q5_0.bin"
 
 if [ -e "$RINGBACK_DIR" ] && [ ! -d "$RINGBACK_DIR/.git" ]; then
   echo "Refusing to overwrite existing non-git path: $RINGBACK_DIR" >&2
@@ -33,6 +33,12 @@ if ! grep -q 'PJSIP_TRANSPORT_TCP' "$RINGBACK_DIR/voice_agent.py"; then
 fi
 if ! grep -q '^WHISPER_LANGUAGE =' "$RINGBACK_DIR/voice_agent.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-runtime.patch"
+fi
+if ! grep -q '^STEWARD_LANGUAGE_FILE =' "$RINGBACK_DIR/voice_agent.py"; then
+  git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-language.patch"
+fi
+if ! grep -q '^WHISPER_NO_GPU =' "$RINGBACK_DIR/voice_agent.py"; then
+  git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-whisper-cpu.patch"
 fi
 if ! grep -q 'def _refresh_audio' "$RINGBACK_DIR/voice_agent.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-media.patch"
@@ -100,17 +106,15 @@ else
     export PJPROJECT_DIR="${PJPROJECT_DIR:-$HOME/build/pjproject-2.17}"
   fi
 
-  # The packaged Steward app already carries the multilingual base model. GGML
-  # model data is architecture-independent, so the native ARM whisper tools can
-  # reuse it even when an older packaged whisper-cli binary was Intel-only.
+  # Keep the packaged multilingual base model as an offline fallback, but use
+  # large-v3-turbo q5 by default for much better phone transcription on M-series Macs.
   if [ -f "$PACKAGED_WHISPER_MODEL" ]; then
     mkdir -p "$HOME/.whisper-models"
     ln -sfn "$PACKAGED_WHISPER_MODEL" "$HOME/.whisper-models/ggml-base.bin"
-    WHISPER_MODEL_NAME="ggml-base.bin"
   fi
 
-  # Ringback defaults to English-only Whisper models. Its engine supports the
-  # multilingual model, which auto-detects Italian, so ask setup.sh for that one.
+  # Ringback defaults to English-only Whisper models. Use the multilingual
+  # Turbo q5 model (~547 MiB), with language selected dynamically by Steward.
   NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1 WHISPER_MODEL_NAME="$WHISPER_MODEL_NAME" "$RINGBACK_DIR/setup.sh"
 
   # pjproject's default flat namespace can bind Python to the wrong OpenSSL on
@@ -136,13 +140,12 @@ else
   if ! grep -q '^export OPENSSL_PREFIX=' "$VOICE_ENV"; then
     printf 'export OPENSSL_PREFIX="/opt/homebrew/opt/openssl@3"\n' >> "$VOICE_ENV"
   fi
-  if ! grep -q '^export WHISPER_MODEL=' "$VOICE_ENV"; then
-    printf '\n# Steward: multilingual speech recognition.\n' >> "$VOICE_ENV"
-    printf 'export WHISPER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$VOICE_ENV"
-  fi
-  if ! grep -q '^export WHISPER_SERVER_MODEL=' "$VOICE_ENV"; then
-    printf 'export WHISPER_SERVER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$VOICE_ENV"
-  fi
+  MODEL_TMP="$(mktemp "$RINGBACK_DIR/voice.env.model.XXXXXX")"
+  awk '!/^export WHISPER_MODEL=/ && !/^export WHISPER_SERVER_MODEL=/' "$VOICE_ENV" > "$MODEL_TMP"
+  printf '\n# Steward: multilingual large-v3-turbo q5 speech recognition.\n' >> "$MODEL_TMP"
+  printf 'export WHISPER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$MODEL_TMP"
+  printf 'export WHISPER_SERVER_MODEL="$HOME/.whisper-models/%s"\n' "$WHISPER_MODEL_NAME" >> "$MODEL_TMP"
+  mv "$MODEL_TMP" "$VOICE_ENV"
   # Select Alice/Samantha at synthesis time from Steward's persisted user
   # language. Replacing the old fixed-Alice command migrates existing installs.
   install -m 755 "$STEWARD_ROOT/tools/ringback-say-localized.sh" "$RINGBACK_DIR/steward-say-localized.sh"
@@ -162,11 +165,12 @@ else
   if ! grep -q '^export VOICE_AUDIO_CODEC=' "$VOICE_ENV"; then
     printf 'export VOICE_AUDIO_CODEC="opus/48000/2"\n' >> "$VOICE_ENV"
   fi
-  # The model is multilingual and calls may be English or Italian. Auto mode
-  # follows the speaker instead of forcing the previous Italian-only setting.
+  # voice_agent reads Steward's persisted language per inference. `auto` is the
+  # safe fallback before Steward has written its user-language setting.
   LANG_TMP="$(mktemp "$RINGBACK_DIR/voice.env.lang.XXXXXX")"
-  awk '!/^export WHISPER_LANGUAGE=/' "$VOICE_ENV" > "$LANG_TMP"
+  awk '!/^export WHISPER_LANGUAGE=/ && !/^export WHISPER_NO_GPU=/' "$VOICE_ENV" > "$LANG_TMP"
   printf 'export WHISPER_LANGUAGE="auto"\n' >> "$LANG_TMP"
+  printf 'export WHISPER_NO_GPU="1"\n' >> "$LANG_TMP"
   mv "$LANG_TMP" "$VOICE_ENV"
   if ! grep -q '^export VOICE_ANSWER_TIMEOUT=' "$VOICE_ENV"; then
     printf 'export VOICE_ANSWER_TIMEOUT="60"\n' >> "$VOICE_ENV"

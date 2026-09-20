@@ -31,6 +31,7 @@ import { createWatchExecutionGuard, watchAgentGrantTools } from "./core/watch-gr
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
+import { getVoiceSettings, setVoiceSettings } from "./core/voice-settings.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -108,7 +109,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/notification-lang", "/settings/actions", "/push/", "/quick-send", "/quick-call", "/transcribe", "/voice/"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/", "/push/", "/quick-send", "/quick-call", "/transcribe", "/voice/"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -580,6 +581,28 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
         summary: `${settings.enabled ? "Enabled" : "Disabled"} automatic Actions`,
         payload: settings,
       });
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(settings));
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
+  if (req.method === "GET" && url.startsWith("/settings/voice")) {
+    try {
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify(getVoiceSettings()));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    }
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/settings/voice")) {
+    void readRequestBody(req).then((raw) => {
+      const body = raw ? JSON.parse(raw) as { rateWpm?: unknown; voice?: unknown } : {};
+      const settings = setVoiceSettings({ rateWpm: body.rateWpm, voice: body.voice });
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify(settings));
     }).catch((err) => {

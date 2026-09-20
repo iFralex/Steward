@@ -1,0 +1,39 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -50,6 +50,7 @@ WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "auto").strip() or "auto"
+ STEWARD_LANGUAGE_FILE = os.environ.get("STEWARD_LANGUAGE_FILE",
+     os.path.expanduser("~/Library/Application Support/Steward/notification-lang.json"))
++WHISPER_NO_GPU = os.environ.get("WHISPER_NO_GPU", "1").lower() in ("1", "true", "yes")
+ FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
+ 
+ # Voice-activity thresholds. Background noise was falsely triggering barge-in, so
+@@ -235,8 +236,11 @@ def _steward_whisper_language() -> str:
+ 
+ 
+ def _transcribe(wav: str) -> str:
+-    out = subprocess.run([WHISPER_BIN, "-m", WHISPER_MODEL, "-f", wav, "-nt", "-t", "8",
+-                          "-l", _steward_whisper_language()],
++    command = [WHISPER_BIN, "-m", WHISPER_MODEL, "-f", wav, "-nt", "-t", "8",
++               "-l", _steward_whisper_language()]
++    if WHISPER_NO_GPU:
++        command.append("-ng")
++    out = subprocess.run(command,
+                          capture_output=True, text=True)
+@@ -337,8 +341,9 @@ def _wsrv_spawn():
+             if IS_WIN:
+                 _wsrv_proc = subprocess.Popen(
+                     [WHISPER_SERVER_BIN, "-m", WHISPER_SERVER_MODEL,
+-                     "--host", WHISPER_SERVER_HOST, "--port", str(WHISPER_SERVER_PORT), "--language", "auto"],
++                     "--host", WHISPER_SERVER_HOST, "--port", str(WHISPER_SERVER_PORT), "--language", "auto"]
++                    + (["--no-gpu"] if WHISPER_NO_GPU else []),
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     **detached_popen_kwargs())
+@@ -347,8 +352,9 @@ def _wsrv_spawn():
+                 # sh watchdog: run the server, then exit (killing it) once our PID is gone.
+                 # Own session so the reaper / atexit can killpg the whole group.
+-                watchdog = ('"$1" -m "$2" --host "$3" --port "$4" --language "$5" & srv=$!; '
++                gpu_flag = " --no-gpu" if WHISPER_NO_GPU else ""
++                watchdog = (f'"$1" -m "$2" --host "$3" --port "$4" --language "$5"{gpu_flag} & srv=$!; '
+                             f'while kill -0 {os.getpid()} 2>/dev/null; do sleep 5; done; '
+                             'kill "$srv" 2>/dev/null')

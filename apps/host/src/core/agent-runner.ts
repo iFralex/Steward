@@ -9,7 +9,7 @@
  */
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { buildMcpBridge, type McpBridge } from "@steward/mcp-bridge";
 import { recordAudit } from "@steward/audit-log";
 import { gateToolDefinition, type ToolExecutionGuard } from "./permission-gate.ts";
@@ -172,6 +172,7 @@ export class ChatManager {
     private readonly session: Session,
     private readonly emit: Emit,
     private readonly executionGuard?: ToolExecutionGuard,
+    private readonly extraTools?: (chatId: string) => ToolDefinition[],
   ) { chatManagers.add(this); }
 
   private async ensureBridge(): Promise<BridgeRuntime> {
@@ -249,6 +250,7 @@ export class ChatManager {
         ),
       ),
       buildAskUserTool((q) => this.session.askQuestion(q, chatId)),
+      ...(this.extraTools?.(chatId) ?? []),
     ];
     const { session: created } = await createAgentSession({
       model: b.model, modelRegistry: b.modelRegistry, resourceLoader: b.resourceLoader,

@@ -64,6 +64,11 @@ interface VoiceChannelStatus {
   lastCall?: { chatId: string; requestId: string; startedAt: number; finishedAt: number; ok: boolean; error?: string };
 }
 
+interface VoiceSettings {
+  rateWpm: number;
+  voice: "auto" | "Alice" | "Samantha";
+}
+
 export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -80,23 +85,33 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   const [voice, setVoice] = useState<VoiceChannelStatus | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
+  const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettings | null>(null);
+  const [voiceRate, setVoiceRate] = useState(175);
+  const [voiceName, setVoiceName] = useState<VoiceSettings["voice"]>("auto");
+  const [voiceSettingsBusy, setVoiceSettingsBusy] = useState(false);
   const voiceRequestId = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [statusRes, actionsRes, voiceRes] = await Promise.all([
+      const [statusRes, actionsRes, voiceRes, voiceSettingsRes] = await Promise.all([
         authFetch(`${httpBase}/system/status`, token, onUnauthorized),
         authFetch(`${httpBase}/settings/actions`, token, onUnauthorized),
         authFetch(`${httpBase}/voice/status`, token, onUnauthorized),
+        authFetch(`${httpBase}/settings/voice`, token, onUnauthorized),
       ]);
       if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
       if (!actionsRes.ok) throw new Error(`HTTP ${actionsRes.status}`);
       if (!voiceRes.ok) throw new Error(`HTTP ${voiceRes.status}`);
+      if (!voiceSettingsRes.ok) throw new Error(`HTTP ${voiceSettingsRes.status}`);
       setStatus(await statusRes.json() as SystemStatus);
       setActionAutomation(await actionsRes.json() as ActionAutomationSettings);
       setVoice(await voiceRes.json() as VoiceChannelStatus);
+      const speech = await voiceSettingsRes.json() as VoiceSettings;
+      setVoiceSettingsState(speech);
+      setVoiceRate(speech.rateWpm);
+      setVoiceName(speech.voice);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -226,6 +241,26 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     }
   };
 
+  const saveVoiceSettings = async () => {
+    setVoiceSettingsBusy(true);
+    setVoiceMessage(null);
+    try {
+      const res = await authFetch(`${httpBase}/settings/voice`, token, onUnauthorized, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rateWpm: voiceRate, voice: voiceName }),
+      });
+      const body = await res.json() as VoiceSettings | { error?: string };
+      if (!res.ok) throw new Error("error" in body && body.error ? body.error : `HTTP ${res.status}`);
+      setVoiceSettingsState(body as VoiceSettings);
+      setVoiceMessage(t("system.voice.settingsSaved"));
+    } catch (err) {
+      setVoiceMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVoiceSettingsBusy(false);
+    }
+  };
+
   const counts = countStates(status?.services ?? []);
 
   return (
@@ -275,20 +310,52 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
           </CardTitle>
           <CardDescription>{t("system.voice.description")}</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-3">
-          <Badge variant={voice?.enabled ? "default" : "outline"}>
-            {voice?.transport ?? "disabled"} · {t(`system.voice.states.${voice?.state ?? "disabled"}`)}
-          </Badge>
-          <Button
-            size="sm"
-            disabled={!voice?.enabled || voice.state !== "idle" || voiceBusy}
-            onClick={() => void startVoiceCall()}
-          >
-            {voiceBusy ? t("system.voice.starting") : t("system.voice.call")}
-          </Button>
-          {(voiceMessage || voice?.detail) && (
-            <span className="text-muted-foreground text-sm">{voiceMessage ?? voice?.detail}</span>
-          )}
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge variant={voice?.enabled ? "default" : "outline"}>
+              {voice?.transport ?? "disabled"} · {t(`system.voice.states.${voice?.state ?? "disabled"}`)}
+            </Badge>
+            <Button
+              size="sm"
+              disabled={!voice?.enabled || voice.state !== "idle" || voiceBusy}
+              onClick={() => void startVoiceCall()}
+            >
+              {voiceBusy ? t("system.voice.starting") : t("system.voice.call")}
+            </Button>
+            {(voiceMessage || voice?.detail) && (
+              <span className="text-muted-foreground text-sm">{voiceMessage ?? voice?.detail}</span>
+            )}
+          </div>
+          <div className="grid gap-3 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+            <label className="grid gap-1 text-sm">
+              <span className="font-medium">{t("system.voice.rate")}</span>
+              <input
+                className="border-input bg-background h-9 rounded-md border px-3"
+                type="number" min={100} max={300} step={5} value={voiceRate}
+                onChange={(event) => setVoiceRate(Number(event.target.value))}
+              />
+              <span className="text-muted-foreground text-xs">{t("system.voice.rateHint")}</span>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="font-medium">{t("system.voice.defaultVoice")}</span>
+              <select
+                className="border-input bg-background h-9 rounded-md border px-3"
+                value={voiceName}
+                onChange={(event) => setVoiceName(event.target.value as VoiceSettings["voice"])}
+              >
+                <option value="auto">{t("system.voice.voiceAuto")}</option>
+                <option value="Alice">{t("system.voice.voiceAlice")}</option>
+                <option value="Samantha">{t("system.voice.voiceSamantha")}</option>
+              </select>
+              <span className="text-muted-foreground text-xs">{t("system.voice.voiceHint")}</span>
+            </label>
+            <Button
+              size="sm" disabled={!voiceSettings || voiceSettingsBusy || voiceRate < 100 || voiceRate > 300}
+              onClick={() => void saveVoiceSettings()}
+            >
+              {voiceSettingsBusy ? t("system.voice.saving") : t("system.voice.saveSettings")}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
