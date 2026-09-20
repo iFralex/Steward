@@ -28,11 +28,11 @@ export function buildVoiceSettingsTool(session: Session, chatId: string, languag
             tool: "set_default_voice_speech_rate", input: { rateWpm: params.rateWpm }, chatId,
           });
           if (outcome.decision !== "allow") return result({ changed: false, scope: "default", reason: "denied" });
-          const settings = setVoiceSettings({ rateWpm: params.rateWpm }, "assistant");
+          const settings = setVoiceSettings({ rateWpm: params.rateWpm }, "assistant", language);
           return result({ changed: true, scope: "default", ...settings });
         }
         const rateWpm = setCallSpeechRate(params.rateWpm);
-        return result({ changed: true, scope: "call", rateWpm, defaultSettings: getVoiceSettings() });
+        return result({ changed: true, scope: "call", rateWpm, defaultSettings: getVoiceSettings(language) });
       } catch (error) {
         return result({ changed: false, error: error instanceof Error ? error.message : String(error) });
       }

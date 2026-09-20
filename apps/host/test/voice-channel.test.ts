@@ -142,10 +142,14 @@ test("Ringback macOS TTS adapter applies locale, persistent voice settings, and 
   };
   assert.match(run("it"), /Alice/);
   assert.match(run("en"), /Samantha/);
-  writeFileSync(settingsFile, JSON.stringify({ rateWpm: 205, voice: "Alice" }));
-  assert.match(run("en"), /Alice\n-r\n205/);
+  writeFileSync(settingsFile, JSON.stringify({
+    rateWpm: 205,
+    voices: { it: "Eddy (Italiano (Italia))", en: "Daniel" },
+  }));
+  assert.match(run("it"), /Eddy \(Italiano \(Italia\)\)\n-r\n205/);
+  assert.match(run("en"), /Daniel\n-r\n205/);
   writeFileSync(callSettingsFile, JSON.stringify({ rateWpm: 120 }));
-  assert.match(run("en"), /Alice\n-r\n120/);
+  assert.match(run("en"), /Daniel\n-r\n120/);
 });
 
 test("a gated call tool is approved through Ringback and recorded in Usage and Audit", async () => {

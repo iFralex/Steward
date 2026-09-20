@@ -31,7 +31,7 @@ import { createWatchExecutionGuard, watchAgentGrantTools } from "./core/watch-gr
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
-import { getVoiceSettings, setVoiceSettings } from "./core/voice-settings.ts";
+import { getVoiceSettings, listSystemVoices, setVoiceSettings } from "./core/voice-settings.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -591,8 +591,9 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
   }
   if (req.method === "GET" && url.startsWith("/settings/voice")) {
     try {
+      const language = getNotificationLang();
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
-      res.end(JSON.stringify(getVoiceSettings()));
+      res.end(JSON.stringify({ ...getVoiceSettings(language), availableVoices: listSystemVoices(language) }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
@@ -602,9 +603,10 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
   if (req.method === "POST" && url.startsWith("/settings/voice")) {
     void readRequestBody(req).then((raw) => {
       const body = raw ? JSON.parse(raw) as { rateWpm?: unknown; voice?: unknown } : {};
-      const settings = setVoiceSettings({ rateWpm: body.rateWpm, voice: body.voice });
+      const language = getNotificationLang();
+      const settings = setVoiceSettings({ rateWpm: body.rateWpm, voice: body.voice }, "user", language);
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
-      res.end(JSON.stringify(settings));
+      res.end(JSON.stringify({ ...settings, availableVoices: listSystemVoices(language) }));
     }).catch((err) => {
       res.writeHead(400, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));

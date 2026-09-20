@@ -66,11 +66,13 @@ interface VoiceChannelStatus {
 
 interface VoiceSettings {
   rateWpm: number;
-  voice: "auto" | "Alice" | "Samantha";
+  voice: string;
+  language: "en" | "it";
+  availableVoices: Array<{ name: string; locale: string }>;
 }
 
 export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingAutostart, setSavingAutostart] = useState(false);
@@ -117,7 +119,7 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     } finally {
       setLoading(false);
     }
-  }, [httpBase, token, onUnauthorized]);
+  }, [httpBase, token, onUnauthorized, i18n.resolvedLanguage]);
 
   useEffect(() => {
     void refresh();
@@ -341,11 +343,14 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
               <select
                 className="border-input bg-background h-9 rounded-md border px-3"
                 value={voiceName}
-                onChange={(event) => setVoiceName(event.target.value as VoiceSettings["voice"])}
+                onChange={(event) => setVoiceName(event.target.value)}
               >
                 <option value="auto">{t("system.voice.voiceAuto")}</option>
-                <option value="Alice">{t("system.voice.voiceAlice")}</option>
-                <option value="Samantha">{t("system.voice.voiceSamantha")}</option>
+                {voiceSettings?.availableVoices.map((systemVoice) => (
+                  <option key={`${systemVoice.locale}:${systemVoice.name}`} value={systemVoice.name}>
+                    {systemVoice.name} · {systemVoice.locale.replace("_", "-")}
+                  </option>
+                ))}
               </select>
               <span className="text-muted-foreground text-xs">{t("system.voice.voiceHint")}</span>
             </label>

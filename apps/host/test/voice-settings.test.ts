@@ -7,12 +7,19 @@ import { join } from "node:path";
 const dir = mkdtempSync(join(tmpdir(), "steward-voice-settings-"));
 const oldSettingsFile = process.env.STEWARD_VOICE_SETTINGS_FILE;
 const oldCallSettingsFile = process.env.STEWARD_VOICE_CALL_SETTINGS_FILE;
+const oldSystemVoices = process.env.STEWARD_SYSTEM_VOICES;
 process.env.STEWARD_VOICE_SETTINGS_FILE = join(dir, "voice-settings.json");
 process.env.STEWARD_VOICE_CALL_SETTINGS_FILE = join(dir, "voice-call-settings.json");
 process.env.AUDIT_DIR = join(dir, "audit");
+process.env.STEWARD_SYSTEM_VOICES = [
+  "Alice               it_IT    # Ciao! Mi chiamo Alice.",
+  "Eddy (Italiano (Italia)) it_IT    # Ciao! Mi chiamo Eddy.",
+  "Daniel              en_GB    # Hello! My name is Daniel.",
+  "Samantha            en_US    # Hello! My name is Samantha.",
+].join("\n");
 
 import {
-  clearCallVoiceOverride, getVoiceSettings, setCallSpeechRate, setVoiceSettings,
+  clearCallVoiceOverride, getVoiceSettings, listSystemVoices, setCallSpeechRate, setVoiceSettings,
   voiceCallOverridePath,
 } from "../src/core/voice-settings.ts";
 import { buildVoiceSettingsTool } from "../src/core/voice-settings-tool.ts";
@@ -25,14 +32,24 @@ after(() => {
   else process.env.STEWARD_VOICE_SETTINGS_FILE = oldSettingsFile;
   if (oldCallSettingsFile === undefined) delete process.env.STEWARD_VOICE_CALL_SETTINGS_FILE;
   else process.env.STEWARD_VOICE_CALL_SETTINGS_FILE = oldCallSettingsFile;
+  if (oldSystemVoices === undefined) delete process.env.STEWARD_SYSTEM_VOICES;
+  else process.env.STEWARD_SYSTEM_VOICES = oldSystemVoices;
 });
 
 test("voice settings have safe defaults and validate persisted values", () => {
-  assert.deepEqual(getVoiceSettings(), { rateWpm: 175, voice: "auto" });
-  assert.deepEqual(setVoiceSettings({ rateWpm: 210, voice: "Alice" }), { rateWpm: 210, voice: "Alice" });
-  assert.deepEqual(getVoiceSettings(), { rateWpm: 210, voice: "Alice" });
-  assert.throws(() => setVoiceSettings({ rateWpm: 99 }), /100 to 300/);
-  assert.throws(() => setVoiceSettings({ voice: "Unknown" }), /voice must be one of/);
+  assert.deepEqual(getVoiceSettings("it"), {
+    rateWpm: 175, voice: "auto", voices: { en: "auto", it: "auto" }, language: "it",
+  });
+  assert.deepEqual(setVoiceSettings({ rateWpm: 210, voice: "Eddy (Italiano (Italia))" }, "user", "it"), {
+    rateWpm: 210,
+    voice: "Eddy (Italiano (Italia))",
+    voices: { en: "auto", it: "Eddy (Italiano (Italia))" },
+    language: "it",
+  });
+  assert.equal(getVoiceSettings("en").voice, "auto");
+  assert.deepEqual(listSystemVoices("it").map((voice) => voice.name), ["Alice", "Eddy (Italiano (Italia))"]);
+  assert.throws(() => setVoiceSettings({ rateWpm: 99 }, "user", "it"), /100 to 300/);
+  assert.throws(() => setVoiceSettings({ voice: "Samantha" }, "user", "it"), /installed it system voice/);
 });
 
 test("the per-call rate is stored separately and removed at call end", () => {
@@ -60,5 +77,5 @@ test("persisting a speech rate through the call-only tool requires approval", as
   assert.equal(session.resolveApproval(approval.requestId, { decision: "allow" }), true);
   const output = await pending;
   assert.equal(JSON.parse(output.content[0].text).rateWpm, 190);
-  assert.equal(getVoiceSettings().rateWpm, 190);
+  assert.equal(getVoiceSettings("en").rateWpm, 190);
 });
