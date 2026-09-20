@@ -11,6 +11,8 @@ export interface WatchDefinition {
   rules: WatchRule[];
   instruction: string;
   chatId: string;
+  /** Tools the user explicitly pre-authorized for the future agent turn. */
+  authorizedTools?: string[];
   expiresAt?: number;
 }
 
@@ -47,6 +49,8 @@ export interface PendingWatchEvent {
   watchId: string;
   chatId: string;
   instruction: string;
+  resourceRef: string;
+  authorizedTools: string[];
   rule: WatchRule;
   event: DomainEvent;
   attempts: number;

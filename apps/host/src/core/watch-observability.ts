@@ -9,6 +9,7 @@ function watchPayload(watch: WatchRecord): Record<string, unknown> {
     resourceRef: watch.resourceRef,
     status: watch.status,
     ruleIds: watch.rules.map((rule) => rule.id),
+    authorizedTools: watch.authorizedTools ?? [],
     expiresAt: watch.expiresAt,
   };
 }

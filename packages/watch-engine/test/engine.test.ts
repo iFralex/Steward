@@ -47,6 +47,7 @@ test("poll translates a state change into a durable matching event", async () =>
     const watch = await fx.engine.create({
       source: "fake", resourceRef: "resource-1", chatId: "chat-1", instruction: "Avvisami",
       rules: [{ id: "before", event: "fake.changed", where: { position: -1 }, once: true }],
+      authorizedTools: ["mcp__voice__call_start"],
     });
     fx.adapter.current = { step: 1 };
 
@@ -55,6 +56,9 @@ test("poll translates a state change into a durable matching event", async () =>
     assert.equal(pending.watchId, watch.id);
     assert.equal(pending.event.type, "fake.changed");
     assert.deepEqual(pending.rule.where, { position: -1 });
+    assert.equal(pending.resourceRef, "resource-1");
+    assert.deepEqual(pending.authorizedTools, ["mcp__voice__call_start"]);
+    assert.deepEqual(fx.store.get(watch.id)?.authorizedTools, ["mcp__voice__call_start"]);
     fx.store.setNotificationText(pending.id, "Already composed");
     assert.equal(fx.store.pending()[0].notificationText, "Already composed", "composed text must survive a push retry");
 

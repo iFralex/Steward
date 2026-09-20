@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS watches (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   last_checked_at INTEGER,
-  last_error TEXT
+  last_error TEXT,
+  authorized_tools TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_watches_active ON watches(status, expires_at);
 CREATE TABLE IF NOT EXISTS watch_events (
@@ -44,6 +45,7 @@ export class WatchStore {
     db.pragma("journal_mode = WAL");
     db.exec(SCHEMA);
     ensureColumn(db, "watch_events", "notification_text", "TEXT");
+    ensureColumn(db, "watches", "authorized_tools", "TEXT NOT NULL DEFAULT '[]'");
     return new WatchStore(db);
   }
 
@@ -54,9 +56,9 @@ export class WatchStore {
       expiresAt: definition.expiresAt ?? defaultExpiry, createdAt: now, updatedAt: now,
     };
     this.raw.prepare(`INSERT INTO watches
-      (id,source,resource_ref,rules,instruction,chat_id,status,snapshot,expires_at,created_at,updated_at)
-      VALUES (@id,@source,@resourceRef,@rules,@instruction,@chatId,@status,@snapshot,@expiresAt,@createdAt,@updatedAt)`)
-      .run({ ...record, rules: JSON.stringify(record.rules), snapshot: JSON.stringify(snapshot) });
+      (id,source,resource_ref,rules,instruction,chat_id,status,snapshot,expires_at,created_at,updated_at,authorized_tools)
+      VALUES (@id,@source,@resourceRef,@rules,@instruction,@chatId,@status,@snapshot,@expiresAt,@createdAt,@updatedAt,@authorizedToolsJson)`)
+      .run({ ...record, rules: JSON.stringify(record.rules), snapshot: JSON.stringify(snapshot), authorizedToolsJson: JSON.stringify(record.authorizedTools ?? []) });
     return record;
   }
 
@@ -107,11 +109,12 @@ export class WatchStore {
   }
 
   pending(limit = 20): PendingWatchEvent[] {
-    const rows = this.raw.prepare(`SELECT e.*, w.chat_id, w.instruction
+    const rows = this.raw.prepare(`SELECT e.*, w.chat_id, w.instruction, w.resource_ref, w.authorized_tools
       FROM watch_events e JOIN watches w ON w.id=e.watch_id
       WHERE e.status='pending' ORDER BY e.created_at LIMIT ?`).all(limit) as EventRow[];
     return rows.map((row) => ({
       id: row.id, watchId: row.watch_id, chatId: row.chat_id, instruction: row.instruction,
+      resourceRef: row.resource_ref, authorizedTools: JSON.parse(row.authorized_tools) as string[],
       rule: JSON.parse(row.rule) as WatchRule, event: JSON.parse(row.event) as DomainEvent, attempts: row.attempts,
       ...(row.notification_text ? { notificationText: row.notification_text } : {}),
     }));
@@ -137,10 +140,11 @@ interface WatchRow {
   id: string; source: string; resource_ref: string; rules: string; instruction: string; chat_id: string;
   status: WatchRecord["status"]; snapshot: string; expires_at: number; created_at: number; updated_at: number;
   last_checked_at: number | null; last_error: string | null;
+  authorized_tools: string;
 }
 interface EventRow {
   id: string; watch_id: string; rule: string; event: string; attempts: number; chat_id: string; instruction: string;
-  notification_text: string | null;
+  notification_text: string | null; resource_ref: string; authorized_tools: string;
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, declaration: string): void {
@@ -151,6 +155,9 @@ function watchFromRow(row: WatchRow): WatchRecord {
   return {
     id: row.id, source: row.source, resourceRef: row.resource_ref, rules: JSON.parse(row.rules) as WatchRule[],
     instruction: row.instruction, chatId: row.chat_id, status: row.status, snapshot: JSON.parse(row.snapshot),
+    ...((JSON.parse(row.authorized_tools ?? "[]") as string[]).length
+      ? { authorizedTools: JSON.parse(row.authorized_tools) as string[] }
+      : {}),
     expiresAt: row.expires_at, createdAt: row.created_at, updatedAt: row.updated_at,
     ...(row.last_checked_at ? { lastCheckedAt: row.last_checked_at } : {}),
     ...(row.last_error ? { lastError: row.last_error } : {}),
