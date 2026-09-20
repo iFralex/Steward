@@ -71,6 +71,12 @@ export class KeyedQueue {
   }
 }
 
+/** Every channel shares the same per-chat serialization boundary. This keeps
+ * WebSocket, Quick Send, voice and watch turns from opening/writing the same Pi
+ * session concurrently. */
+const processTurnQueue = new KeyedQueue();
+const chatManagers = new Set<ChatManager>();
+
 export interface PiRuntime {
   session: AgentSession;
   bridge: McpBridge;
@@ -159,13 +165,13 @@ export type TurnResult =
 export class ChatManager {
   private bridge?: BridgeRuntime;
   private readonly chats = new Map<string, ChatRuntime>();
-  private readonly turnQueue = new KeyedQueue();
+  private readonly turnQueue = processTurnQueue;
 
   constructor(
     private readonly config: HostConfig,
     private readonly session: Session,
     private readonly emit: Emit,
-  ) {}
+  ) { chatManagers.add(this); }
 
   private async ensureBridge(): Promise<BridgeRuntime> {
     if (this.bridge) return this.bridge;
@@ -355,7 +361,14 @@ export class ChatManager {
     return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, attachments));
   }
 
-  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[]): Promise<TurnResult> {
+  /** Run a trusted background event in the same persisted Pi conversation.
+   * The structured control prompt stays out of the user-visible transcript;
+   * assistant and tool messages are persisted normally. */
+  async runAutomaticTurn(chatId: string, prompt: string): Promise<TurnResult> {
+    return this.turnQueue.run(chatId, () => this.doRunTurn(chatId, prompt, undefined, true));
+  }
+
+  private async doRunTurn(chatId: string, prompt: string, attachments?: ChannelFile[], automatic = false): Promise<TurnResult> {
     const store = chatStore();
     // A turn queued behind another can run after its chat was deleted; do not
     // resurrect a deleted chat (addMessage orphan row + ensureChat rebuilding a session).
@@ -363,13 +376,15 @@ export class ChatManager {
       return { ok: false, error: `Chat not found: ${chatId}`, aborted: false, messageId: null, text: "" };
     }
     const attached = (attachments ?? []).filter((a) => a.path);
-    store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
-    store.maybeAutoTitle(chatId, prompt);
+    if (!automatic) {
+      store.addMessage(chatId, { id: randomUUID(), role: "user", text: prompt, ...(attached.length ? { attachments: attached } : {}) });
+      store.maybeAutoTitle(chatId, prompt);
+    }
     recordAudit({
-      actor: "user",
-      eventType: "chat.user_message",
+      actor: automatic ? "scheduler" : "user",
+      eventType: automatic ? "chat.automatic_event" : "chat.user_message",
       risk: "low",
-      summary: prompt.trim().slice(0, 180) || "User sent attachments",
+      summary: automatic ? "Resumed chat for an automatic event" : (prompt.trim().slice(0, 180) || "User sent attachments"),
       sessionId: this.session.id,
       chatId,
       payload: { text: prompt, attachments: attached },
@@ -458,6 +473,12 @@ export class ChatManager {
       } catch { /* stats unavailable */ }
       markIdle(chatId);
       this.emit({ type: "status", sessionId: this.session.id, chatId, state: "idle" });
+      // Another channel may have an idle in-memory Pi session for this chat.
+      // Drop it now so its next turn reopens the session file containing this
+      // turn instead of continuing from stale memory.
+      for (const manager of chatManagers) {
+        if (manager !== this) manager.dispose(chatId);
+      }
     }
   }
 
@@ -492,6 +513,7 @@ export class ChatManager {
   async close(): Promise<void> {
     for (const r of this.chats.values()) { r.unsub(); r.session.dispose(); }
     this.chats.clear();
+    chatManagers.delete(this);
     // The MCP bridge is process-shared (sharedMcpBridge) — do NOT close it here;
     // other connections and the action executor rely on it staying up.
   }

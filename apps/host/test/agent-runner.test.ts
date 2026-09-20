@@ -110,6 +110,71 @@ test("runTurn returns the persisted assistant message instead of requiring trans
   assert.equal(result.messageId, chatStore().getMessages(chat.id).at(-1)?.id);
 });
 
+test("runAutomaticTurn continues the session without exposing its control prompt as a user message", async () => {
+  const session = new Session(() => {}, 1000);
+  const cm = new ChatManager(
+    {
+      port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
+      gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      mcpServers: {},
+    } as any,
+    session,
+    () => {},
+  );
+  const chat = chatStore().createChat("automatic continuation");
+  const runtime = {
+    chatId: chat.id,
+    session: {
+      prompt: async () => { runtime.assistantBuffer = "Il treno è alla fermata precedente."; },
+      getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    },
+    unsub: () => {}, lastCostUsd: 0,
+    lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+  };
+  (cm as any).ensureChat = async () => runtime;
+
+  const result = await cm.runAutomaticTurn(chat.id, "[structured automatic event]");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(chatStore().getMessages(chat.id).map((message) => message.role), ["assistant"]);
+  assert.equal(chatStore().getMessages(chat.id)[0].text, "Il treno è alla fermata precedente.");
+});
+
+test("a completed turn invalidates another channel's stale session for the same chat", async () => {
+  const config = {
+    port: 0, systemPrompt: "test", policy: defaultPolicy, approvalTimeoutMs: 1000,
+    gateway: { baseUrl: "http://127.0.0.1:1/v1", tier: "tier-5", apiKey: "sk-local", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+    mcpServers: {},
+  } as any;
+  const owner = new ChatManager(config, new Session(() => {}, 1000), () => {});
+  const peer = new ChatManager(config, new Session(() => {}, 1000), () => {});
+  const chat = chatStore().createChat("cross-channel continuation");
+  const ownerRuntime = {
+    chatId: chat.id,
+    session: {
+      prompt: async () => { ownerRuntime.assistantBuffer = "Aggiornamento automatico"; },
+      getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+    },
+    unsub: () => {}, lastCostUsd: 0,
+    lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+  };
+  let disposed = false;
+  const peerRuntime = {
+    chatId: chat.id,
+    session: { abort: async () => {}, dispose: () => { disposed = true; } },
+    unsub: () => {}, aborted: false,
+  };
+  (owner as any).ensureChat = async () => ownerRuntime;
+  (peer as any).chats.set(chat.id, peerRuntime);
+
+  await owner.runAutomaticTurn(chat.id, "event");
+
+  assert.equal(disposed, true);
+  assert.equal((peer as any).chats.has(chat.id), false);
+});
+
 test("runTurn resolves with a structured failure when the agent errors", async () => {
   const session = new Session(() => {}, 1000);
   const cm = new ChatManager(

@@ -27,7 +27,6 @@ import { getNotificationLang, setNotificationLang } from "./core/notification-la
 import { notificationCopy } from "./core/notification-copy.ts";
 import { sharedWatchEngine } from "./core/watch-runtime.ts";
 import { pollAndDeliverWatchEvents } from "./core/watch-notification-service.ts";
-import { createWatchNotificationComposer } from "./core/watch-notification-composer.ts";
 import { pushSubscriptionsPath, type HostConfig } from "./config.ts";
 import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } from "./core/speech.ts";
 import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
@@ -735,8 +734,25 @@ export function startServer(config: HostConfig): WebSocketServer {
   const actionPushPollMs = Math.max(1_000, Number(process.env.ACTION_PUSH_POLL_MS ?? 15_000));
   const actionPushTimer = setInterval(pollNewActionNotifications, actionPushPollMs);
   actionPushTimer.unref();
-  const composeWatchNotification = createWatchNotificationComposer(config.gateway);
-  const pollWatches = () => pollAndDeliverWatchEvents({ engine: sharedWatchEngine(), compose: composeWatchNotification, push: pushRegistry });
+  const backgroundRules = Object.fromEntries(
+    Object.entries(config.policy.rules).map(([tool, decision]) => [tool, decision === "allow" ? "allow" : "deny"]),
+  ) as HostConfig["policy"]["rules"];
+  backgroundRules.create_watch = "deny";
+  backgroundRules.create_agent_watch = "deny";
+  backgroundRules.stop_watch = "deny";
+  backgroundRules.mcp__voice__call_start = "deny";
+  const watchSession = new Session(() => {}, 1);
+  const watchChats = new ChatManager({
+    ...config,
+    gateway: { ...config.gateway, usageService: "host", usageAction: "watch-agent-turn" },
+    policy: { ...config.policy, default: "deny", rules: backgroundRules },
+  }, watchSession, () => {});
+  const pollWatches = () => pollAndDeliverWatchEvents({
+    engine: sharedWatchEngine(),
+    push: pushRegistry,
+    runAgentTurn: (chatId, prompt) => watchChats.runAutomaticTurn(chatId, prompt),
+    runVoiceTurn: (chatId, prompt, eventId) => voiceCalls.runWatchEvent(chatId, prompt, eventId),
+  });
   void pollWatches();
   const watchPollMs = Math.max(15_000, Number(process.env.WATCH_POLL_MS ?? 45_000));
   const watchTimer = setInterval(() => void pollWatches(), watchPollMs);
@@ -753,6 +769,8 @@ export function startServer(config: HostConfig): WebSocketServer {
   wss.once("close", () => {
     clearInterval(actionPushTimer);
     clearInterval(watchTimer);
+    watchSession.closed = true;
+    void watchChats.close();
   });
   const acceptUpgrade = (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => {
     const ok =

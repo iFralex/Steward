@@ -54,6 +54,7 @@ export class VoiceBusyError extends Error {
 
 interface VoiceRunner {
   runTurn(chatId: string, prompt: string): Promise<TurnResult>;
+  runAutomaticTurn?(chatId: string, prompt: string): Promise<TurnResult>;
   abort(chatId?: string): Promise<void>;
 }
 
@@ -65,6 +66,11 @@ interface VoiceCoordinatorDeps {
   usage?: (record: VoiceCallRecord) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+}
+
+interface VoiceStartOptions {
+  chatId?: string;
+  prompt?: string;
 }
 
 const PREFLIGHT_ATTEMPTS = 2;
@@ -120,6 +126,7 @@ export class VoiceCallCoordinator {
   private detail: string | undefined;
   private retryable: boolean | undefined;
   private terminalError: Error | null = null;
+  private dialStarted = false;
   private lastCall: VoiceCallSummary | undefined;
   private state: VoiceCallState;
   private readonly idempotency = new Map<string, { result: VoiceCallStarted; expiresAt: number }>();
@@ -165,18 +172,39 @@ export class VoiceCallCoordinator {
   }
 
   async start(openingLine?: string, requestedId?: string): Promise<VoiceCallStarted> {
+    const suppliedId = requestedId?.trim();
+    if (suppliedId) {
+      this.pruneIdempotency();
+      const previous = this.idempotency.get(suppliedId);
+      if (previous) return { ...previous.result, duplicate: true };
+    }
+    return (await this.begin(openingLine, requestedId)).started;
+  }
+
+  /** Resume an existing chat for a pre-authorized automatic event and wait for
+   * the whole conversational call turn to finish. */
+  async runWatchEvent(chatId: string, prompt: string, requestId: string): Promise<VoiceCallSummary> {
+    return (await this.begin(undefined, requestId, { chatId, prompt })).completion;
+  }
+
+  private async begin(
+    openingLine?: string,
+    requestedId?: string,
+    options: VoiceStartOptions = {},
+  ): Promise<{ started: VoiceCallStarted; completion: Promise<VoiceCallSummary> }> {
     if (this.config.voice.transport !== "ringback" || !this.config.voice.launcher) {
       throw new VoiceUnavailableError(this.status().detail ?? "Voice calls are unavailable.");
     }
     const requestId = requestedId?.trim() || randomUUID();
     this.pruneIdempotency();
     const previous = this.idempotency.get(requestId);
-    if (previous) return { ...previous.result, duplicate: true };
+    if (previous) throw new VoiceBusyError("This voice event was already started.");
     if (this.activeChatId || this.activeRequestId) throw new VoiceBusyError("A voice call is already running.");
 
     this.activeRequestId = requestId;
     this.startedAt = this.deps.now();
     this.terminalError = null;
+    this.dialStarted = false;
     this.transition("preflighting", "Checking the Ringback engine before dialing.");
     try {
       await this.preflight();
@@ -195,26 +223,47 @@ export class VoiceCallCoordinator {
     }
 
     const line = (openingLine?.trim() || this.config.voice.openingLine).slice(0, 500);
-    const chat = (this.deps.createChat ?? (() => chatStore().createChat("Chiamata vocale")))();
+    const chat = options.chatId
+      ? { id: options.chatId }
+      : (this.deps.createChat ?? (() => chatStore().createChat("Chiamata vocale")))();
+    if (options.chatId && !chatStore().exists(options.chatId)) {
+      const error = new Error(`Chat not found: ${options.chatId}`);
+      this.failBeforeCall(error);
+      throw new VoiceUnavailableError(error.message);
+    }
     this.activeChatId = chat.id;
     this.transition("starting", "Ringback is ready; Steward is preparing the call.");
     this.audit({
-      actor: "user", eventType: "voice.call_requested", risk: "medium", summary: "Voice call requested",
-      chatId: chat.id, correlationId: requestId, payload: { transport: "ringback", openingLine: line, requestId },
+      actor: options.chatId ? "scheduler" : "user", eventType: "voice.call_requested", risk: "medium",
+      summary: options.chatId ? "Pre-authorized watch event requested a voice call" : "Voice call requested",
+      chatId: chat.id, correlationId: requestId,
+      payload: { transport: "ringback", requestId, ...(options.chatId ? { automatic: true } : { openingLine: line }) },
     });
 
     const started: VoiceCallStarted = { chatId: chat.id, requestId, transport: "ringback", state: "starting" };
     this.idempotency.set(requestId, { result: started, expiresAt: this.deps.now() + IDEMPOTENCY_TTL_MS });
-    void this.getRunner().runTurn(chat.id, ringbackCallPrompt(line)).then(async (result) => {
+    let complete!: (summary: VoiceCallSummary) => void;
+    const completion = new Promise<VoiceCallSummary>((resolve) => { complete = resolve; });
+    let completedSummary: VoiceCallSummary | undefined;
+    const runner = this.getRunner();
+    const turnPrompt = options.prompt ?? ringbackCallPrompt(line);
+    const turn = options.chatId && runner.runAutomaticTurn
+      ? runner.runAutomaticTurn(chat.id, turnPrompt)
+      : runner.runTurn(chat.id, turnPrompt);
+    void turn.then(async (result) => {
       if (!result.ok) throw new Error(result.error || "The voice agent turn failed.");
       if (this.terminalError) throw this.terminalError;
+      if (!this.dialStarted) throw new Error("The automatic voice turn completed without starting a call.");
       this.audit({
         actor: "host", eventType: "voice.call_completed", risk: "low", summary: "Voice call completed",
         chatId: chat.id, correlationId: requestId, ok: true,
         durationMs: this.callDurationMs(), payload: { transport: "ringback", requestId },
       });
-      this.finish(chat.id, requestId);
-      await this.onFinished?.(chat.id);
+      const summary = this.finish(chat.id, requestId);
+      completedSummary = summary;
+      if (!options.chatId) {
+        try { await this.onFinished?.(chat.id); } catch { /* completion callback is best-effort */ }
+      }
     }).catch(async (cause) => {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       const diagnostic = error instanceof VoiceCallFailedError ? error.diagnostic : undefined;
@@ -225,8 +274,11 @@ export class VoiceCallCoordinator {
         durationMs: this.callDurationMs(),
         payload: { transport: "ringback", requestId, error: error.message, ...(diagnostic ? { diagnostic } : {}) },
       });
-      this.finish(chat.id, requestId, error);
-      await this.onFinished?.(chat.id, error);
+      const summary = this.finish(chat.id, requestId, error);
+      completedSummary = summary;
+      if (!options.chatId) {
+        try { await this.onFinished?.(chat.id, error); } catch { /* completion callback is best-effort */ }
+      }
     }).finally(() => {
       if (this.activeChatId === chat.id) {
         this.activeChatId = null;
@@ -234,8 +286,9 @@ export class VoiceCallCoordinator {
         this.startedAt = null;
         this.transition("idle", this.lastCall?.ok ? "The last call completed." : "The last call failed.", !this.lastCall?.ok);
       }
+      if (completedSummary) complete(completedSummary);
     });
-    return started;
+    return { started, completion };
   }
 
   private async preflight(): Promise<void> {
@@ -269,7 +322,10 @@ export class VoiceCallCoordinator {
   private onAgentEvent: Emit = (event) => {
     const e = event as unknown as { type?: string; tool?: string; ok?: boolean; output?: unknown };
     if (e.type === "tool_call") {
-      if (e.tool === "mcp__voice__call_start") this.transition("ringing", "Calling the phone; waiting for an answer.");
+      if (e.tool === "mcp__voice__call_start") {
+        this.dialStarted = true;
+        this.transition("ringing", "Calling the phone; waiting for an answer.");
+      }
       else if (e.tool === "mcp__voice__converse" || e.tool === "mcp__voice__speak") this.transition("speaking", "Steward is speaking and waiting for the next reply.");
       else if (e.tool === "mcp__voice__listen") this.transition("listening", "Steward is listening.");
       else if (e.tool === "mcp__voice__call_end") this.transition("ending", "Steward is ending the call.");
@@ -299,18 +355,19 @@ export class VoiceCallCoordinator {
     this.startedAt = null;
   }
 
-  private finish(chatId: string, requestId: string, error?: Error): void {
+  private finish(chatId: string, requestId: string, error?: Error): VoiceCallSummary {
     const diagnostic = error instanceof VoiceCallFailedError ? error.diagnostic : undefined;
     const finishedAt = this.deps.now();
     const startedAt = this.startedAt ?? finishedAt;
     const durationMs = Math.max(0, finishedAt - startedAt);
-    this.lastCall = {
+    const summary: VoiceCallSummary = {
       chatId, requestId, startedAt, finishedAt, durationMs, ok: !error,
       ...(error ? { error: error.message } : {}),
       ...(diagnostic?.code ? { failureCode: diagnostic.code } : {}),
       ...(diagnostic?.sipStatus !== undefined ? { sipStatus: diagnostic.sipStatus } : {}),
       ...(diagnostic?.sipReason ? { sipReason: diagnostic.sipReason } : {}),
     };
+    this.lastCall = summary;
     try {
       const record: VoiceCallRecord = {
         ts: finishedAt, sessionId: chatId, transport: "ringback",
@@ -319,6 +376,7 @@ export class VoiceCallCoordinator {
       };
       (this.deps.usage ?? ((entry) => usageLedger().recordVoiceCall(entry)))(record);
     } catch { /* usage is best-effort */ }
+    return summary;
   }
 
   private callDurationMs(): number {

@@ -24,14 +24,14 @@ test("gateway provider accepts a dedicated usage action for automatic work", asy
   const { modelRegistry } = registerGatewayModel({
     baseUrl: "http://127.0.0.1:4000/v1", tier: "tier-5", apiKey: "x",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    usageService: "host", usageAction: "watch-notification",
+    usageService: "host", usageAction: "watch-agent-turn",
   });
   const model = modelRegistry.find("gateway", "tier-5");
   assert.ok(model);
   const auth = await modelRegistry.getApiKeyAndHeaders(model);
   assert.ok(auth.ok, auth.ok ? undefined : auth.error);
   assert.equal(auth.ok && auth.headers?.["x-usage-service"], "host");
-  assert.equal(auth.ok && auth.headers?.["x-usage-action"], "watch-notification");
+  assert.equal(auth.ok && auth.headers?.["x-usage-action"], "watch-agent-turn");
 });
 
 test("agent-runner no longer writes the legacy turns ledger", () => {

@@ -3,7 +3,7 @@
  *
  * It exercises the same ChatManager/tool path as the PWA, uses the real LLM
  * gateway and ViaggiaTreno MCP, then feeds deterministic train state changes
- * through the generic watch engine and LLM notification path.
+ * through the generic watch engine and persisted chat-agent path.
  */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,11 +78,20 @@ const simulated = await engine.create({
   ],
 });
 const pushes: any[] = [];
-const push = { sendAll: async (payload: any) => { pushes.push(payload); console.log(`PUSH: ${payload.body}`); } };
+const push = { sendAll: async (payload: any) => {
+  pushes.push(payload);
+  console.log(`PUSH: ${payload.body}`);
+  return { attempted: 1, delivered: 1, failed: 0, pruned: 0 };
+} };
 
 async function transition(next: any): Promise<void> {
   current = next;
-  await notificationModule.pollAndDeliverWatchEvents({ engine, runner, push: push as any });
+  await notificationModule.pollAndDeliverWatchEvents({
+    engine,
+    push: push as any,
+    runAgentTurn: (chatId: string, prompt: string) => runner.runAutomaticTurn(chatId, prompt),
+    runVoiceTurn: async () => { throw new Error("The read-only smoke watch must not call voice"); },
+  });
 }
 
 await transition({ ...current, platform: "6", scheduledPlatform: "6", platformStatus: "scheduled", lastUpdated: new Date().toISOString() });
@@ -92,7 +101,7 @@ await transition({ ...current, arrived: true, stops: current.stops.map((stop: an
 
 if (pushes.length !== 4) throw new Error(`Expected 4 simulated push notifications, got ${pushes.length}.`);
 if (watchStore.get(simulated.id)?.status !== "completed") throw new Error("The simulated watch did not complete at destination.");
-console.log(`\nSMOKE OK: 4 app-chat tools, 0 approvals, ${pushes.length} LLM-authored event notifications.`);
+console.log(`\nSMOKE OK: 4 app-chat tools, 0 approvals, ${pushes.length} chat-agent event notifications.`);
 await runner.close();
 watchStore.close();
 process.exit(0);

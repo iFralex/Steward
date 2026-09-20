@@ -122,6 +122,23 @@ Every unrelated write remains denied in a headless call: spoken confirmation
 cannot send mail, edit a calendar, or mutate files. Steward tells the user to
 approve those operations in the app.
 
+## Calls started by a watch
+
+A watch event resumes the persisted agent session of its originating chat. A
+normal `create_watch` remains read-only. When the user explicitly asks for a
+future call, the agent uses gated `create_agent_watch` with
+`authorizedTools: ["mcp__voice__call_start"]`; approving it grants exactly that
+future dialing capability for the watch.
+
+At the matching event the agent receives the structured event and resource
+reference, can refresh live facts with read-only tools such as `train_status`,
+then calls through the same `VoiceCallCoordinator`. The phone conversation,
+tool calls and transcript remain in the original chat, so follow-up questions
+such as the expected arrival time can be answered during the call. Unrelated
+writes remain denied. A failed or interrupted call falls back to Web Push, and
+the fallback is persisted before dialing so a host restart never redials the
+same event automatically.
+
 ## StreamCore seam
 
 `STEWARD_VOICE_TRANSPORT=streamcore` and `STEWARD_STREAMCORE_URL` already have a

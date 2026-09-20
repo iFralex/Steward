@@ -313,12 +313,14 @@ Background monitoring is intentionally domain-independent. The host-native
 set of semantic event rules; `stop_watch` stops it. Both are automatically
 allowed because they only observe or reduce background work. A source adapter
 turns snapshot changes into domain events, and matching events are placed in a
-durable SQLite queue. A stateless, tool-free gateway completion then writes a
-short accessible notification in the configured notification language; it
-uses optional domain guidance supplied by the adapter and never opens the Pi
-session file of the originating chat. The message is persisted directly in the
-chat and sent through Web Push. If the LLM repeatedly fails, a deterministic
-fallback notification is delivered.
+durable SQLite queue. The event resumes the persisted agent session of the
+originating chat, where the agent can use read-only tools to refresh facts.
+`create_agent_watch` additionally stores a narrow list of future tools
+explicitly authorized by the user and therefore requires the normal approval
+gate. Currently the only supported authorization is
+`mcp__voice__call_start`: it lets the resumed agent call through Ringback and
+continue the same conversation while retaining train tools and chat history.
+If generation or calling fails, a deterministic fallback push is delivered.
 
 The train adapter currently emits platform announcement/confirmation/change,
 departure, arrival, cancellation, delay change and per-stop arrival/departure
@@ -334,8 +336,8 @@ train-specific scheduler.
 Every LLM call the platform makes — the host's chat agent, mail-mirror's embeddings, mail-promoter's triage/distillation, calendar-mcp's embeddings, or anywhere else — goes through the shared `apps/llm-gateway` and is logged once per call into `packages/usage-ledger`. Callers attribute their own spend with `x-usage-service` / `x-usage-action` HTTP headers; a call that forgets to label itself is recorded as `unknown` rather than silently disappearing, and the Usage page calls that out explicitly so unlabeled spend never goes unnoticed.
 
 Non-interactive work is attributed separately from WebSocket chat. Quick Send
-uses `host / quick-send`, watch-event wording uses
-`host / watch-notification`, and Action Center distinguishes scans,
+uses `host / quick-send`, resumed watch turns use
+`host / watch-agent-turn`, and Action Center distinguishes scans,
 proposal revisions, flow indexing and flow retrieval. Non-LLM operations use
 the same tool ledger: watch polling/delivery, approval-preview lookups,
 planner-selected background reads and directly executed Action steps all record
@@ -536,7 +538,8 @@ sequenceDiagram
     participant Adapter as Source Adapter
     participant DB as watches.db
     participant Host as Host Delivery Loop
-    participant Composer as Stateless LLM Composer
+    participant Chat as Persisted Chat Agent
+    participant Voice as Ringback (when authorized)
     participant Push as Web Push
 
     User->>Agent: Notify me at these milestones
@@ -555,10 +558,15 @@ sequenceDiagram
         Engine->>DB: save current snapshot / terminal status
     end
     Host->>DB: load oldest pending events
-    Host->>Composer: user instruction + rule + structured event
-    Composer-->>Host: short accessible notification
-    Host->>DB: persist notification in originating chat and event row
-    Host->>Push: notification tagged with watch/event IDs
+    Host->>Chat: resume original session with structured event
+    Chat->>Chat: refresh facts with read-only tools when useful
+    alt call_start was pre-authorized
+        Chat->>Voice: call and converse in the same agent turn
+        Voice-->>Chat: spoken user follow-ups
+    else read-only watch
+        Chat-->>Host: short accessible response
+        Host->>Push: notification tagged with watch/event IDs
+    end
     Host->>DB: mark event delivered
 ```
 
@@ -570,23 +578,22 @@ chat was deleted, delivery creates a `Monitor automatici` chat rather than
 dropping the event. Delivery waits when that chat already has an interactive
 turn in flight, so an automatic prompt cannot be interleaved with a user turn.
 
-The notification prompt preserves the user's original instruction, identifies
-the matched rule and treats event fields as data rather than instructions. It
-forbids actions and tool calls and requests one spoken-friendly message of at
-most 180 characters in the configured notification language (`it`, otherwise
-`en`). The generic prompt contains no train policy: an adapter may attach
-localized titles and trusted domain guidance to its `DomainEvent`; the train
-adapter supplies the platform-confidence and last-update rules. The composer
-is a direct, stateless gateway completion attributed to
-`host / watch-notification`. It has no Pi session, transcript memory or tools,
-so it cannot concurrently open or mutate the originating chat's session file.
+The automatic prompt preserves the user's original instruction, identifies the
+matched rule and treats event fields as data rather than instructions. It is
+sent to the same persisted Pi session but is not rendered as a new user-authored
+message; assistant and tool messages are appended normally. A process-wide
+running-chat check defers the event while an interactive turn is active. The
+background policy is deny-by-default: normal watches get read-only tools, while
+an agent watch receives only the tool approved when it was created.
 
 The push body is capped at 240 characters. On generation failure the event
-remains pending; after two failed composition attempts, the third pass uses the
+remains pending; after two failed agent attempts, the third pass uses the
 adapter's deterministic `fallbackText`. If every registered push endpoint
 fails, the durable event is retried; its already composed notification text is
 stored in `watch_events.notification_text` and reused so the retry neither
-calls the LLM again nor duplicates the chat message. Per-send reports track
+calls the agent again nor duplicates the chat message. For voice events the
+fallback is persisted before dialing: a host crash can therefore cause a push
+on restart but never an automatic redial. Per-send reports track
 attempted, delivered, failed and pruned subscriptions. Delivery is complete
 when the chat copy exists and either no push endpoint is registered or at least
 one endpoint accepts the notification.
@@ -963,7 +970,7 @@ Every Pi tool definition is wrapped by the host before being exposed to the agen
 - `gate` — emit an approval request and wait;
 - `deny` — return a blocked result without asking.
 
-The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic watch creation and stopping are also allowed automatically because a watch can only observe a registered resource and enqueue notifications; it cannot perform a downstream write. Other write tools fall through to the gated default. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
+The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic read-only watch creation and stopping are automatic. `create_agent_watch` is gated because it can grant one narrowly validated tool to a future event turn; currently only Ringback dialing is accepted. Other write tools fall through to the gated default. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
 
 ### Approval Lifecycle
 
@@ -1111,7 +1118,7 @@ four source-neutral contracts:
 
 | Contract | Required meaning |
 |---|---|
-| `WatchDefinition` | `source`, opaque `resourceRef`, one or more rules, original user `instruction`, originating `chatId`, and optional expiry. |
+| `WatchDefinition` | `source`, opaque `resourceRef`, rules, original user `instruction`, originating `chatId`, optional expiry, and optional gated `authorizedTools`. |
 | `WatchRule` | Unique rule `id`, exact semantic event name, optional equality filters in `where`, and optional `once`. |
 | `DomainEvent` | Stable resource-relative `key`, semantic `type`, timestamp, structured `data`, previous/current state, deterministic `fallbackText`, and optional localized notification title/domain guidance. |
 | `WatchAdapter` | A source name plus `snapshot`, `events`, `defaultExpiry` and `isTerminal` implementations. |
@@ -1123,6 +1130,7 @@ A representative train watch is data, not new scheduler code:
   "source": "train",
   "resourceRef": "vt1_...",
   "instruction": "Avvisami in modo breve quando devo prepararmi e scendere",
+  "authorizedTools": ["mcp__voice__call_start"],
   "rules": [
     { "id": "departed", "event": "train.departed", "once": true },
     {
@@ -1152,7 +1160,7 @@ The SQLite database uses WAL mode and two tables:
 
 | Table | Important columns | Role |
 |---|---|---|
-| `watches` | `source`, `resource_ref`, JSON `rules`, `instruction`, `chat_id`, `status`, JSON `snapshot`, expiry/check/error timestamps | Authoritative lifecycle and last observed state for each monitor. |
+| `watches` | `source`, `resource_ref`, JSON `rules`, `instruction`, `chat_id`, JSON `authorized_tools`, `status`, JSON `snapshot`, expiry/check/error timestamps | Authoritative lifecycle, scoped authority and last observed state. |
 | `watch_events` | unique `event_key`, `watch_id`, `rule_id`, JSON rule/event, composed notification text, `status`, `attempts`, delivery/error timestamps | Durable queue, retry payload and delivery/deduplication history. |
 
 The database-level event key is
@@ -1471,7 +1479,7 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 | Path | Purpose |
 |---|---|
 | [apps/web](apps/web/) | React + Vite + PWA UI. Provides chat, chat list, mobile layout, Action Center with persistent filters and visible/total diagnostics, approval/question cards, tool cards, rich cards, file uploads/chips, audio recording, Usage page, Audit page, System page, phone pairing, notification controls and service worker. |
-| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket sessions, returns structured headless-turn results, runs Pi agent sessions and stateless watch notification completions, loads MCP tools, applies the tool policy, stores chats, records usage, handles approvals/questions, serves tokenized files, registers uploaded/local files, manages auth/pairing, push, speech transcription, system status and the audit ledger. |
+| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket sessions, returns structured headless-turn results, runs Pi sessions including durable watch-event continuations, loads MCP tools, applies the tool policy, stores chats, records usage, handles approvals/questions, serves tokenized files, registers uploaded/local files, manages auth/pairing, push, speech transcription, system status and the audit ledger. |
 | [packages/protocol](packages/protocol/) | Dependency-free event contract between host and clients. Keeps chat, approvals, questions, tool calls, files and Action Center state portable across future clients. |
 | [packages/mcp-bridge](packages/mcp-bridge/) | Converts stdio MCP servers into Pi custom tools named like `mcp__server__tool`. |
 | [apps/llm-gateway](apps/llm-gateway/) | Local OpenAI-compatible gateway on `:4000`. Provides `tier-1` through `tier-6`, `local-embed`, `/rates`, `/health`, `/v1/models`, chat completions and embeddings. Routes to Ollama and DeepSeek by default. |
@@ -1768,7 +1776,7 @@ The smoke flow creates isolated temporary chat/watch/audit/usage databases. It
 asks the live agent to resolve a dictated station, find and refresh a real
 train, create one multi-rule watch and stop it. It then feeds deterministic
 platform/departure/preceding-stop/destination transitions through the real
-watch delivery path and requires four LLM-authored pushes with zero approval
+watch delivery path and requires four chat-agent-authored pushes with zero approval
 requests. Because it uses external live services and current railway data, it
 is manual rather than part of deterministic CI.
 

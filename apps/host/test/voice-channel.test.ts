@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+process.env.CHATS_DIR = mkdtempSync(join(tmpdir(), "voice-channel-chats-"));
 import { loadVoiceChannelConfig } from "../src/config.ts";
 import { ringbackCallPrompt, VoiceBusyError, VoiceCallCoordinator } from "../src/core/voice-channel.ts";
+import { chatStore } from "../src/core/chat-store.ts";
 
 test("voice config is disabled unless explicitly selected", () => {
   assert.deepEqual(loadVoiceChannelConfig({}), { transport: "disabled" });
@@ -122,6 +127,35 @@ test("a resolved TurnResult with ok false marks the call as failed", async () =>
   assert.equal(coordinator.status().state, "idle");
   assert.equal(coordinator.status().lastCall?.ok, false);
   assert.equal(coordinator.status().retryable, true);
+});
+
+test("a pre-authorized watch event continues the originating chat and waits for the call", async () => {
+  const chat = chatStore().createChat("Treno per Bologna");
+  let automaticPrompt = "";
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), undefined, {
+    bridge: async () => fakeBridge(),
+    createRunner: (emit) => ({
+      runTurn: async () => { throw new Error("watch events must use the automatic turn path"); },
+      runAutomaticTurn: async (chatId, prompt) => {
+        assert.equal(chatId, chat.id);
+        automaticPrompt = prompt;
+        emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+        emit({ type: "tool_result", tool: "mcp__voice__call_start", ok: true, output: 'User replied: "A che ora arrivo?"' } as any);
+        return { ok: true, messageId: "answer", text: "Chiamata conclusa" };
+      },
+      abort: async () => {},
+    }),
+    audit: (() => {}) as any,
+    usage: () => {},
+    sleep: async () => {},
+  });
+
+  const summary = await coordinator.runWatchEvent(chat.id, "Evento treno strutturato", "watch-event-1");
+
+  assert.equal(summary.chatId, chat.id);
+  assert.equal(summary.ok, true);
+  assert.equal(automaticPrompt, "Evento treno strutturato");
+  assert.equal(coordinator.status().state, "idle");
 });
 
 test("preflight retries once but never creates a chat when Ringback stays unhealthy", async () => {
