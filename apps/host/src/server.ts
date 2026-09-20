@@ -916,6 +916,11 @@ export function startServer(config: HostConfig): WebSocketServer {
 
     // Per-action temporary "scratch" chats (open-in-chat / execute go here).
     const actionChats = new Map<number, string>();
+    // Keep the Action Center view selected by this client. Mutations such as
+    // marking an item read used to emit the service's default (unfiltered)
+    // snapshot, which reset filters as soon as an Action was opened.
+    let actionCenterView: Parameters<typeof loadActionCenterState>[0] = {};
+    const loadCurrentActionCenterView = () => loadActionCenterState(actionCenterView);
     // Single-flight guard: a double-click must not run an action's steps (e.g. send_email) twice.
     const executingActions = new Set<number>();
     const ensureActionChat = (action: ActionCenterItem): string => {
@@ -1075,10 +1080,15 @@ export function startServer(config: HostConfig): WebSocketServer {
           break;
         }
         case "action_center_refresh":
+          actionCenterView = {
+            includeDone: msg.includeDone,
+            hideExpired: msg.hideExpired,
+            limit: msg.limit,
+          };
           emit({
             type: "action_center_state",
             sessionId: session.id,
-            state: loadActionCenterState({ includeDone: msg.includeDone, hideExpired: msg.hideExpired, limit: msg.limit }),
+            state: loadCurrentActionCenterView(),
           });
           break;
         case "action_center_mark":
@@ -1091,7 +1101,8 @@ export function startServer(config: HostConfig): WebSocketServer {
             actionId: msg.id,
             payload: { status: msg.status },
           });
-          emit({ type: "action_center_state", sessionId: session.id, state: markAction(msg.id, msg.status) });
+          markAction(msg.id, msg.status);
+          emit({ type: "action_center_state", sessionId: session.id, state: loadCurrentActionCenterView() });
           break;
         case "action_open_in_chat": {
           const action = getActionItem(msg.id);
@@ -1132,7 +1143,7 @@ export function startServer(config: HostConfig): WebSocketServer {
             if (chatId) selectChat(chatId);
             emit({ type: "status", sessionId: session.id, ...(chatId ? { chatId } : {}), state: "running" });
             try {
-              const state = await executeActionProposal({
+              await executeActionProposal({
                 config,
                 session,
                 emit,
@@ -1151,7 +1162,7 @@ export function startServer(config: HostConfig): WebSocketServer {
                 ok: true,
                 payload: { proposalId: msg.proposalId },
               });
-              emit({ type: "action_center_state", sessionId: session.id, state });
+              emit({ type: "action_center_state", sessionId: session.id, state: loadCurrentActionCenterView() });
             } catch (err) {
               if (err instanceof ActionRevisionRequestedError) {
                 recordAudit({
@@ -1199,7 +1210,7 @@ export function startServer(config: HostConfig): WebSocketServer {
           void (async () => {
             emit({ type: "status", sessionId: session.id, state: "running" });
             try {
-              const state = await reviseActionProposal({
+              await reviseActionProposal({
                 config,
                 actionId: msg.id,
                 proposalId: msg.proposalId,
@@ -1215,7 +1226,7 @@ export function startServer(config: HostConfig): WebSocketServer {
                 ok: true,
                 payload: { proposalId: msg.proposalId },
               });
-              emit({ type: "action_center_state", sessionId: session.id, state });
+              emit({ type: "action_center_state", sessionId: session.id, state: loadCurrentActionCenterView() });
             } catch (err) {
               recordAudit({
                 actor: "host",
