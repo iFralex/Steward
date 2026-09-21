@@ -1,0 +1,72 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -967,14 +967,43 @@ class CallSession:
+                 "unsaid": unsaid, "user": user_text, "ended": self.disconnected}
+ 
+-    def hangup(self):
++    def hangup(self, timeout: float = 4.0):
++        """End the SIP dialog and confirm the remote teardown.
++
++        pjsua sends BYE asynchronously. Merely waiting a fixed half-second and
++        clearing local state can leave the remote client showing a failed call,
++        while the MCP reports success. Keep the Call alive until its
++        DISCONNECTED callback, then use the endpoint-wide fallback once.
++        """
+         self._reg()
++        requested = self.call is not None
++        error = ""
+         try:
+             if self.call:
+                 self.call.hangup(pj.CallOpParam(True))
+-                time.sleep(0.5)
+-        except Exception:
+-            pass
++        except Exception as exc:
++            error = str(exc)
++            _dlog("hangup request failed: %s" % error)
++        deadline = time.time() + timeout
++        while requested and not self.disconnected and time.time() < deadline:
++            time.sleep(0.05)
++        forced = requested and not self.disconnected
++        if forced:
++            try:
++                self.ep.hangupAllCalls()
++            except Exception as exc:
++                error = error or str(exc)
++                _dlog("hangupAllCalls fallback failed: %s" % exc)
++            deadline = time.time() + 2.0
++            while not self.disconnected and time.time() < deadline:
++                time.sleep(0.05)
++        confirmed = not requested or self.disconnected
+         self.connected = False
++        self.aud = None
++        result = {
++            "requested": requested, "confirmed": confirmed, "forced": forced,
++            "sipStatus": self.last_status_code, "sipReason": self.last_reason,
++            "sipState": self.last_state_text, "error": error,
++        }
++        _dlog("hangup_confirmed=%s forced=%s status=%s reason=%r error=%r"
++              % (confirmed, forced, self.last_status_code, self.last_reason, error))
++        return result
+ 
+     def shutdown(self):
+         import gc
+diff --git a/voice_mcp.py b/voice_mcp.py
+--- a/voice_mcp.py
++++ b/voice_mcp.py
+@@ -229,8 +229,12 @@ def call_end(text: str = "") -> str:
+         if s.disconnected:
+             return "[CALL ENDED] — the user had already hung up; closing line not delivered"
+         time.sleep(1.0)          # let the final words fully land before hanging up
+-    s.hangup()
+-    return "spoke final line and hung up" if text else "call ended"
++    outcome = s.hangup()
++    if not outcome.get("confirmed"):
++        raise RuntimeError("SIP hangup was not confirmed by the remote dialog: "
++                           + json.dumps(outcome))
++    suffix = " (forced teardown confirmed)" if outcome.get("forced") else ""
++    return ("spoke final line and hung up" if text else "call ended") + suffix
+ 
+ 
+ @mcp.tool()

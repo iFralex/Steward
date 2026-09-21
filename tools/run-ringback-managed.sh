@@ -103,6 +103,12 @@ esac
 load_environment
 check_runtime
 mkdir -p "$RUNTIME_DIR"
+if [ -n "${VOICE_LOG_FILE:-}" ]; then
+  mkdir -p "$(dirname "$VOICE_LOG_FILE")"
+  if [ -f "$VOICE_LOG_FILE" ] && [ "$(stat -f %z "$VOICE_LOG_FILE" 2>/dev/null || echo 0)" -gt 5242880 ]; then
+    mv "$VOICE_LOG_FILE" "$VOICE_LOG_FILE.previous"
+  fi
+fi
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   running_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [ -n "$running_pid" ] && kill -0 "$running_pid" 2>/dev/null; then

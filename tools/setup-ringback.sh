@@ -53,6 +53,9 @@ fi
 if ! grep -q 'dialDurationMs' "$RINGBACK_DIR/voice_mcp.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-diagnostics.patch"
 fi
+if ! grep -q 'hangup_confirmed' "$RINGBACK_DIR/voice_agent.py"; then
+  git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-hangup.patch"
+fi
 
 # Ringback compiles a Python extension against Homebrew libraries. Always use
 # the native Apple Silicon toolchain when it is available; /usr/local may still
@@ -176,6 +179,11 @@ else
   if ! grep -q '^export VOICE_ANSWER_TIMEOUT=' "$VOICE_ENV"; then
     printf 'export VOICE_ANSWER_TIMEOUT="60"\n' >> "$VOICE_ENV"
   fi
+  SIP_LOG_TMP="$(mktemp "$RINGBACK_DIR/voice.env.sip-log.XXXXXX")"
+  awk '!/^export VOICE_LOG_LEVEL=/ && !/^export VOICE_LOG_FILE=/' "$VOICE_ENV" > "$SIP_LOG_TMP"
+  printf 'export VOICE_LOG_LEVEL="4"\n' >> "$SIP_LOG_TMP"
+  printf 'export VOICE_LOG_FILE="$HOME/Library/Logs/Steward/ringback-sip.log"\n' >> "$SIP_LOG_TMP"
+  mv "$SIP_LOG_TMP" "$VOICE_ENV"
   install -m 755 "$STEWARD_ROOT/tools/run-ringback-managed.sh" "$RINGBACK_DIR/steward-run-voice-mcp.sh"
   install -m 644 "$STEWARD_ROOT/tools/ringback-runtime.json" "$RINGBACK_DIR/steward-runtime.json"
   LAUNCHER="$RINGBACK_DIR/steward-run-voice-mcp.sh"
