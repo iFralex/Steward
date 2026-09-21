@@ -245,7 +245,7 @@ export async function scheduleWatchContinuation(
     ? pending.event.data.originResourceRef
     : pending.resourceRef;
   const dueAt = new Date(dueAtMs).toISOString();
-  const resourceRef = createTimeResourceRef(dueAt, "UTC", {
+  const resourceRef = createTimeResourceRef(dueAt, {
     eventData: pending.event.data,
     currentState: pending.event.currentState,
     fallbackText: pending.event.fallbackText,

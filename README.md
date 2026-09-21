@@ -335,10 +335,9 @@ delivered.
 
 The `time` adapter handles one-shot `time.reached` events for requests such as
 “call me today at 09:00”. Relative requests use `afterMinutes`. Absolute input
-contains both an ISO 8601 instant with an explicit UTC offset and the matching
-IANA zone (for example `Europe/Rome`), so
-daylight-saving transitions cannot silently shift the requested wall-clock
-time. A rule may also declare a bounded continuation: selected structured
+uses the same convention as Calendar: an RFC 3339 instant with an explicit UTC
+offset, normalized to UTC internally and rendered in the Mac's local timezone
+with the date-specific offset. A rule may also declare a bounded continuation: selected structured
 action outcomes schedule a durable child time watch after `afterMinutes`, up to
 `maxAttempts`. The child inherits the exact grants and event context; it cannot
 change tools or widen arguments.

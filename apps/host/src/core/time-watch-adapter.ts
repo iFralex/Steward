@@ -13,11 +13,11 @@ interface TimeContext {
 
 interface TimeResource {
   at: string;
-  timeZone: string;
   context?: TimeContext;
 }
 
 interface TimeSnapshot extends TimeResource {
+  timeZone: string;
   targetTimeMs: number;
   nowMs: number;
 }
@@ -28,7 +28,11 @@ export class TimeWatchAdapter implements WatchAdapter {
 
   async snapshot(resourceRef: string): Promise<TimeSnapshot> {
     const resource = parseTimeResourceRef(resourceRef);
-    return { ...resource, targetTimeMs: Date.parse(resource.at), nowMs: this.now() };
+    return {
+      ...resource,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      targetTimeMs: Date.parse(resource.at), nowMs: this.now(),
+    };
   }
 
   defaultExpiry(value: unknown): number {
@@ -70,7 +74,7 @@ export class TimeWatchAdapter implements WatchAdapter {
       type: "time.reached",
       timestamp: current.nowMs,
       data: {
-        ...(context?.eventData ?? {}), scheduledAt: current.at, timeZone: current.timeZone,
+        ...(context?.eventData ?? {}), scheduledAt: toLocalRfc3339(current.at), timeZone: current.timeZone,
         ...(context?.originResourceRef ? { originResourceRef: context.originResourceRef } : {}),
         ...(context?.originEventType ? { originEventType: context.originEventType } : {}),
         ...(context?.outcome ? { previousOutcome: context.outcome } : {}),
@@ -83,54 +87,40 @@ export class TimeWatchAdapter implements WatchAdapter {
   }
 }
 
-export function createTimeResourceRef(at: string, timeZone: string, context?: TimeContext): string {
-  validateTimeResource({ at, timeZone, ...(context ? { context } : {}) });
-  return JSON.stringify({ at, timeZone, ...(context ? { context } : {}) });
+export function createTimeResourceRef(at: string, context?: TimeContext): string {
+  const normalizedAt = normalizeInstant(at);
+  return JSON.stringify({ at: normalizedAt, ...(context ? { context } : {}) });
 }
 
 export function parseTimeResourceRef(value: string): TimeResource {
   let parsed: unknown;
-  try { parsed = JSON.parse(value); } catch { throw new Error("A time resourceRef must be generated from at and timeZone"); }
+  try { parsed = JSON.parse(value); } catch { throw new Error("A time resourceRef must be generated from at"); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid time resourceRef");
   const row = parsed as Record<string, unknown>;
-  const resource = { at: row.at, timeZone: row.timeZone, ...(row.context ? { context: row.context } : {}) } as TimeResource;
-  validateTimeResource(resource);
+  const resource = { at: normalizeInstant(row.at), ...(row.context ? { context: row.context } : {}) } as TimeResource;
   return resource;
 }
 
-function validateTimeResource(resource: TimeResource): void {
-  if (typeof resource.at !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(resource.at)) {
+function normalizeInstant(value: unknown): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
     throw new Error("at must be an ISO 8601 date-time with an explicit UTC offset");
   }
-  const target = Date.parse(resource.at);
+  const target = Date.parse(value);
   if (!Number.isFinite(target)) throw new Error("at must be a valid ISO 8601 date-time");
-  if (typeof resource.timeZone !== "string" || !resource.timeZone.trim()) throw new Error("timeZone is required");
-  let actualOffset: number;
-  try { actualOffset = zoneOffsetMinutes(target, resource.timeZone); }
-  catch { throw new Error(`Invalid IANA time zone: ${resource.timeZone}`); }
-  const declaredOffset = isoOffsetMinutes(resource.at);
-  if (declaredOffset !== actualOffset) {
-    throw new Error(`The UTC offset in at does not match ${resource.timeZone} at that date`);
-  }
+  return new Date(target).toISOString();
 }
 
-function isoOffsetMinutes(value: string): number {
-  if (/Z$/i.test(value)) return 0;
-  const match = value.match(/([+-])(\d{2}):(\d{2})$/);
-  if (!match) throw new Error("Missing UTC offset");
-  const minutes = Number(match[2]) * 60 + Number(match[3]);
-  return match[1] === "-" ? -minutes : minutes;
-}
-
-function zoneOffsetMinutes(timestamp: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
-  }).formatToParts(new Date(timestamp));
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const representedAsUtc = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day),
-    Number(values.hour), Number(values.minute), Number(values.second));
-  return Math.round((representedAsUtc - Math.trunc(timestamp / 1_000) * 1_000) / 60_000);
+function toLocalRfc3339(iso: string): string {
+  const date = new Date(iso);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const eastOfUtcMinutes = -date.getTimezoneOffset();
+  const sign = eastOfUtcMinutes >= 0 ? "+" : "-";
+  const offset = Math.abs(eastOfUtcMinutes);
+  return [
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+    `${sign}${pad(Math.floor(offset / 60))}:${pad(offset % 60)}`,
+  ].join("");
 }
 
 function timeSnapshot(value: unknown): TimeSnapshot {

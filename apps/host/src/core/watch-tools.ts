@@ -42,7 +42,7 @@ function createWatchTool(chatId: string, agentWatch: boolean): ToolDefinition {
 
 function watchDomainDescription(): string {
   return (
-      "Supported sources are 'train' and 'time'. For source='time', use event='time.reached' and pass exactly one of afterMinutes, or at plus timeZone. Absolute at values must be ISO 8601 instants with an explicit UTC offset and a matching IANA timeZone. " +
+      `Supported sources are 'train' and 'time'. For source='time', use event='time.reached' and pass exactly one of afterMinutes or at. Absolute at values must be RFC 3339 instants with an explicit UTC offset; they are normalized internally and user-facing times follow this Mac's ${Intl.DateTimeFormat().resolvedOptions().timeZone} timezone with the date-specific offset. ` +
       "Train events: train.platform_announced, train.platform_confirmed, train.platform_changed, train.departed, train.stop_arrived, train.stop_departed, train.delay_changed, train.eta_changed, train.cancelled, train.arrived. " +
       "If a scheduled-only platform is already present, watch train.platform_confirmed and train.platform_changed rather than platform_announced. " +
       "For stop events, where.positionRelativeToDestination=-1 means the stop immediately before the user's destination and 0 means the destination. A named stop must use train.stop_arrived/train.stop_departed with where.station or where.stationId; train.arrived always means the current trainRef destination. For another downstream station on the same physical run, create a separate watcher on the same trainRef with a named-stop rule. Use once=true for one-shot milestones."
@@ -56,9 +56,8 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
       properties: {
         source: { type: "string", enum: ["train", "time"], description: "Watch adapter name." },
         resourceRef: { type: "string", description: "For trains, the opaque trainRef from find_next_train. Omit for time watches." },
-        at: { type: "string", description: "For time watches, ISO 8601 date-time with explicit UTC offset, e.g. 2026-09-21T09:00:00+02:00." },
-        timeZone: { type: "string", description: "For time watches, IANA zone matching the offset in at, e.g. Europe/Rome." },
-        afterMinutes: { type: "number", exclusiveMinimum: 0, maximum: 525600, description: "For a relative time watch, minutes from now. Mutually exclusive with at/timeZone." },
+        at: { type: "string", description: "For time watches, RFC 3339 date-time with explicit UTC offset, e.g. 2026-09-21T09:00:00+02:00. Uses the same instant convention as Calendar." },
+        afterMinutes: { type: "number", exclusiveMinimum: 0, maximum: 525600, description: "For a relative time watch, minutes from now. Mutually exclusive with at." },
         rules: { type: "array", items: { type: "object", properties: {
           id: { type: "string", description: "Unique short id within this watch." },
           event: { type: "string", description: "Domain event name." },
@@ -124,16 +123,16 @@ function required(params: Record<string, unknown>, key: string): string {
 }
 function timeResourceRef(params: Record<string, unknown>): string {
   const hasAfter = params.afterMinutes !== undefined;
-  const hasAbsolute = params.at !== undefined || params.timeZone !== undefined;
-  if (hasAfter === hasAbsolute) throw new Error("A time watch requires exactly one of afterMinutes, or at plus timeZone");
+  const hasAbsolute = params.at !== undefined;
+  if (hasAfter === hasAbsolute) throw new Error("A time watch requires exactly one of afterMinutes or at");
   if (hasAfter) {
     const minutes = params.afterMinutes;
     if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0 || minutes > 525_600) {
       throw new Error("afterMinutes must be greater than 0 and no more than 525600");
     }
-    return createTimeResourceRef(new Date(Date.now() + minutes * 60_000).toISOString(), "UTC");
+    return createTimeResourceRef(new Date(Date.now() + minutes * 60_000).toISOString());
   }
-  return createTimeResourceRef(required(params, "at"), required(params, "timeZone"));
+  return createTimeResourceRef(required(params, "at"));
 }
 function parseRules(value: unknown, allowGrants: boolean): WatchRule[] {
   if (!Array.isArray(value)) throw new Error("rules must be an array");
