@@ -1,0 +1,218 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -131,6 +131,10 @@ DEBUG_KEEP_WAV = os.environ.get("VOICE_DEBUG_KEEP_WAV", "0").strip().lower() in ("1", "true", "yes")
+ DEBUG_WAV_DIR = os.environ.get("VOICE_DEBUG_WAV_DIR",
+                                os.path.join(tempfile.gettempdir(), "ringback-debug"))
++# Two consecutive unanswered listen windows already end Steward's conversational
++# loop. Promote that condition to a structured media failure when SIP still says
++# CONFIRMED: a relay can keep this leg alive after the handset leg has vanished.
++REMOTE_SILENCE_LIMIT = int(os.environ.get("VOICE_REMOTE_SILENCE_LIMIT", "2"))
+ 
+ 
+ def _dlog(msg: str) -> None:
+@@ -582,6 +586,7 @@ class _Call(pj.Call):
+             if (mi.type == pj.PJMEDIA_TYPE_AUDIO
+                     and mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE):
+                 self.session.aud = self.getAudioMedia(mi.index)
++                self.session.media_index = mi.index
+ 
+ 
+ class CallSession:
+@@ -590,12 +595,15 @@ class CallSession:
+         self.acc = None
+         self.call = None
+         self.aud = None
++        self.media_index = None
+         self.connected = False
+         self.disconnected = False
+         self.last_state = None
+         self.last_state_text = ""
+         self.last_status_code = 0
+         self.last_reason = ""
++        self.consecutive_silence = 0
++        self.last_listen_health = {}
+         self.noise_floor = 0.0  # ambient RMS measured at call connect (see place_call)
+         self.half_duplex = HALF_DUPLEX  # flips on if speaker echo is detected mid-call
+         self.log = []          # unified conversation timeline (claude + user turns)
+@@ -623,11 +631,46 @@ class CallSession:
+                 if (mi.type == pj.PJMEDIA_TYPE_AUDIO
+                         and mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE):
+                     self.aud = self.call.getAudioMedia(mi.index)
++                    self.media_index = mi.index
+                     return self.aud
+         except Exception:
+             pass
+         return self.aud
++
++    def media_health(self) -> dict:
++        """Snapshot both application liveness and RTP counters.
++
++        RTP counters alone cannot prove handset reachability when a SIP relay
++        terminates media, but they make the failure attributable after the fact.
++        """
++        health = {
++            "connected": self.connected,
++            "disconnected": self.disconnected,
++            "consecutiveSilence": self.consecutive_silence,
++            "silenceLimit": REMOTE_SILENCE_LIMIT,
++            "lastListen": self.last_listen_health,
++        }
++        try:
++            if self.call is not None and self.media_index is not None:
++                stat = self.call.getStreamStat(self.media_index).rtcp
++                health["rtp"] = {
++                    "rxPackets": int(stat.rxStat.pkt),
++                    "rxBytes": int(stat.rxStat.bytes),
++                    "rxLost": int(stat.rxStat.loss),
++                    "txPackets": int(stat.txStat.pkt),
++                    "txBytes": int(stat.txStat.bytes),
++                    "txLost": int(stat.txStat.loss),
++                    "rttMeanUsec": int(stat.rttUsec.mean),
++                }
++        except Exception as exc:
++            health["rtpError"] = str(exc)
++        return health
++
++    def remote_media_stalled(self) -> bool:
++        return (self.connected and not self.disconnected
++                and REMOTE_SILENCE_LIMIT > 0
++                and self.consecutive_silence >= REMOTE_SILENCE_LIMIT)
+ 
+     def _measure_rms(self, duration: float = 0.6) -> float:
+         """Sample ambient audio (right after answer, before anyone speaks) to learn
+@@ -737,8 +780,11 @@ class CallSession:
+         self.last_state_text = ""
+         self.last_status_code = 0
+         self.last_reason = ""
++        self.consecutive_silence = 0
++        self.last_listen_health = {}
+         self.half_duplex = HALF_DUPLEX   # re-evaluate echo per call (unless forced on)
+         self.aud = None
++        self.media_index = None
+         if self.call is not None:        # clear any previous call object
+             self.call = None
+             gc.collect()
+@@ -827,6 +873,18 @@ class CallSession:
+             _rm(snap)
+         result = final or text
+         _listen_summary(st, wav_bytes, result)
++        self.last_listen_health = {
++            "exit": st.get("exit", "?"),
++            "durationSec": round(float(st.get("dur", 0.0)), 2),
++            "rmsMax": round(float(st.get("rms_max", 0.0)), 1),
++            "threshold": round(float(st.get("thresh", 0.0)), 1),
++            "voicedPolls": int(st.get("voiced_polls", 0)),
++            "polls": int(st.get("polls", 0)),
++            "wavBytes": int(wav_bytes),
++            "words": len(result.split()),
++        }
++        self.consecutive_silence = 0 if result else self.consecutive_silence + 1
++        _dlog("media_health=%s" % json.dumps(self.media_health(), separators=(",", ":")))
+         if not result and DEBUG_KEEP_WAV:        # keep the audio of a silent turn for replay
+             try:
+                 os.makedirs(DEBUG_WAV_DIR, exist_ok=True)
+diff --git a/voice_mcp.py b/voice_mcp.py
+--- a/voice_mcp.py
++++ b/voice_mcp.py
+@@ -9,6 +9,7 @@ Launched via run_voice_mcp.sh (macOS) or run_voice_mcp.py (cross-platform), which set
+ PYTHONPATH + the OS dynamic-linker path so `import voice_agent` (pjsua2) resolves.
+ """
++import atexit
+ import json
+ import os
+ import time
+@@ -17,6 +18,19 @@ import voice_agent
+ 
+ mcp = FastMCP("ringback-voice")
+ _session = None
++
++
++def _shutdown_session():
++    global _session
++    if _session is None:
++        return
++    try:
++        _session.shutdown()
++    finally:
++        _session = None
++
++
++atexit.register(_shutdown_session)
+ 
+ 
+ def _get():
+@@ -34,10 +34,25 @@ def _listen_result(s) -> str:
+     text = s.listen()
+     if s.disconnected:
+         return "[CALL ENDED]"
++    if not text and s.remote_media_stalled():
++        return _media_stalled_result(s)
+     return text or "[SILENCE]"
+ 
+ 
+-def _format_turn(r: dict) -> str:
++def _media_stalled_result(s) -> str:
++    payload = {
++        "code": "media_stalled",
++        "message": "The phone stopped returning usable audio although the SIP call still appeared connected.",
++        "retryable": True,
++        "sipStatus": int(getattr(s, "last_status_code", 0) or 0),
++        "sipReason": str(getattr(s, "last_reason", "") or ""),
++        "sipState": str(getattr(s, "last_state_text", "") or ""),
++        "diagnostics": s.media_health(),
++    }
++    # Do not leave a relay-owned zombie dialog alive. Capture diagnostics first,
++    # then send BYE and report whether the remote dialog acknowledged teardown.
++    payload["teardown"] = s.hangup()
++    return "[CALL FAILED] " + json.dumps(payload, separators=(",", ":"))
++
++
++def _format_turn(r: dict, s=None) -> str:
+     """Turn a speak_interruptible() result into a clear instruction for the model."""
+     if not r.get("ok"):
+         return "[CALL ENDED]" if r.get("ended") else "[NO ACTIVE CALL]"
+@@ -53,6 +68,8 @@ def _format_turn(r: dict) -> str:
+     if r.get("ended"):
+         return (f'User replied: "{r["user"]}" then the call ENDED.'
+                 if r["user"] else "[CALL ENDED]")
++    if not r["user"] and s is not None and s.remote_media_stalled():
++        return _media_stalled_result(s)
+     return f'User replied: "{r["user"]}"' if r["user"] else "[SILENCE] — user said nothing; you may prompt again."
+ 
+ 
+@@ -117,7 +134,7 @@ def call_start(opening_line: str) -> str:
+         # before returning so a retry can never overlap a late first attempt.
+         s.hangup()
+         return "[CALL FAILED] " + json.dumps(payload)
+-    return _format_turn(s.speak_interruptible(opening_line))
++    return _format_turn(s.speak_interruptible(opening_line), s)
+ 
+ 
+ @mcp.tool()
+@@ -144,7 +161,7 @@ def converse(text: str) -> str:
+     s = _get()
+     if not s.connected:
+         return "[NO ACTIVE CALL] — call call_start first"
+-    return _format_turn(s.speak_interruptible(text))
++    return _format_turn(s.speak_interruptible(text), s)
+ 
+ 
+ @mcp.tool()
+@@ -211,6 +228,8 @@ def listen() -> str:
+     text = s.listen()
+     if s.disconnected:
+         return "[CALL ENDED]"
++    if not text and s.remote_media_stalled():
++        return _media_stalled_result(s)
+     return text or "[SILENCE]"
+ 
+ 
+@@ -252,6 +271,7 @@ def call_status() -> str:
+             "ready": True, "phase": phase, "connected": s.connected,
+             "disconnected": s.disconnected,
+             "remote_reachability": "unknown_until_dial",
++            "media": s.media_health(),
+         })
+     except Exception as exc:
+         return json.dumps({"ready": False, "phase": "failed", "error": str(exc)})

@@ -50,6 +50,8 @@ interface VoiceMessages {
     arguments: (value: string) => string;
     preview: (value: string) => string;
     watchSummary: (details: { instruction: string; when: string; actions: string; continuation?: string }) => string;
+    watchAction: (tool: string) => string;
+    watchContinuation: (details: { outcomes: string[]; afterMinutes: number; maxAttempts: number }) => string;
     instruction: string;
     notUnderstood: string;
     readingStatus: (tool: string) => string;
@@ -105,7 +107,19 @@ const MESSAGES = {
       arguments: (value) => `Arguments: ${value}.`,
       preview: (value) => `Preview: ${value}.`,
       watchSummary: ({ instruction, when, actions, continuation }) =>
-        `Create a watcher: ${instruction}. Time: ${when}. Authorized actions: ${actions}.${continuation ? ` Retry policy: ${continuation}.` : ""}`,
+        `At ${when}, ${instruction}. Authorized action: ${actions}.${continuation ? ` ${continuation}.` : ""}`,
+      watchAction: (tool) => tool === "mcp__voice__call_start" ? "one phone call"
+        : tool === "mcp__mail__send_email" ? "one email"
+          : tool === "mcp__mail__reply" ? "one email reply"
+            : tool === "mcp__calendar__create_event" ? "one new calendar event"
+              : tool.replace(/^mcp__[^_]+__/, "").replaceAll("_", " "),
+      watchContinuation: ({ outcomes, afterMinutes, maxAttempts }) => {
+        const labels = outcomes.map((outcome) => ({
+          not_answered: "not answered", busy: "busy", failed: "failed",
+        } as Record<string, string>)[outcome] ?? outcome.replaceAll("_", " "));
+        const attempts = Math.max(1, maxAttempts - 1);
+        return `If it is ${labels.join(", ")}, retry ${attempts === 1 ? "once" : `${attempts} times`} after ${afterMinutes === 1 ? "one minute" : `${afterMinutes} minutes`}`;
+      },
       instruction: "Say approve to run it, reject to deny it, or repeat to hear this request again.",
       notUnderstood: "I did not understand. Say only approve, reject, or repeat.",
       readingStatus: (tool) => `Steward is reading the approval request for ${tool}.`,
@@ -183,7 +197,19 @@ const MESSAGES = {
       arguments: (value) => `Argomenti: ${value}.`,
       preview: (value) => `Anteprima: ${value}.`,
       watchSummary: ({ instruction, when, actions, continuation }) =>
-        `Creare un watcher: ${instruction}. Orario: ${when}. Azioni autorizzate: ${actions}.${continuation ? ` Politica di richiamata: ${continuation}.` : ""}`,
+        `Alle ${when}, ${instruction}. Azione autorizzata: ${actions}.${continuation ? ` ${continuation}.` : ""}`,
+      watchAction: (tool) => tool === "mcp__voice__call_start" ? "una chiamata"
+        : tool === "mcp__mail__send_email" ? "una email"
+          : tool === "mcp__mail__reply" ? "una risposta email"
+            : tool === "mcp__calendar__create_event" ? "un nuovo evento di calendario"
+              : tool.replace(/^mcp__[^_]+__/, "").replaceAll("_", " "),
+      watchContinuation: ({ outcomes, afterMinutes, maxAttempts }) => {
+        const labels = outcomes.map((outcome) => ({
+          not_answered: "senza risposta", busy: "occupata", failed: "non riuscita",
+        } as Record<string, string>)[outcome] ?? outcome.replaceAll("_", " "));
+        const attempts = Math.max(1, maxAttempts - 1);
+        return `Se risulta ${labels.join(", ")}, riprova ${attempts === 1 ? "una volta" : `${attempts} volte`} dopo ${afterMinutes === 1 ? "un minuto" : `${afterMinutes} minuti`}`;
+      },
       instruction: "Di approva per eseguirla, rifiuta per negarla, oppure ripeti per riascoltare questa richiesta.",
       notUnderstood: "Non ho capito. Di soltanto approva, rifiuta oppure ripeti.",
       readingStatus: (tool) => `Steward sta leggendo la richiesta di approvazione per ${tool}.`,

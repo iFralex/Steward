@@ -100,10 +100,20 @@ test("voice approval summarizes an agent watch instead of reading raw JSON", () 
         continuation: { outcomes: ["not_answered"], afterMinutes: 1, maxAttempts: 2 } }],
     },
   }, "it");
-  assert.match(prompt, /Creare un watcher/);
+  assert.match(prompt, /Alle/);
   assert.match(prompt, /Chiamami per il riepilogo/);
-  assert.match(prompt, /mcp__voice__call_start/);
+  assert.match(prompt, /una chiamata/);
+  assert.match(prompt, /riprova una volta dopo un minuto/);
   assert.doesNotMatch(prompt, /\"source\"/);
+  assert.doesNotMatch(prompt, /mcp__voice__call_start/);
+});
+
+test("voice approval propagates an end-to-end media failure", async () => {
+  await assert.rejects(
+    conductVoiceApproval("Approva?", async () =>
+      '[CALL FAILED] {"code":"media_stalled","message":"Remote media stalled.","retryable":true}'),
+    /Remote media stalled/,
+  );
 });
 
 test("ripeti rereads the exact same approval request before accepting", async () => {

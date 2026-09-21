@@ -56,6 +56,9 @@ fi
 if ! grep -q 'hangup_confirmed' "$RINGBACK_DIR/voice_agent.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-hangup.patch"
 fi
+if ! grep -q 'def remote_media_stalled' "$RINGBACK_DIR/voice_agent.py"; then
+  git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-call-health.patch"
+fi
 
 # Ringback compiles a Python extension against Homebrew libraries. Always use
 # the native Apple Silicon toolchain when it is available; /usr/local may still
@@ -165,6 +168,9 @@ else
   fi
   if ! grep -q '^export VOICE_HALF_DUPLEX=' "$VOICE_ENV"; then
     printf 'export VOICE_HALF_DUPLEX="1"\n' >> "$VOICE_ENV"
+  fi
+  if ! grep -q '^export VOICE_REMOTE_SILENCE_LIMIT=' "$VOICE_ENV"; then
+    printf 'export VOICE_REMOTE_SILENCE_LIMIT="2"\n' >> "$VOICE_ENV"
   fi
   if ! grep -q '^export VOICE_AUDIO_CODEC=' "$VOICE_ENV"; then
     printf 'export VOICE_AUDIO_CODEC="opus/48000/2"\n' >> "$VOICE_ENV"

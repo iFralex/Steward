@@ -103,7 +103,7 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
           }, required: ["outcomes", "afterMinutes", "maxAttempts"], additionalProperties: false },
           ...(agentWatch ? { grants: { type: "array", items: { type: "object", properties: {
             tool: { type: "string", enum: watchCapabilityNames() },
-            maxInvocations: { type: "number", minimum: 1 },
+            maxInvocations: { type: "number", minimum: 1, description: "Maximum uses per matching event. Omit for mcp__voice__call_start: one call is always allowed; retries belong only in continuation." },
             constraints: { type: "object", properties: {
               fields: { type: "object", additionalProperties: { type: "object", properties: {
                 kind: { type: "string", enum: ["exact", "template", "relative_time", "one_of", "range"] },
@@ -116,7 +116,7 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
                 max: { type: "number" },
               }, required: ["kind"], additionalProperties: false } },
               denyExtraFields: { type: "boolean", description: "Must be true for side-effecting capabilities." },
-            }, required: ["fields", "denyExtraFields"], additionalProperties: false },
+            }, required: ["fields", "denyExtraFields"], additionalProperties: false, description: "Required for write tools. Omit entirely for mcp__voice__call_start, which accepts no arguments." },
           }, required: ["tool"], additionalProperties: false } } } : {}),
         }, required: ["id"], additionalProperties: false } },
         instruction: { type: "string", description: "The user's notification preference, preserved for the future agent turn." },

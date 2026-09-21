@@ -116,11 +116,21 @@ export function formatVoiceApprovalRequest(
     const when = typeof input.at === "string"
       ? new Intl.DateTimeFormat(lang === "it" ? "it-IT" : "en-US", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(input.at))
       : jsonForSpeech(input.resourceRef ?? input.source, lang);
+    const continuationSummary = continuation
+      && Array.isArray(continuation.outcomes)
+      && typeof continuation.afterMinutes === "number"
+      && typeof continuation.maxAttempts === "number"
+      ? copy.watchContinuation({
+        outcomes: continuation.outcomes.map(String),
+        afterMinutes: continuation.afterMinutes,
+        maxAttempts: continuation.maxAttempts,
+      })
+      : undefined;
     const summary = copy.watchSummary({
       instruction: String(input.instruction ?? ""),
       when,
-      actions: grants.map((grant) => String(grant.tool ?? "")).filter(Boolean).join(", ") || jsonForSpeech(rules, lang),
-      ...(continuation ? { continuation: jsonForSpeech(continuation, lang) } : {}),
+      actions: grants.map((grant) => copy.watchAction(String(grant.tool ?? ""))).filter(Boolean).join(", ") || jsonForSpeech(rules, lang),
+      ...(continuationSummary ? { continuation: continuationSummary } : {}),
     });
     return [copy.title, summary, copy.instruction].join(" ");
   }
@@ -169,6 +179,8 @@ export async function conductVoiceApproval(
   const utterances: string[] = [];
   for (let exchange = 0; exchange < MAX_APPROVAL_EXCHANGES; exchange += 1) {
     const output = await converse(next);
+    const failure = parseRingbackFailure(output);
+    if (failure) throw new VoiceCallFailedError(failure);
     utterances.push(userReply(output));
     const parsed = parseVoiceApprovalReply(output, lang);
     if (parsed === "allow" || parsed === "deny") return { decision: parsed, repeats, reason: "spoken-command", utterances };
@@ -574,7 +586,10 @@ export class VoiceCallCoordinator {
         async (text) => {
           this.transition("listening", copy.waitingStatus);
           const raw = await bridge.callTool("mcp__voice__converse", { text });
-          return extractToolOutput(Array.isArray(raw) ? { content: raw } : raw);
+          const output = extractToolOutput(Array.isArray(raw) ? { content: raw } : raw);
+          const failure = parseRingbackFailure(output);
+          if (failure) throw new VoiceCallFailedError(failure);
+          return output;
         },
         language,
         () => {
@@ -592,6 +607,10 @@ export class VoiceCallCoordinator {
     } catch (cause) {
       reason = cause instanceof Error ? cause.message : String(cause);
       decision = "deny";
+      if (cause instanceof VoiceCallFailedError) {
+        this.terminalError = cause;
+        this.transition("failed", cause.message, cause.diagnostic.retryable);
+      }
     }
 
     const resolved = session.resolveApproval(request.requestId, {
