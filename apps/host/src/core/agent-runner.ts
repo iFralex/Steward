@@ -60,6 +60,12 @@ export function extractToolOutput(result: unknown): unknown {
   return text;
 }
 
+/** Protocol success is not enough: host-owned gates can return a blocked result. */
+export function toolExecutionSucceeded(result: unknown, isError: boolean | undefined, voiceFailure: unknown): boolean {
+  const stewardOutcome = (result as { details?: { stewardOutcome?: unknown } } | undefined)?.details?.stewardOutcome;
+  return !isError && !voiceFailure && stewardOutcome !== "blocked";
+}
+
 /** Serialize turns per chat: a second user message waits for the first to finish. */
 export class KeyedQueue {
   private tails = new Map<string, Promise<void>>();
@@ -313,7 +319,7 @@ export class ChatManager {
       // MCP completed successfully at the protocol layer, but Ringback may
       // return a terminal SIP failure as structured tool content. Count that
       // as a real tool error in both Usage and Audit.
-      const ok = !e.isError && !voiceFailure;
+      const ok = toolExecutionSucceeded(e.result, e.isError, voiceFailure);
       const files = filesFromOutput(output);
       const error = ok ? undefined : (voiceFailure?.message ?? (typeof output === "string" ? output : JSON.stringify(output)));
       try { usageLedger().recordTool({ ts: Date.now(), sessionId: runtime.chatId, tool: e.toolName, durationMs, ok }); } catch { /* ledger optional */ }

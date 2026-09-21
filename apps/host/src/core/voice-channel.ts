@@ -91,7 +91,7 @@ interface VoiceStartOptions {
 
 const PREFLIGHT_ATTEMPTS = 2;
 const IDEMPOTENCY_TTL_MS = 10 * 60_000;
-const MAX_APPROVAL_EXCHANGES = 6;
+const MAX_APPROVAL_EXCHANGES = 2;
 
 type VoiceApprovalEvent = Extract<ServerEvent, { type: "approval_request" }>;
 export type VoiceApprovalDecision = "allow" | "deny";
@@ -107,6 +107,23 @@ export function formatVoiceApprovalRequest(
   lang: VoiceLang = "en",
 ): string {
   const copy = voiceMessages(lang).approval;
+  if (request.tool === "create_agent_watch") {
+    const input = request.input && typeof request.input === "object" && !Array.isArray(request.input)
+      ? request.input as Record<string, unknown> : {};
+    const rules = Array.isArray(input.rules) ? input.rules as Array<Record<string, unknown>> : [];
+    const grants = rules.flatMap((rule) => Array.isArray(rule.grants) ? rule.grants as Array<Record<string, unknown>> : []);
+    const continuation = rules.map((rule) => rule.continuation).find((value) => value && typeof value === "object") as Record<string, unknown> | undefined;
+    const when = typeof input.at === "string"
+      ? new Intl.DateTimeFormat(lang === "it" ? "it-IT" : "en-US", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(input.at))
+      : jsonForSpeech(input.resourceRef ?? input.source, lang);
+    const summary = copy.watchSummary({
+      instruction: String(input.instruction ?? ""),
+      when,
+      actions: grants.map((grant) => String(grant.tool ?? "")).filter(Boolean).join(", ") || jsonForSpeech(rules, lang),
+      ...(continuation ? { continuation: jsonForSpeech(continuation, lang) } : {}),
+    });
+    return [copy.title, summary, copy.instruction].join(" ");
+  }
   const parts = [
     copy.title,
     copy.tool(request.tool),
@@ -146,12 +163,15 @@ export async function conductVoiceApproval(
   converse: (text: string) => Promise<unknown>,
   lang: VoiceLang = "en",
   onRepeat?: () => void,
-): Promise<{ decision: VoiceApprovalDecision; repeats: number; reason: string }> {
+): Promise<{ decision: VoiceApprovalDecision; repeats: number; reason: string; utterances: string[] }> {
   let next = prompt;
   let repeats = 0;
+  const utterances: string[] = [];
   for (let exchange = 0; exchange < MAX_APPROVAL_EXCHANGES; exchange += 1) {
-    const parsed = parseVoiceApprovalReply(await converse(next), lang);
-    if (parsed === "allow" || parsed === "deny") return { decision: parsed, repeats, reason: "spoken-command" };
+    const output = await converse(next);
+    utterances.push(userReply(output));
+    const parsed = parseVoiceApprovalReply(output, lang);
+    if (parsed === "allow" || parsed === "deny") return { decision: parsed, repeats, reason: "spoken-command", utterances };
     if (parsed === "repeat") {
       repeats += 1;
       onRepeat?.();
@@ -160,7 +180,7 @@ export async function conductVoiceApproval(
     }
     next = voiceMessages(lang).approval.notUnderstood;
   }
-  return { decision: "deny", repeats, reason: "unrecognized-or-too-many-attempts" };
+  return { decision: "deny", repeats, reason: "unrecognized-or-too-many-attempts", utterances };
 }
 
 /** The call has the PWA policy, plus call-start and any watch-scoped grants. */
@@ -546,6 +566,7 @@ export class VoiceCallCoordinator {
     let decision: VoiceApprovalDecision = "deny";
     let repeats = 0;
     let reason = "voice-approval-error";
+    let utterances: string[] = [];
     try {
       const bridge = await (this.deps.bridge ?? (() => sharedMcpBridge(this.config.mcpServers)))();
       const result = await conductVoiceApproval(
@@ -567,6 +588,7 @@ export class VoiceCallCoordinator {
       decision = result.decision;
       repeats = result.repeats;
       reason = result.reason;
+      utterances = result.utterances;
     } catch (cause) {
       reason = cause instanceof Error ? cause.message : String(cause);
       decision = "deny";
@@ -575,14 +597,20 @@ export class VoiceCallCoordinator {
     const resolved = session.resolveApproval(request.requestId, {
       decision,
       ...(decision === "deny" ? { note: copy.deniedNote(reason) } : {}),
+      ...(decision === "deny" ? { failureKind: reason === "spoken-command" ? "explicit-deny" as const
+        : reason === "unrecognized-or-too-many-attempts" ? "unrecognized" as const : "channel-error" as const } : {}),
     });
     const durationMs = Math.max(0, this.deps.now() - startedAt);
+    const explicitDecision = reason === "spoken-command";
     this.audit({
-      actor: "user", eventType: `voice.approval_${decision}`, risk: "high",
-      summary: voiceMessages(language).audit.approvalDecision(decision, request.tool), sessionId: session.id,
+      actor: explicitDecision ? "user" : "host",
+      eventType: explicitDecision ? `voice.approval_${decision}` : "voice.approval_failed", risk: "high",
+      summary: explicitDecision
+        ? voiceMessages(language).audit.approvalDecision(decision, request.tool)
+        : copy.deniedNote(reason), sessionId: session.id,
       chatId: request.chatId, toolName: request.tool, correlationId: request.requestId,
       durationMs, ok: decision === "allow" && resolved,
-      payload: { decision, repeats, reason, resolved },
+      payload: { decision, repeats, reason, resolved, utterances },
     });
     try {
       const usage: ToolCallRecord = {

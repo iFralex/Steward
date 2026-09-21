@@ -46,7 +46,7 @@ export class Session {
             ok: false,
             payload: { input: req.input },
           });
-          resolve({ decision: "deny", note: "Approval timed out" });
+          resolve({ decision: "deny", note: "Approval timed out", failureKind: "timeout" });
         }
       }, this.approvalTimeoutMs);
 

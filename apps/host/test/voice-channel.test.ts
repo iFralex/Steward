@@ -91,6 +91,21 @@ test("voice approval renders the complete immutable request", () => {
   assert.match(prompt, /recipients/);
 });
 
+test("voice approval summarizes an agent watch instead of reading raw JSON", () => {
+  const prompt = formatVoiceApprovalRequest({
+    tool: "create_agent_watch",
+    input: {
+      source: "time", at: "2026-09-21T09:00:00+02:00", instruction: "Chiamami per il riepilogo",
+      rules: [{ id: "call", event: "time.reached", grants: [{ tool: "mcp__voice__call_start", maxInvocations: 1 }],
+        continuation: { outcomes: ["not_answered"], afterMinutes: 1, maxAttempts: 2 } }],
+    },
+  }, "it");
+  assert.match(prompt, /Creare un watcher/);
+  assert.match(prompt, /Chiamami per il riepilogo/);
+  assert.match(prompt, /mcp__voice__call_start/);
+  assert.doesNotMatch(prompt, /\"source\"/);
+});
+
 test("ripeti rereads the exact same approval request before accepting", async () => {
   const spoken: string[] = [];
   const replies = ['User replied: "ripeti"', 'User replied: "approva"'];
@@ -100,12 +115,13 @@ test("ripeti rereads the exact same approval request before accepting", async ()
     return replies.shift();
   }, "it", () => { repeated += 1; });
   assert.deepEqual(spoken, ["RICHIESTA IDENTICA", "RICHIESTA IDENTICA"]);
-  assert.deepEqual(result, { decision: "allow", repeats: 1, reason: "spoken-command" });
+  assert.deepEqual(result, { decision: "allow", repeats: 1, reason: "spoken-command", utterances: ["ripeti", "approva"] });
   assert.equal(repeated, 1);
 });
 
 test("voice approval commands are exact and ambiguity fails closed", () => {
   assert.equal(parseVoiceApprovalReply('User replied: "approva"', "it"), "allow");
+  assert.equal(parseVoiceApprovalReply('User replied: "confermo"', "it"), "allow");
   assert.equal(parseVoiceApprovalReply('User replied: "rifiuta"', "it"), "deny");
   assert.equal(parseVoiceApprovalReply('User replied: "rileggi la richiesta"', "it"), "repeat");
   assert.equal(parseVoiceApprovalReply('User replied: "forse sì"', "it"), "unknown");

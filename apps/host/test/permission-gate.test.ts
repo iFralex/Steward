@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gateToolDefinition, type RequestApproval } from "../src/core/permission-gate.ts";
 import type { ToolPolicy } from "../src/core/tool-policy.ts";
+import { buildWatchTools } from "../src/core/watch-tools.ts";
 
 const policy: ToolPolicy = { default: "gate", rules: { read: "allow", banned: "deny" } };
 
@@ -96,4 +97,53 @@ test("an execution guard runs after policy and can block or finalize an allowed 
   await allowed.execute("2", { a: 2 }, undefined, undefined, {} as any);
   assert.deepEqual(calls, [{ a: 2 }]);
   assert.deepEqual(events, ['{"a":2}:ok']);
+});
+
+test("watch input is validated before approval and invalid grants never prompt", async () => {
+  let approvals = 0;
+  const request: RequestApproval = async () => { approvals += 1; return { decision: "deny" }; };
+  const def = buildWatchTools("chat-1").find((tool) => tool.name === "create_agent_watch")!;
+  const gated = gateToolDefinition(def, policy, request, noFollowUp);
+  await assert.rejects(() => gated.execute("watch-invalid", {
+    source: "time", afterMinutes: 2, instruction: "Chiama",
+    rules: [{ id: "call", event: "time.reached", once: true,
+      grants: [{ tool: "mcp__voice__call_start", constraints: { fields: {
+        opening_line: { kind: "exact", value: "Ciao" },
+      }, denyExtraFields: true } }],
+    }],
+  }, undefined, undefined, {} as any), /does not accept watch constraints/);
+  assert.equal(approvals, 0);
+});
+
+test("relative watch delay is frozen to an absolute instant before approval", async () => {
+  let approvedInput: Record<string, unknown> | undefined;
+  const request: RequestApproval = async (req) => {
+    approvedInput = req.input;
+    return { decision: "deny", failureKind: "explicit-deny" };
+  };
+  const def = buildWatchTools("chat-1").find((tool) => tool.name === "create_agent_watch")!;
+  const gated = gateToolDefinition(def, policy, request, noFollowUp);
+  const before = Date.now() + 2 * 60_000;
+  await gated.execute("watch-relative", {
+    source: "time", afterMinutes: 2, instruction: "Chiama",
+    rules: [{ id: "call", event: "time.reached", once: true,
+      grants: [{ tool: "mcp__voice__call_start", maxInvocations: 1 }],
+    }],
+  }, undefined, undefined, {} as any);
+  const after = Date.now() + 2 * 60_000;
+  assert.equal(approvedInput?.afterMinutes, undefined);
+  const at = Date.parse(String(approvedInput?.at));
+  assert.ok(at >= before && at <= after);
+});
+
+test("an unrecognized approval is not reported to the model as a user rejection", async () => {
+  const calls: any[] = [];
+  const unavailable: RequestApproval = async () => ({
+    decision: "deny", failureKind: "unrecognized", note: "No valid command was recognized",
+  });
+  const t = gateToolDefinition(fakeTool("send", calls), policy, unavailable, noFollowUp);
+  const res: any = await t.execute("1", {}, undefined, undefined, {} as any);
+  assert.match(res.content[0].text, /approval could not be obtained/);
+  assert.doesNotMatch(res.content[0].text, /denied by user/);
+  assert.equal(res.details.stewardOutcome, "blocked");
 });

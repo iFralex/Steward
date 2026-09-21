@@ -49,6 +49,7 @@ interface VoiceMessages {
     tool: (tool: string) => string;
     arguments: (value: string) => string;
     preview: (value: string) => string;
+    watchSummary: (details: { instruction: string; when: string; actions: string; continuation?: string }) => string;
     instruction: string;
     notUnderstood: string;
     readingStatus: (tool: string) => string;
@@ -103,15 +104,21 @@ const MESSAGES = {
       tool: (tool) => `Tool: ${tool}.`,
       arguments: (value) => `Arguments: ${value}.`,
       preview: (value) => `Preview: ${value}.`,
+      watchSummary: ({ instruction, when, actions, continuation }) =>
+        `Create a watcher: ${instruction}. Time: ${when}. Authorized actions: ${actions}.${continuation ? ` Retry policy: ${continuation}.` : ""}`,
       instruction: "Say approve to run it, reject to deny it, or repeat to hear this request again.",
       notUnderstood: "I did not understand. Say only approve, reject, or repeat.",
       readingStatus: (tool) => `Steward is reading the approval request for ${tool}.`,
       waitingStatus: "Steward is waiting for approve, reject, or repeat.",
-      deniedNote: () => "Rejected during the call.",
+      deniedNote: (reason) => reason === "spoken-command"
+        ? "Explicitly rejected during the call."
+        : reason === "unrecognized-or-too-many-attempts"
+          ? "I could not recognize a valid approval command; nothing was executed."
+          : "Voice approval could not be completed; nothing was executed.",
       recordedStatus: (decision) => decision === "allow" ? "Voice approval recorded." : "Voice rejection recorded.",
       alreadyResolvedStatus: "The approval was already resolved.",
       keywords: {
-        allow: ["approve"],
+        allow: ["approve", "i approve", "yes approve", "confirm"],
         deny: ["reject"],
         repeat: ["repeat", "read it again", "read the request again"],
       },
@@ -127,6 +134,7 @@ const MESSAGES = {
       "If transcription is unclear in a way that changes an action, recipient, destination, time, or delivery channel, ask one short confirmation before creating or executing it.",
       "Only during this call, set_voice_speech_rate can change speaking speed for this call or propose a persistent default.",
       "Sensitive operations activate the host-owned voice approval protocol: wait for its decision without asking for or interpreting approval yourself, and never claim a denied action was completed.",
+      "Do not ask a redundant conversational confirmation immediately before that formal protocol unless a material detail is ambiguous.",
       "When the user says goodbye, hangs up, or the tool returns [CALL ENDED], finish with mcp__voice__call_end and end the turn.",
       "Treat thanks plus a closing phrase as goodbye. After one [SILENCE], make at most one short check-in; after a second [SILENCE], call call_end immediately.",
       "If call_start returns [NO ANSWER] or [CALL FAILED], do not retry; end the turn with a brief explanation.",
@@ -174,15 +182,21 @@ const MESSAGES = {
       tool: (tool) => `Strumento: ${tool}.`,
       arguments: (value) => `Argomenti: ${value}.`,
       preview: (value) => `Anteprima: ${value}.`,
+      watchSummary: ({ instruction, when, actions, continuation }) =>
+        `Creare un watcher: ${instruction}. Orario: ${when}. Azioni autorizzate: ${actions}.${continuation ? ` Politica di richiamata: ${continuation}.` : ""}`,
       instruction: "Di approva per eseguirla, rifiuta per negarla, oppure ripeti per riascoltare questa richiesta.",
       notUnderstood: "Non ho capito. Di soltanto approva, rifiuta oppure ripeti.",
       readingStatus: (tool) => `Steward sta leggendo la richiesta di approvazione per ${tool}.`,
       waitingStatus: "Steward attende approva, rifiuta oppure ripeti.",
-      deniedNote: () => "Rifiutata durante la chiamata.",
+      deniedNote: (reason) => reason === "spoken-command"
+        ? "Rifiutata esplicitamente durante la chiamata."
+        : reason === "unrecognized-or-too-many-attempts"
+          ? "Non sono riuscito a riconoscere un comando di approvazione valido; non è stato eseguito nulla."
+          : "Non è stato possibile completare l'approvazione vocale; non è stato eseguito nulla.",
       recordedStatus: (decision) => decision === "allow" ? "Approvazione vocale registrata." : "Rifiuto vocale registrato.",
       alreadyResolvedStatus: "La richiesta di approvazione era già stata risolta.",
       keywords: {
-        allow: ["approva"],
+        allow: ["approva", "io approvo", "si approva", "confermo", "conferma", "confirma"],
         deny: ["rifiuta"],
         repeat: ["ripeti", "ripetilo", "rileggi", "rileggi la richiesta"],
       },
@@ -198,6 +212,7 @@ const MESSAGES = {
       "Se la trascrizione è incerta e può cambiare un'azione, destinatario, destinazione, orario o canale di consegna, chiedi una breve conferma prima di crearla o eseguirla.",
       "Solo durante questa chiamata, set_voice_speech_rate può cambiare la velocità del parlato per la chiamata corrente o proporre un nuovo valore predefinito persistente.",
       "Le operazioni sensibili attivano il sottoprotocollo vocale dell'host: attendi la decisione senza chiederla o interpretarla tu e non dichiarare eseguita un'azione negata.",
+      "Non chiedere una conferma conversazionale ridondante subito prima del protocollo formale, salvo che un dettaglio importante sia ambiguo.",
       "Quando l'utente saluta, riaggancia o il tool restituisce [CALL ENDED], termina con mcp__voice__call_end e concludi il turno.",
       "Considera i ringraziamenti accompagnati da una chiusura come un saluto. Dopo un primo [SILENCE] fai al massimo un breve controllo; dopo il secondo [SILENCE] usa subito call_end.",
       "Se call_start restituisce [NO ANSWER] o [CALL FAILED], non riprovare: concludi il turno spiegando brevemente il problema.",

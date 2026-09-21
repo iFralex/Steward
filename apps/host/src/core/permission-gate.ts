@@ -24,6 +24,8 @@ export interface ApprovalOutcome {
   note?: string;
   /** Optional corrected args (approve-with-edit); replaces the call's input. */
   editedInput?: Record<string, unknown>;
+  /** Machine-readable origin of a negative decision. Absence means an explicit user decision. */
+  failureKind?: "explicit-deny" | "unrecognized" | "timeout" | "channel-error";
 }
 
 export type RequestApproval = (req: ApprovalRequest) => Promise<ApprovalOutcome>;
@@ -43,6 +45,11 @@ export interface ToolExecutionGuard {
   afterExecute?(tool: string, input: Record<string, unknown>, error?: string): Promise<void>;
 }
 
+export interface PreflightToolDefinition extends ToolDefinition {
+  /** Pure validation/normalization performed before an approval is requested. */
+  preflightInput?: (input: Record<string, unknown>) => Record<string, unknown>;
+}
+
 export function gateToolDefinition(
   def: ToolDefinition,
   policy: ToolPolicy,
@@ -56,6 +63,24 @@ export function gateToolDefinition(
     execute: async (id: string, params: unknown, signal?: unknown, onUpdate?: unknown, ctx?: unknown) => {
       const decision = decideTool(policy, def.name);
       const audit = getAuditContext?.() ?? {};
+      let prepared = toRecord(params);
+      if (decision !== "deny") {
+        const preflight = (def as PreflightToolDefinition).preflightInput;
+        if (preflight) {
+          try {
+            prepared = preflight(prepared);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            recordAudit({
+              actor: "host", eventType: "tool.preflight_failed", risk: "medium",
+              summary: `Tool ${def.name} input is invalid`, sessionId: audit.sessionId,
+              chatId: audit.chatId, toolName: def.name, toolCallId: id, ok: false,
+              payload: { input: toRecord(params), error: message },
+            });
+            throw new Error(`Invalid ${def.name} request: ${message}`);
+          }
+        }
+      }
       recordAudit({
         actor: "host",
         eventType: `tool.policy.${decision}`,
@@ -66,16 +91,16 @@ export function gateToolDefinition(
         toolName: def.name,
         toolCallId: id,
         ok: decision !== "deny",
-        payload: { input: toRecord(params), decision },
+        payload: { input: prepared, decision },
       });
       if (decision === "deny") {
         return blocked(`Tool ${def.name} is disabled by policy.`);
       }
       if (decision === "allow") {
-        return executeGuarded(def, id, params, signal, onUpdate, ctx, executionGuard);
+        return executeGuarded(def, id, prepared, signal, onUpdate, ctx, executionGuard);
       }
       // gate → ask the user
-      const outcome = await requestApproval({ tool: def.name, input: toRecord(params) });
+      const outcome = await requestApproval({ tool: def.name, input: prepared });
       recordAudit({
         actor: "user",
         eventType: `approval.${outcome.decision}`,
@@ -89,8 +114,9 @@ export function gateToolDefinition(
         payload: {
           decision: outcome.decision,
           note: outcome.note,
-          originalInput: toRecord(params),
+          originalInput: prepared,
           editedInput: outcome.editedInput,
+          failureKind: outcome.failureKind,
         },
       });
       if (outcome.decision === "revise") {
@@ -99,11 +125,25 @@ export function gateToolDefinition(
       }
       if (outcome.decision !== "allow") {
         const why = outcome.note?.trim() ? `: ${outcome.note.trim()}` : "";
+        if (outcome.failureKind && outcome.failureKind !== "explicit-deny") {
+          return blocked(`NOT DONE — approval could not be obtained (${outcome.failureKind})${why}. Nothing was executed. Do not describe this as a user rejection.`);
+        }
         return blocked(`NOT DONE — denied by user${why}. Do not retry; propose an alternative.`);
       }
       // Approve-with-edit: the approval card may return corrected arguments
       // (carried by approval_decision.editedInput); run the tool with those.
-      const args = outcome.editedInput ?? (params as Record<string, unknown>);
+      let args = outcome.editedInput ?? prepared;
+      if (outcome.editedInput) {
+        const preflight = (def as PreflightToolDefinition).preflightInput;
+        if (preflight) {
+          try {
+            args = preflight(outcome.editedInput);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`Invalid approved edit for ${def.name}: ${message}`);
+          }
+        }
+      }
       if (outcome.note?.trim()) {
         await getSession().followUp(`User note: ${outcome.note.trim()}`);
       }
@@ -137,7 +177,7 @@ async function executeGuarded(
 }
 
 function blocked(text: string) {
-  return { content: [{ type: "text" as const, text }], details: {} };
+  return { content: [{ type: "text" as const, text }], details: { stewardOutcome: "blocked" } };
 }
 
 function toRecord(value: unknown): Record<string, unknown> {

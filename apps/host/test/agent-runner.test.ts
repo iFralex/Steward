@@ -9,13 +9,19 @@ import { join } from "node:path";
 // throwaway dir before anything in this test file (or its imports) can call it.
 process.env.CHATS_DIR = mkdtempSync(join(tmpdir(), "agent-runner-chats-"));
 
-import { buildPiRuntime, ChatManager, KeyedQueue, sharedMcpBridge } from "../src/core/agent-runner.ts";
+import { buildPiRuntime, ChatManager, KeyedQueue, sharedMcpBridge, toolExecutionSucceeded } from "../src/core/agent-runner.ts";
 import { Session } from "../src/core/session.ts";
 import { defaultPolicy } from "../src/core/tool-policy.ts";
 import { chatStore } from "../src/core/chat-store.ts";
 import { isRunning } from "../src/core/running-chats.ts";
 
 const echo = fileURLToPath(new URL("./fixtures/echo-mcp-server.mts", import.meta.url));
+
+test("blocked gate results are failures for Usage and Audit", () => {
+  assert.equal(toolExecutionSucceeded({ details: { stewardOutcome: "blocked" } }, false, null), false);
+  assert.equal(toolExecutionSucceeded({ details: {} }, false, null), true);
+  assert.equal(toolExecutionSucceeded({}, true, null), false);
+});
 
 test("KeyedQueue serializes same-key work and parallelizes different keys", async () => {
   const q = new KeyedQueue();

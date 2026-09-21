@@ -3,6 +3,7 @@ import type { WatchRule, WatchToolGrant } from "@steward/watch-engine";
 import { sharedWatchEngine } from "./watch-runtime.ts";
 import { parseWatchGrant, watchCapabilityNames } from "./watch-capabilities.ts";
 import { createTimeResourceRef } from "./time-watch-adapter.ts";
+import type { PreflightToolDefinition } from "./permission-gate.ts";
 
 export function buildWatchTools(chatId: string): ToolDefinition[] {
   return [createWatchTool(chatId, false), createWatchTool(chatId, true), stopWatchTool()];
@@ -17,27 +18,54 @@ function createWatchTool(chatId: string, agentWatch: boolean): ToolDefinition {
       : "Create a persistent, read-only event watch that resumes this same conversation and sends its response by PWA push. It cannot perform side effects. " + watchDomainDescription(),
     parameters: watchParameters(agentWatch),
     prepareArguments: (args: unknown) => args as never,
+    preflightInput: (input: Record<string, unknown>) => prepareWatchInput(input, agentWatch),
     execute: async (_id: string, params: Record<string, unknown>) => {
-      try {
-        const expiresAt = typeof params.expiresAt === "string" ? Date.parse(params.expiresAt) : undefined;
-        if (expiresAt !== undefined && Number.isNaN(expiresAt)) throw new Error("expiresAt must be an ISO 8601 date-time");
-        const rules = parseRules(params.rules, agentWatch);
-        if (agentWatch && !rules.some((rule) => rule.grants?.length)) throw new Error("An agent watch requires at least one rule-scoped grant");
-        const source = required(params, "source");
-        const resourceRef = source === "time"
-          ? timeResourceRef(params)
-          : required(params, "resourceRef");
-        const watch = await sharedWatchEngine().create({
-          source, resourceRef,
-          rules, instruction: required(params, "instruction"), chatId,
-          ...(expiresAt !== undefined ? { expiresAt } : {}),
-        });
-        return result({ watchId: watch.id, status: watch.status, source: watch.source, expiresAt: new Date(watch.expiresAt).toISOString(), rules: watch.rules });
-      } catch (error) {
-        return result({ error: error instanceof Error ? error.message : String(error) });
-      }
+      const expiresAt = typeof params.expiresAt === "string" ? Date.parse(params.expiresAt) : undefined;
+      const rules = parseRules(params.rules, agentWatch);
+      const source = required(params, "source");
+      const resourceRef = source === "time" ? timeResourceRef(params) : required(params, "resourceRef");
+      const watch = await sharedWatchEngine().create({
+        source, resourceRef,
+        rules, instruction: required(params, "instruction"), chatId,
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+      });
+      return result({ watchId: watch.id, status: watch.status, source: watch.source, expiresAt: new Date(watch.expiresAt).toISOString(), rules: watch.rules });
     },
-  } as ToolDefinition;
+  } as PreflightToolDefinition;
+}
+
+/** Validate before approval and freeze relative time to the instant approval starts. */
+function prepareWatchInput(input: Record<string, unknown>, agentWatch: boolean): Record<string, unknown> {
+  const params = structuredClone(input);
+  const expiresAt = typeof params.expiresAt === "string" ? Date.parse(params.expiresAt) : undefined;
+  if (params.expiresAt !== undefined && (expiresAt === undefined || Number.isNaN(expiresAt))) {
+    throw new Error("expiresAt must be an ISO 8601 date-time");
+  }
+  const rules = parseRules(params.rules, agentWatch);
+  if (agentWatch && !rules.some((rule) => rule.grants?.length)) {
+    throw new Error("An agent watch requires at least one rule-scoped grant");
+  }
+  const source = required(params, "source");
+  if (source !== "time" && source !== "train") throw new Error("source must be 'time' or 'train'");
+  if (source === "time") {
+    const hasAfter = params.afterMinutes !== undefined;
+    const hasAbsolute = params.at !== undefined;
+    if (hasAfter === hasAbsolute) throw new Error("A time watch requires exactly one of afterMinutes or at");
+    if (hasAfter) {
+      const minutes = params.afterMinutes;
+      if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0 || minutes > 525_600) {
+        throw new Error("afterMinutes must be greater than 0 and no more than 525600");
+      }
+      params.at = new Date(Date.now() + minutes * 60_000).toISOString();
+      delete params.afterMinutes;
+    }
+    // Validate the absolute instant now, not after approval.
+    createTimeResourceRef(required(params, "at"));
+  } else {
+    required(params, "resourceRef");
+  }
+  required(params, "instruction");
+  return params;
 }
 
 function watchDomainDescription(): string {
