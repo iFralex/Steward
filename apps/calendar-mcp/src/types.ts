@@ -13,4 +13,4 @@ export interface CalEvent {
   lastModified: number; // core data seconds
 }
 
-export interface CalendarInfo { title: string; account: string; type: number }
+export interface CalendarInfo { id: string; title: string; account: string; type: number }

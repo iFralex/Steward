@@ -39,10 +39,10 @@ export class AppleStore {
 
   listCalendars(): CalendarInfo[] {
     const rows = this.db.prepare(
-      `SELECT c.title AS title, s.name AS account, c.type AS type
+      `SELECT c.UUID AS id, c.title AS title, s.name AS account, c.type AS type
        FROM Calendar c JOIN Store s ON s.ROWID = c.store_id ORDER BY s.name, c.title`,
     ).all() as Record<string, unknown>[];
-    return rows.map((r) => ({ title: String(r.title ?? ""), account: String(r.account ?? ""), type: Number(r.type ?? 0) }));
+    return rows.map((r) => ({ id: String(r.id ?? ""), title: String(r.title ?? ""), account: String(r.account ?? ""), type: Number(r.type ?? 0) }));
   }
 
   eventsInRange(opts: { startISO: string; endISO: string; account?: string; calendar?: string }): CalEvent[] {

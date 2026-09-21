@@ -34,10 +34,24 @@ export interface TrainSnapshot {
   scheduledDepartureMs?: number;
   scheduledArrivalMs?: number;
   delayMinutes: number;
+  /** Exact schedule variance when live timestamps are available. */
+  departureDelaySeconds?: number;
+  arrivalDelaySeconds?: number;
+  departureDelayMinutes?: number;
+  arrivalDelayMinutes?: number;
+  /** Legacy platform fields refer to the departure station. */
   platform?: string;
   scheduledPlatform?: string;
   actualPlatform?: string;
   platformStatus: PlatformStatus;
+  departurePlatform?: string;
+  scheduledDeparturePlatform?: string;
+  actualDeparturePlatform?: string;
+  departurePlatformStatus?: PlatformStatus;
+  arrivalPlatform?: string;
+  scheduledArrivalPlatform?: string;
+  actualArrivalPlatform?: string;
+  arrivalPlatformStatus?: PlatformStatus;
   cancelled: boolean;
   departed: boolean;
   arrived: boolean;
@@ -61,6 +75,12 @@ export interface TrainStopSnapshot {
   actualDepartureMs?: number;
   cancelled: boolean;
   positionRelativeToDestination?: number;
+  scheduledArrivalPlatform?: string;
+  actualArrivalPlatform?: string;
+  arrivalPlatformStatus?: PlatformStatus;
+  scheduledDeparturePlatform?: string;
+  actualDeparturePlatform?: string;
+  departurePlatformStatus?: PlatformStatus;
 }
 
 export interface TrainDataSource {

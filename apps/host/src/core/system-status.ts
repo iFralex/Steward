@@ -79,7 +79,7 @@ const bundledToolNames: Record<string, string[]> = {
   contacts: ["search_contacts", "read_contact", "resolve_recipient", "create_contact", "update_contact"],
   "action-center": ["list_actions", "read_action", "mark_action", "list_flows", "search_flows", "create_flow", "update_flow", "set_flow_enabled", "delete_flow"],
   shell: ["find_files", "run_command", "run_write_command"],
-  trains: ["find_next_train", "train_status"],
+  trains: ["find_next_train", "train_status", "retarget_train"],
 };
 
 export async function loadSystemStatus(config: HostConfig, context: SystemStatusContext = {}): Promise<SystemStatus> {

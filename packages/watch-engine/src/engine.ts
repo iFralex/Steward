@@ -33,6 +33,7 @@ export class WatchEngine {
     const adapter = this.adapters.get(definition.source);
     if (!adapter) throw new Error(`Unsupported watch source: ${definition.source}. Available: ${this.sources().join(", ")}`);
     const snapshot = await adapter.snapshot(definition.resourceRef);
+    await adapter.validate?.(definition, snapshot);
     const watch = this.store.create(definition, snapshot, adapter.defaultExpiry(snapshot));
     this.notify("watchCreated", watch);
     return watch;
@@ -79,7 +80,9 @@ export class WatchEngine {
             this.notify("eventQueued", watch, [rule], event);
           }
         }
-        const terminal = adapter.isTerminal(current);
+        const allOneShotRulesFired = watch.rules.length > 0 && watch.rules.every((rule) =>
+          rule.once === true && this.store.hasRuleFired(watch.id, rule.id));
+        const terminal = allOneShotRulesFired || adapter.isTerminal(current, watch);
         this.store.updateSnapshot(watch.id, current, terminal);
         const updated = this.store.get(watch.id) ?? { ...watch, snapshot: current };
         this.notify("pollCompleted", updated, { durationMs: Date.now() - startedAt, queued: watchQueued, terminal });
@@ -91,6 +94,16 @@ export class WatchEngine {
       }
     }
     return queued;
+  }
+
+  /** Smallest adapter-requested interval. New domains opt in without changing
+   * the scheduler or forcing their urgency model on other adapters. */
+  nextPollDelayMs(defaultMs: number, now = Date.now()): number {
+    const requested = this.store.active().flatMap((watch) => {
+      const value = this.adapters.get(watch.source)?.pollIntervalMs?.(watch, now);
+      return typeof value === "number" && Number.isFinite(value) && value > 0 ? [value] : [];
+    });
+    return Math.max(5_000, Math.min(defaultMs, ...requested));
   }
 }
 

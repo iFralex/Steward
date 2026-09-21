@@ -95,3 +95,17 @@ test("voice grants are also durably limited to one call_start invocation", async
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("relative_time resolves trusted live state with an offset", () => {
+  const event = pending();
+  event.event.currentState = { estimatedArrivalMs: Date.parse("2026-09-20T19:31:00Z") };
+  event.rules = [{
+    id: "calendar", event: "train.eta_changed",
+    grants: [{ tool: "mcp__calendar__update_event", constraints: { denyExtraFields: true, fields: {
+      uid: { kind: "exact", value: "event-1" },
+      start: { kind: "relative_time", reference: "state.estimatedArrivalMs", offsetMinutes: -5 },
+    } } }],
+  }];
+  const [grant] = resolvedWatchGrants(event);
+  assert.deepEqual(grant.constraints?.fields.start, { kind: "exact", value: "2026-09-20T19:26:00.000Z" });
+});

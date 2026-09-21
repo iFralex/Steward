@@ -50,3 +50,16 @@ test("legacy exact-mail grants are migrated when a queued watch is read", () => 
     },
   });
 });
+
+test("relative_time is a source-neutral constrained timestamp", () => {
+  const grant = parseWatchGrant({
+    tool: "mcp__calendar__update_event",
+    constraints: { denyExtraFields: true, fields: {
+      uid: { kind: "exact", value: "event-1" },
+      start: { kind: "relative_time", reference: "state.estimatedArrivalMs", offsetMinutes: -5 },
+    } },
+  });
+  assert.deepEqual(grant.constraints?.fields.start, {
+    kind: "relative_time", reference: "state.estimatedArrivalMs", offsetMinutes: -5,
+  });
+});

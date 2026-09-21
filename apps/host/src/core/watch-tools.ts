@@ -37,9 +37,9 @@ function createWatchTool(chatId: string, agentWatch: boolean): ToolDefinition {
 
 function watchDomainDescription(): string {
   return (
-      "Currently source='train' is supported. Train events: train.platform_announced, train.platform_confirmed, train.platform_changed, train.departed, train.stop_arrived, train.stop_departed, train.delay_changed, train.cancelled, train.arrived. " +
+      "Currently source='train' is supported. Train events: train.platform_announced, train.platform_confirmed, train.platform_changed, train.departed, train.stop_arrived, train.stop_departed, train.delay_changed, train.eta_changed, train.cancelled, train.arrived. " +
       "If a scheduled-only platform is already present, watch train.platform_confirmed and train.platform_changed rather than platform_announced. " +
-      "For stop events, where.positionRelativeToDestination=-1 means the stop immediately before the user's destination and 0 means the destination. Use once=true for one-shot milestones."
+      "For stop events, where.positionRelativeToDestination=-1 means the stop immediately before the user's destination and 0 means the destination. A named stop must use train.stop_arrived/train.stop_departed with where.station or where.stationId; train.arrived always means the current trainRef destination. Retarget the trainRef first when the requested destination differs. Use once=true for one-shot milestones."
       + " For a time-relative milestone use trigger={kind:'before_time',field:'estimatedArrivalMs',minutes:30}; it follows live ETA changes and fires on the first poll inside the window."
   );
 }
@@ -65,9 +65,11 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
             maxInvocations: { type: "number", minimum: 1 },
             constraints: { type: "object", properties: {
               fields: { type: "object", additionalProperties: { type: "object", properties: {
-                kind: { type: "string", enum: ["exact", "template", "one_of", "range"] },
+                kind: { type: "string", enum: ["exact", "template", "relative_time", "one_of", "range"] },
                 value: {},
                 template: { type: "string" },
+                reference: { type: "string", description: "Trusted state.* or event.* timestamp path." },
+                offsetMinutes: { type: "number", description: "Minutes added to the referenced timestamp; negative means before." },
                 values: { type: "array", items: {} },
                 min: { type: "number" },
                 max: { type: "number" },
@@ -116,7 +118,6 @@ function parseRules(value: unknown, allowGrants: boolean): WatchRule[] {
     if (Number(!!event) + Number(!!trigger) !== 1) throw new Error("Each rule needs exactly one of event or trigger");
     if (!allowGrants && row.grants !== undefined) throw new Error("Rule grants require create_agent_watch");
     const grants = allowGrants ? parseGrants(row.grants) : [];
-    if (grants.length && row.once !== true) throw new Error("Rules with side-effect grants must set once=true");
     return {
       id: required(row, "id"), ...(event ? { event } : {}), ...(trigger ? { trigger } : {}),
       ...(row.where && typeof row.where === "object" && !Array.isArray(row.where) ? { where: row.where as Record<string, unknown> } : {}),

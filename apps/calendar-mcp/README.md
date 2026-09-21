@@ -52,7 +52,7 @@ overridden with the `CALENDAR_INDEX_DB` environment variable.
 
 | Tool | Description |
 |------|-------------|
-| `list_calendars` | List all calendars with their account name. Requires FDA. |
+| `list_calendars` | List all calendars with stable ID and account name. Use the ID for writes. Requires FDA. |
 | `search_events` | Search events by free-text query (hybrid keyword + semantic if the index exists) and/or time range, account, and calendar filters. Requires FDA. |
 | `read_event` | Read one event by uid. Requires FDA. |
 | `create_event` | Create a new calendar event. Requires Automation. |

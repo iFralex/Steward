@@ -15,6 +15,9 @@ export function readPath(value: unknown, path: string): unknown {
 
 function deepEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
+  if (typeof left === "string" && typeof right === "string") {
+    return left.trim().localeCompare(right.trim(), undefined, { sensitivity: "base" }) === 0;
+  }
   if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
   return JSON.stringify(left) === JSON.stringify(right);
 }

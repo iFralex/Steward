@@ -10,6 +10,8 @@ interface Snapshot { step: number; terminal?: boolean; etaMs?: number }
 class FakeAdapter implements WatchAdapter {
   readonly source = "fake";
   current: Snapshot = { step: 0 };
+  validate?: WatchAdapter["validate"];
+  pollIntervalMs?: WatchAdapter["pollIntervalMs"];
   snapshot(): Promise<Snapshot> { return Promise.resolve(this.current); }
   defaultExpiry(): number { return Date.now() + 60_000; }
   isTerminal(value: unknown): boolean { return (value as Snapshot).terminal === true; }
@@ -170,5 +172,24 @@ test("stopped and terminal watches are no longer polled", async () => {
     fx.adapter.current = { step: 2, terminal: true };
     assert.equal(await fx.engine.poll(), 1);
     assert.equal(fx.store.get(terminal.id)?.status, "completed");
+  } finally { fx.cleanup(); }
+});
+
+test("adapter validation and adaptive polling remain domain-owned", async () => {
+  const fx = fixture();
+  try {
+    fx.adapter.validate = (definition) => {
+      if (definition.resourceRef === "bad") throw new Error("incompatible resource");
+    };
+    fx.adapter.pollIntervalMs = () => 7_000;
+    await assert.rejects(() => fx.engine.create({
+      source: "fake", resourceRef: "bad", chatId: "chat", instruction: "x",
+      rules: [{ id: "change", event: "fake.changed" }],
+    }), /incompatible/);
+    await fx.engine.create({
+      source: "fake", resourceRef: "good", chatId: "chat", instruction: "x",
+      rules: [{ id: "change", event: "fake.changed" }],
+    });
+    assert.equal(fx.engine.nextPollDelayMs(45_000), 7_000);
   } finally { fx.cleanup(); }
 });

@@ -54,3 +54,22 @@ test("scheduled-only platform is never called confirmed", () => {
   assert.equal(event.type, "train.platform_announced");
   assert.match(event.fallbackText, /non ancora confermato/);
 });
+
+test("named stop rules are validated against the resource", () => {
+  const adapter = new TrainWatchAdapter(unusedService);
+  const base = { source: "train", resourceRef: "ref", chatId: "chat", instruction: "x" };
+  assert.doesNotThrow(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived", where: { station: "monza" } }] }, snapshot()));
+  assert.throws(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived" }] }, snapshot()), /requires where/);
+  assert.throws(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived", where: { station: "Sondrio" } }] }, snapshot()), /not served/);
+  assert.throws(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.arrived", where: { station: "Monza" } }] }, snapshot()), /train\.arrived/);
+});
+
+test("polling becomes faster near the next domain milestone", () => {
+  const adapter = new TrainWatchAdapter(unusedService);
+  const now = Date.now();
+  const watch = { snapshot: snapshot({ stops: [
+    { id: "S1", name: "A", index: 0, cancelled: false, actualDepartureMs: now },
+    { id: "S2", name: "B", index: 1, cancelled: false, scheduledArrivalMs: now + 5 * 60_000 },
+  ] }) } as any;
+  assert.equal(adapter.pollIntervalMs(watch, now), 10_000);
+});

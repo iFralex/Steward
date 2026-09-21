@@ -1,6 +1,7 @@
 export type WatchFieldConstraint =
   | { kind: "exact"; value: unknown }
   | { kind: "template"; template: string }
+  | { kind: "relative_time"; reference: string; offsetMinutes: number }
   | { kind: "one_of"; values: unknown[] }
   | { kind: "range"; min?: number; max?: number };
 
@@ -91,7 +92,12 @@ export interface WatchAdapter {
   snapshot(resourceRef: string): Promise<unknown>;
   events(previous: unknown, current: unknown): DomainEvent[];
   defaultExpiry(snapshot: unknown): number;
-  isTerminal(snapshot: unknown): boolean;
+  isTerminal(snapshot: unknown, watch?: WatchRecord): boolean;
+  /** Reject definitions that are structurally valid but incompatible with the
+   * selected resource. Domain intent remains in the adapter, never the engine. */
+  validate?(definition: WatchDefinition, snapshot: unknown): void | Promise<void>;
+  /** Domain hint used by the host's generic adaptive polling loop. */
+  pollIntervalMs?(watch: WatchRecord, now: number): number;
 }
 
 /** Optional lifecycle hooks. The engine stays storage/domain-only; hosts can

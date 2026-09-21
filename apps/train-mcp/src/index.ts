@@ -23,6 +23,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
     description: "Refresh live status, delay, route and platform for a trainRef previously returned by find_next_train. State whether the platform is confirmed, scheduled-only, or not yet communicated and include lastUpdated.",
     inputSchema: { type: "object", properties: { trainRef: { type: "string" } }, required: ["trainRef"], additionalProperties: false },
   },
+  {
+    name: "retarget_train",
+    description: "Follow the same physical train run to a different downstream station, including after departure. Use this before creating a watcher for a named station that differs from the current trainRef destination.",
+    inputSchema: { type: "object", properties: {
+      trainRef: { type: "string" },
+      to: { type: "string", description: "Exact downstream station name." },
+    }, required: ["trainRef", "to"], additionalProperties: false },
+  },
 ] }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -33,6 +41,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return json(await service.findNextTrain(required(args, "from"), required(args, "to"), optional(args, "departureAfter")));
       case "train_status":
         return json(await service.status(required(args, "trainRef")));
+      case "retarget_train":
+        return json(await service.retarget(required(args, "trainRef"), required(args, "to")));
       default:
         throw new McpError(ErrorCode.MethodNotFound, `unknown tool ${request.params.name}`);
     }

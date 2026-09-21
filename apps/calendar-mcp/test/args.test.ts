@@ -15,6 +15,12 @@ test("parseCreateArgs requires calendar/summary/start/end", () => {
   assert.throws(() => parseCreateArgs({ summary: "x", start: "2026-06-25T10:00:00Z", end: "2026-06-25T11:00:00Z" }), /calendar/);
 });
 
+test("parseCreateArgs accepts a stable calendarId without a title", () => {
+  const value = parseCreateArgs({ calendarId: "CAL-10", summary: "x", start: "2026-06-25T10:00:00Z", end: "2026-06-25T11:00:00Z" });
+  assert.equal(value.calendarId, "CAL-10");
+  assert.equal(value.calendar, undefined);
+});
+
 test("parseCreateArgs rejects end before start", () => {
   assert.throws(() => parseCreateArgs({ calendar: "Casa", summary: "x", start: "2026-06-25T11:00:00Z", end: "2026-06-25T10:00:00Z" }), /after start/);
 });

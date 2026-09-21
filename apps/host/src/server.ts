@@ -851,10 +851,14 @@ export function startServer(config: HostConfig): WebSocketServer {
       });
     },
   });
-  void pollWatches();
   const watchPollMs = Math.max(15_000, Number(process.env.WATCH_POLL_MS ?? 45_000));
-  const watchTimer = setInterval(() => void pollWatches(), watchPollMs);
-  watchTimer.unref();
+  let watchTimer: ReturnType<typeof setTimeout>;
+  const scheduleWatchPoll = async () => {
+    await pollWatches();
+    watchTimer = setTimeout(scheduleWatchPoll, sharedWatchEngine().nextPollDelayMs(watchPollMs));
+    watchTimer.unref();
+  };
+  void scheduleWatchPoll();
   // Two listeners: plain HTTP on localhost (the Mac's own WebView — a secure
   // context anyway, auto-pairs, keeps native "open/reveal" actions), and — when a
   // TLS cert+key are provided (e.g. `tailscale cert`) — HTTPS on all interfaces

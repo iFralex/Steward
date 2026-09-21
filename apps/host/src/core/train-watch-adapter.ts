@@ -1,4 +1,4 @@
-import type { DomainEvent, WatchAdapter } from "@steward/watch-engine";
+import type { DomainEvent, WatchAdapter, WatchDefinition, WatchRecord } from "@steward/watch-engine";
 import { ViaggiaTrenoClient } from "../../../train-mcp/src/client.ts";
 import { TrainService } from "../../../train-mcp/src/service.ts";
 import type { TrainSnapshot, TrainStopSnapshot } from "../../../train-mcp/src/types.ts";
@@ -24,7 +24,50 @@ export class TrainWatchAdapter implements WatchAdapter {
 
   isTerminal(value: unknown): boolean {
     const snapshot = trainSnapshot(value);
-    return snapshot.arrived || snapshot.cancelled;
+    const finalStop = snapshot.stops.at(-1);
+    return snapshot.cancelled || !!finalStop?.actualArrivalMs;
+  }
+
+  validate(definition: WatchDefinition, value: unknown): void {
+    const snapshot = trainSnapshot(value);
+    const supported = new Set([
+      "train.platform_announced", "train.platform_confirmed", "train.platform_changed",
+      "train.departed", "train.stop_arrived", "train.stop_departed", "train.delay_changed",
+      "train.eta_changed", "train.cancelled", "train.arrived",
+    ]);
+    for (const rule of definition.rules) {
+      if (!rule.event) continue;
+      if (!supported.has(rule.event)) throw new Error(`Unsupported train event: ${rule.event}`);
+      if (rule.event === "train.arrived" && (rule.where?.station || rule.where?.stationId)) {
+        throw new Error("train.arrived refers only to the trainRef destination; use train.stop_arrived for a named station");
+      }
+      if (rule.event === "train.stop_arrived" || rule.event === "train.stop_departed") {
+        const where = rule.where ?? {};
+        const hasSelector = typeof where.station === "string" || typeof where.stationId === "string"
+          || typeof where.positionRelativeToDestination === "number";
+        if (!hasSelector) throw new Error(`${rule.event} requires where.station, where.stationId, or where.positionRelativeToDestination`);
+        if (typeof where.station === "string" && !snapshot.stops.some((stop) => sameName(stop.name, where.station as string))) {
+          throw new Error(`Station ${where.station} is not served by train ${snapshot.trainNumber}`);
+        }
+        if (typeof where.stationId === "string" && !snapshot.stops.some((stop) => stop.id === where.stationId)) {
+          throw new Error(`Station id ${where.stationId} is not served by train ${snapshot.trainNumber}`);
+        }
+      }
+    }
+  }
+
+  pollIntervalMs(watch: WatchRecord, now: number): number {
+    const snapshot = trainSnapshot(watch.snapshot);
+    const futureMilestones = snapshot.stops.flatMap((stop) => {
+      if (stop.actualArrivalMs || stop.cancelled) return [];
+      const value = stop.scheduledArrivalMs ?? stop.scheduledDepartureMs;
+      return typeof value === "number" ? [value] : [];
+    });
+    if (snapshot.estimatedArrivalMs) futureMilestones.push(snapshot.estimatedArrivalMs);
+    const distance = Math.min(...futureMilestones.map((value) => Math.max(0, value - now)));
+    if (distance <= 10 * 60_000) return 10_000;
+    if (distance <= 30 * 60_000) return 20_000;
+    return 45_000;
   }
 
   events(previousValue: unknown, currentValue: unknown): DomainEvent[] {
@@ -63,6 +106,11 @@ export class TrainWatchAdapter implements WatchAdapter {
         { ...trainData(current), previousDelayMinutes: previous.delayMinutes, delayMinutes: current.delayMinutes },
         current.delayMinutes > 0 ? `Ritardo aggiornato a ${current.delayMinutes} minuti.` : "Il treno risulta ora in orario.");
     }
+    if (previous.estimatedArrivalMs !== current.estimatedArrivalMs && current.estimatedArrivalMs) {
+      add("train.eta_changed", `eta:${current.estimatedArrivalMs}`,
+        { ...trainData(current), previousEstimatedArrivalMs: previous.estimatedArrivalMs },
+        `Arrivo stimato aggiornato alle ${current.estimatedArrival ?? "nuovo orario"}.`);
+    }
 
     const previousStops = new Map(previous.stops.map((stop) => [stopKey(stop), stop]));
     for (const stop of current.stops) {
@@ -97,6 +145,12 @@ function trainData(snapshot: TrainSnapshot): Record<string, unknown> {
   return {
     trainRef: snapshot.trainRef, trainNumber: snapshot.trainNumber, category: snapshot.category,
     from: snapshot.from, to: snapshot.to, delayMinutes: snapshot.delayMinutes,
+    departureDelaySeconds: snapshot.departureDelaySeconds, arrivalDelaySeconds: snapshot.arrivalDelaySeconds,
+    departureDelayMinutes: snapshot.departureDelayMinutes, arrivalDelayMinutes: snapshot.arrivalDelayMinutes,
+    departurePlatform: snapshot.departurePlatform, departurePlatformStatus: snapshot.departurePlatformStatus,
+    arrivalPlatform: snapshot.arrivalPlatform, arrivalPlatformStatus: snapshot.arrivalPlatformStatus,
+    estimatedArrival: snapshot.estimatedArrival, estimatedArrivalMs: snapshot.estimatedArrivalMs,
+    scheduledArrival: snapshot.scheduledArrival, scheduledArrivalMs: snapshot.scheduledArrivalMs,
     platform: snapshot.platform, platformStatus: snapshot.platformStatus, lastUpdated: snapshot.lastUpdated,
   };
 }
@@ -104,5 +158,9 @@ function platformData(snapshot: TrainSnapshot): Record<string, unknown> {
   return { ...trainData(snapshot), scheduledPlatform: snapshot.scheduledPlatform, actualPlatform: snapshot.actualPlatform };
 }
 function platformFallback(snapshot: TrainSnapshot, verb: string): string {
-  return `Binario ${snapshot.platform} ${verb} per il treno ${snapshot.trainNumber}${snapshot.platformStatus === "confirmed" ? ", confermato" : ", non ancora confermato"}.`;
+  return `Binario di partenza ${snapshot.platform} ${verb} a ${snapshot.from ?? "origine"} per il treno ${snapshot.trainNumber}${snapshot.platformStatus === "confirmed" ? ", confermato" : ", non ancora confermato"}.`;
+}
+function sameName(left: string, right: string): boolean {
+  const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, " ").trim().toLowerCase();
+  return normalize(left) === normalize(right);
 }

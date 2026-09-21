@@ -9,6 +9,12 @@ test("buildCreate sets calendar, summary and escapes quotes", () => {
   assert.match(s, /make new event/);
 });
 
+test("buildCreate prefers the stable calendar identifier", () => {
+  const s = buildCreate({ calendarId: "CAL-10", summary: "x", start: "2026-06-25T10:00:00.000Z", end: "2026-06-25T11:00:00.000Z" });
+  assert.match(s, /first calendar whose calendarIdentifier is "CAL-10"/);
+  assert.match(s, /tell targetCalendar/);
+});
+
 test("buildCreate adds display alarms as minutes-before (negative trigger interval)", () => {
   const s = buildCreate({ calendar: "Casa", summary: "x", start: "2026-06-25T10:00:00.000Z", end: "2026-06-25T11:00:00.000Z", alarms: [15, 1440] });
   assert.match(s, /make new display alarm at end of display alarms of e with properties \{trigger interval:-15\}/);

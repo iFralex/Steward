@@ -18,7 +18,7 @@ export const WATCH_CAPABILITIES: readonly WatchCapabilityDefinition[] = [
   capability("mcp__voice__call_start", "voice", "Start one conversational phone call", [], false),
   capability("mcp__mail__send_email", "agent", "Send one exact email", ["from", "to", "cc", "bcc", "subject", "body", "attachments", "sendAt"], true, ["to", "subject", "body"]),
   capability("mcp__mail__reply", "agent", "Send one constrained email reply", ["id", "messageId", "from", "body", "attachments", "replyAll", "sendAt"], true, ["body"], ["id", "messageId"]),
-  capability("mcp__calendar__create_event", "agent", "Create one constrained calendar event", ["calendar", "summary", "start", "end", "allDay", "location", "description", "url", "recurrence", "alarms"], true, ["calendar", "summary", "start", "end"]),
+  capability("mcp__calendar__create_event", "agent", "Create one constrained calendar event", ["calendarId", "calendar", "summary", "start", "end", "allDay", "location", "description", "url", "recurrence", "alarms"], true, ["summary", "start", "end"], ["calendarId", "calendar"]),
   capability("mcp__calendar__update_event", "agent", "Update one constrained calendar event", ["uid", "summary", "start", "end", "location", "description", "url", "recurrence", "alarms"], true, ["uid"]),
   capability("mcp__calendar__delete_event", "agent", "Delete one exact calendar event", ["uid"], true, ["uid"]),
   capability("mcp__contacts__create_contact", "agent", "Create one constrained contact", ["firstName", "lastName", "organization", "nickname", "note", "emails", "phones"], true, undefined, ["firstName", "lastName", "organization"]),
@@ -103,6 +103,14 @@ function parseFieldConstraint(field: string, value: unknown): WatchFieldConstrai
     const template = string(value.template, `template constraint for ${field}`);
     validateTemplate(template);
     return { kind: "template", template };
+  }
+  if (value.kind === "relative_time") {
+    const reference = string(value.reference, `relative_time reference for ${field}`);
+    if (!/^(state|event\.data|event)\.[A-Za-z0-9_.-]+$/.test(reference)) {
+      throw new Error(`Unsupported watch relative_time reference: ${reference}`);
+    }
+    const offsetMinutes = number(value.offsetMinutes, `relative_time offsetMinutes for ${field}`);
+    return { kind: "relative_time", reference, offsetMinutes };
   }
   if (value.kind === "one_of") {
     if (!Array.isArray(value.values) || !value.values.length) throw new Error(`one_of constraint for ${field} requires values`);

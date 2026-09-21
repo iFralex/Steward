@@ -54,6 +54,20 @@ export class TrainService {
     return normalizeStatus(raw, ref).value;
   }
 
+  /** Keep following the same physical run while changing the observed segment.
+   * This works after departure, unlike a new departure-board search. */
+  async retarget(trainRef: string, toQuery: string): Promise<TrainSnapshot> {
+    const ref = decodeTrainRef(trainRef);
+    const to = await this.resolveStation(toQuery);
+    if (to.id === ref.fromId) throw new Error("Departure and arrival stations must be different.");
+    const raw = await this.source.trainStatus(ref.originId, ref.trainNumber, ref.serviceDay);
+    if (!Object.keys(raw).length) throw new Error("No current live data is available for this train.");
+    const nextRef: TrainRefData = { ...ref, toId: to.id, toName: displayName(to) };
+    const normalized = normalizeStatus(raw, nextRef);
+    if (!normalized.routeMatches) throw new Error(`Train ${ref.trainNumber} does not serve ${displayName(to)} after the selected departure.`);
+    return normalized.value;
+  }
+
   private async resolveStation(query: string): Promise<Station> {
     let candidates = await this.source.searchStations(query);
     if (!candidates.length) {
@@ -99,17 +113,27 @@ function normalizeStatus(raw: Record<string, unknown>, ref: TrainRefData, depart
   const scheduledArrivalMs = firstMillis(toStop.arrivo_teorico, toStop.programmata, raw.orarioArrivo);
   const actualDepartureMs = firstMillis(fromStop.partenzaReale, fromStop.effettiva);
   const actualArrivalMs = firstMillis(toStop.arrivoReale, toStop.effettiva);
+  const departureDelaySeconds = varianceSeconds(actualDepartureMs, scheduledDepartureMs);
+  const arrivalDelaySeconds = varianceSeconds(actualArrivalMs, scheduledArrivalMs);
   const normalizedStops: TrainStopSnapshot[] = stops.map((stop, index) => {
     const scheduledArrivalMs = firstMillis(stop.arrivo_teorico, stop.programmata);
     const actualArrivalMs = firstMillis(stop.arrivoReale, stop.partenza_teorica ? undefined : stop.effettiva);
     const scheduledDepartureMs = firstMillis(stop.partenza_teorica, stop.programmata);
     const actualDepartureMs = firstMillis(stop.partenzaReale, stop.arrivo_teorico ? undefined : stop.effettiva);
+    const scheduledArrivalPlatform = firstText(stop.binarioProgrammatoArrivoDescrizione, stop.binarioProgrammatoArrivo);
+    const actualArrivalPlatform = firstText(stop.binarioEffettivoArrivoDescrizione, stop.binarioEffettivoArrivo);
+    const scheduledDeparturePlatform = firstText(stop.binarioProgrammatoPartenzaDescrizione, stop.binarioProgrammatoPartenza);
+    const actualDeparturePlatform = firstText(stop.binarioEffettivoPartenzaDescrizione, stop.binarioEffettivoPartenza);
     return compact({
       id: stationId(stop), name: firstText(stop.stazione) ?? `Fermata ${index + 1}`, index,
       scheduledArrival: formatRome(scheduledArrivalMs), actualArrival: formatRome(actualArrivalMs),
       scheduledDeparture: formatRome(scheduledDepartureMs), actualDeparture: formatRome(actualDepartureMs),
       scheduledArrivalMs, actualArrivalMs, scheduledDepartureMs, actualDepartureMs,
       cancelled: integer(stop.actualFermataType) === 3 || bool(stop.soppressa),
+      scheduledArrivalPlatform, actualArrivalPlatform,
+      arrivalPlatformStatus: platformConfidence(actualArrivalPlatform, scheduledArrivalPlatform),
+      scheduledDeparturePlatform, actualDeparturePlatform,
+      departurePlatformStatus: platformConfidence(actualDeparturePlatform, scheduledDeparturePlatform),
       ...(toIndex >= 0 ? { positionRelativeToDestination: index - toIndex } : {}),
     });
   });
@@ -122,6 +146,9 @@ function normalizeStatus(raw: Record<string, unknown>, ref: TrainRefData, depart
     departureRow?.binarioEffettivoPartenzaDescrizione,
   );
   const platformStatus: PlatformStatus = actualPlatform ? "confirmed" : scheduledPlatform ? "scheduled" : "unknown";
+  const scheduledArrivalPlatform = firstText(toStop.binarioProgrammatoArrivoDescrizione, toStop.binarioProgrammatoArrivo);
+  const actualArrivalPlatform = firstText(toStop.binarioEffettivoArrivoDescrizione, toStop.binarioEffettivoArrivo);
+  const arrivalPlatformStatus = platformConfidence(actualArrivalPlatform, scheduledArrivalPlatform);
   const cancelled = ["ST", "SI", "SF"].includes(text(raw.tipoTreno) ?? "") || bool(raw.provvedimento) || integer(fromStop.actualFermataType) === 3 || bool(fromStop.soppressa);
   const departed = departureRow?.nonPartito === false || actualDepartureMs !== undefined || (fromIndex >= 0 && lastDetectedIndex(raw, stops) > fromIndex);
   const arrived = bool(raw.arrivato) || actualArrivalMs !== undefined;
@@ -143,7 +170,15 @@ function normalizeStatus(raw: Record<string, unknown>, ref: TrainRefData, depart
       estimatedArrival: formatRome(actualArrivalMs ?? addMinutes(scheduledArrivalMs, delayMinutes)),
       estimatedArrivalMs: actualArrivalMs ?? addMinutes(scheduledArrivalMs, delayMinutes),
       scheduledDepartureMs, scheduledArrivalMs,
-      delayMinutes, platform: actualPlatform ?? scheduledPlatform, scheduledPlatform, actualPlatform, platformStatus,
+      delayMinutes, departureDelaySeconds, arrivalDelaySeconds,
+      departureDelayMinutes: minutesFromSeconds(departureDelaySeconds),
+      arrivalDelayMinutes: minutesFromSeconds(arrivalDelaySeconds),
+      platform: actualPlatform ?? scheduledPlatform, scheduledPlatform, actualPlatform, platformStatus,
+      departurePlatform: actualPlatform ?? scheduledPlatform,
+      scheduledDeparturePlatform: scheduledPlatform, actualDeparturePlatform: actualPlatform,
+      departurePlatformStatus: platformStatus,
+      arrivalPlatform: actualArrivalPlatform ?? scheduledArrivalPlatform,
+      scheduledArrivalPlatform, actualArrivalPlatform, arrivalPlatformStatus,
       cancelled, departed, arrived,
       lastDetectedStation: firstText(raw.stazioneUltimoRilevamento),
       stops: normalizedStops,
@@ -169,6 +204,15 @@ function bool(value: unknown): boolean { return value === true || value === 1 ||
 function millis(value: unknown): number | undefined { const n = integer(value); return n !== undefined && n > 10_000_000_000 ? n : undefined; }
 function firstMillis(...values: unknown[]): number | undefined { for (const value of values) { const found = millis(value); if (found !== undefined) return found; } return undefined; }
 function addMinutes(value: number | undefined, minutes: number): number | undefined { return value === undefined ? undefined : value + minutes * 60_000; }
+function varianceSeconds(actual: number | undefined, scheduled: number | undefined): number | undefined {
+  return actual === undefined || scheduled === undefined ? undefined : Math.round((actual - scheduled) / 1_000);
+}
+function minutesFromSeconds(value: number | undefined): number | undefined {
+  return value === undefined ? undefined : Math.round(value / 60);
+}
+function platformConfidence(actual?: string, scheduled?: string): PlatformStatus {
+  return actual ? "confirmed" : scheduled ? "scheduled" : "unknown";
+}
 function parseDate(value?: string): Date | undefined { if (!value) return undefined; const date = new Date(value); if (Number.isNaN(date.getTime())) throw new Error("departureAfter must be an ISO 8601 date-time with timezone."); return date; }
 function normalizeName(value: string): string { return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, " ").trim().toLowerCase(); }
 function compactName(value: string): string { return normalizeName(value).replace(/\s+/g, ""); }

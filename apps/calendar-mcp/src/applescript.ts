@@ -1,7 +1,7 @@
 import { esc, runOsa, type OsaExec } from "@steward/applescript";
 
 export interface CreateArgs {
-  calendar: string; summary: string; start: string; end: string;
+  calendar?: string; calendarId?: string; summary: string; start: string; end: string;
   allDay?: boolean; location?: string; description?: string; url?: string; recurrence?: string;
   /** Display alerts as minutes BEFORE the event start (e.g. [15, 1440] = 15 min + 1 day before). */
   alarms?: number[];
@@ -60,7 +60,10 @@ export function buildCreate(a: CreateArgs): string {
     'tell application "Calendar"',
     ...dateExpr("startD", a.start),
     ...dateExpr("endD", a.end),
-    `  tell calendar "${esc(a.calendar)}"`,
+    ...(a.calendarId
+      ? [`  set targetCalendar to first calendar whose calendarIdentifier is "${esc(a.calendarId)}"`]
+      : [`  set targetCalendar to calendar "${esc(a.calendar ?? "")}"`]),
+    "  tell targetCalendar",
     `    set e to make new event with properties {${props.join(", ")}}`,
   ];
   if (a.url) lines.push(`    set url of e to "${esc(a.url)}"`);

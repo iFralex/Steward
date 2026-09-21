@@ -78,21 +78,31 @@ function resolveConstraints(constraints: WatchToolConstraints, pending: PendingW
 }
 
 function resolveConstraint(constraint: WatchFieldConstraint, pending: PendingWatchEvent): WatchFieldConstraint {
-  if (constraint.kind !== "template") return constraint;
-  return { kind: "exact", value: renderTemplate(constraint.template, pending) };
+  if (constraint.kind === "template") return { kind: "exact", value: renderTemplate(constraint.template, pending) };
+  if (constraint.kind === "relative_time") {
+    const value = resolveReference(constraint.reference, pending);
+    const timestamp = typeof value === "number" ? value : Date.parse(String(value));
+    if (!Number.isFinite(timestamp)) throw new Error(`Watch relative_time value is unavailable: ${constraint.reference}`);
+    return { kind: "exact", value: new Date(timestamp + constraint.offsetMinutes * 60_000).toISOString() };
+  }
+  return constraint;
 }
 
 function renderTemplate(template: string, pending: PendingWatchEvent): string {
   return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_match, reference: string) => {
-    const value = reference.startsWith("state.")
-      ? readPath(pending.event.currentState, reference.slice("state.".length))
-      : reference.startsWith("event.")
-        ? readPath(pending.event, reference.slice("event.".length))
-        : undefined;
+    const value = resolveReference(reference, pending);
     if (value === undefined || value === null) throw new Error(`Watch template value is unavailable: ${reference}`);
     if (typeof value === "object") return JSON.stringify(value);
     return String(value);
   });
+}
+
+function resolveReference(reference: string, pending: PendingWatchEvent): unknown {
+  return reference.startsWith("state.")
+    ? readPath(pending.event.currentState, reference.slice("state.".length))
+    : reference.startsWith("event.")
+      ? readPath(pending.event, reference.slice("event.".length))
+      : undefined;
 }
 
 function matchesConstraints(constraints: WatchToolConstraints | undefined, input: Record<string, unknown>): boolean {

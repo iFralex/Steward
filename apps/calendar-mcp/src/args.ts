@@ -57,8 +57,11 @@ export function parseCreateArgs(raw: Raw): CreateArgs {
   const start = validIso(raw, "start", true)!;
   const end = validIso(raw, "end", true)!;
   if (Date.parse(end) <= Date.parse(start)) throw new Error('"end" must be after start');
+  const calendar = optString(raw, "calendar");
+  const calendarId = optString(raw, "calendarId");
+  if (!calendar && !calendarId) throw new Error('Either "calendarId" or "calendar" is required');
   return {
-    calendar: requireString(raw, "calendar"),
+    calendar, calendarId,
     summary: requireString(raw, "summary"),
     start, end,
     allDay: raw.allDay === true,

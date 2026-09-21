@@ -92,6 +92,7 @@ export const defaultPolicy: ToolPolicy = {
     "mcp__shell__run_command": "allow",
     // Trains MCP — live lookups are read-only.
     "mcp__trains__find_next_train": "allow",
+    "mcp__trains__retarget_train": "allow",
     "mcp__trains__train_status": "allow",
     // Voice lifecycle after a call has started. call_start intentionally falls
     // through to the approval gate in ordinary chat; the authenticated

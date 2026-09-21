@@ -45,17 +45,17 @@ const instantDescription = `RFC 3339 date-time with explicit timezone (Z or ±HH
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    { name: "list_calendars", description: "List calendars with their account.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    { name: "list_calendars", description: "List calendars with stable id, title and account. Use calendarId for writes, especially when titles repeat.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "search_events", description: `Search a compact page of events (hybrid keyword+semantic). All filters are optional and ANDed. Defaults to 10 events; follow page.nextOffset only when more are materially needed. Use read_event for a full description. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: {
       query: { type: "string" }, start: { type: "string", description: `Inclusive range start. ${instantDescription}` }, end: { type: "string", description: `Inclusive range end. ${instantDescription}` },
       account: { type: "string" }, calendar: { type: "string" }, limit: { type: "number", description: "Page size; defaults to 10 and is capped at 20." },
       offset: { type: "number", description: "Rank offset from page.nextOffset." } }, additionalProperties: false } },
     { name: "read_event", description: `Read one event by uid. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
-    { name: "create_event", description: "Create a calendar event.", inputSchema: { type: "object", properties: {
-      calendar: { type: "string" }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
+    { name: "create_event", description: "Create a calendar event. Prefer the stable calendarId from list_calendars; a duplicate calendar title without calendarId is rejected.", inputSchema: { type: "object", properties: {
+      calendarId: { type: "string" }, calendar: { type: "string", description: "Legacy title selector; accepted only when unique." }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
       allDay: { type: "boolean", description: "Marks an all-day event. Pass start/end at local midnight with an explicit offset so the civil dates remain unambiguous." }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
       alarms: { type: "array", items: { type: "number" }, description: "alerts in minutes before the event, e.g. [15, 1440] = 15 min + 1 day before" } },
-      required: ["calendar", "summary", "start", "end"], additionalProperties: false } },
+      required: ["summary", "start", "end"], additionalProperties: false } },
     { name: "update_event", description: "Update fields of an event by uid.", inputSchema: { type: "object", properties: {
       uid: { type: "string" }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
       location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
@@ -115,6 +115,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       case "create_event": {
         const args = parseCreateArgs(raw);
+        if (!args.calendarId) {
+          const matches = requireStore().listCalendars().filter((calendar) => calendar.title === args.calendar);
+          if (matches.length !== 1) {
+            throw new Error(matches.length
+              ? `Calendar title "${args.calendar}" is ambiguous; pass calendarId from list_calendars`
+              : `Calendar "${args.calendar}" was not found`);
+          }
+          args.calendarId = matches[0].id;
+        }
         const operationId = writeOps.start({
           kind: "calendar.create",
           input: args as unknown as Record<string, unknown>,

@@ -9,14 +9,14 @@ function seed(): string {
   const db = new Database(path);
   db.exec(`
     CREATE TABLE Store(ROWID INTEGER PRIMARY KEY, name TEXT, type INTEGER);
-    CREATE TABLE Calendar(ROWID INTEGER PRIMARY KEY, store_id INTEGER, title TEXT, type INTEGER);
+    CREATE TABLE Calendar(ROWID INTEGER PRIMARY KEY, store_id INTEGER, title TEXT, type INTEGER, UUID TEXT);
     CREATE TABLE Location(ROWID INTEGER PRIMARY KEY, title TEXT);
     CREATE TABLE CalendarItem(ROWID INTEGER PRIMARY KEY, summary TEXT, description TEXT,
       location_id INTEGER, start_date REAL, end_date REAL, all_day INTEGER, calendar_id INTEGER,
       status INTEGER, url TEXT, last_modified REAL, has_recurrences INTEGER, entity_type INTEGER, UUID TEXT);
   `);
   db.prepare("INSERT INTO Store(ROWID,name,type) VALUES (1,'iCloud',2)").run();
-  db.prepare("INSERT INTO Calendar(ROWID,store_id,title,type) VALUES (10,1,'Casa',0)").run();
+  db.prepare("INSERT INTO Calendar(ROWID,store_id,title,type,UUID) VALUES (10,1,'Casa',0,'CAL-10')").run();
   db.prepare("INSERT INTO Location(ROWID,title) VALUES (5,'Rome')").run();
   const start = unixToCoreData(Math.floor(Date.parse("2026-06-25T10:00:00Z") / 1000));
   const end = unixToCoreData(Math.floor(Date.parse("2026-06-25T11:00:00Z") / 1000));
@@ -47,5 +47,11 @@ test("account filter excludes other accounts", () => {
 test("getEvent resolves by UID", () => {
   const s = AppleStore.openReadonly(seed());
   assert.equal(s.getEvent("UID-100")?.summary, "Dentist");
+  s.close();
+});
+
+test("listCalendars returns a stable identifier with title and account", () => {
+  const s = AppleStore.openReadonly(seed());
+  assert.deepEqual(s.listCalendars(), [{ id: "CAL-10", title: "Casa", account: "iCloud", type: 0 }]);
   s.close();
 });

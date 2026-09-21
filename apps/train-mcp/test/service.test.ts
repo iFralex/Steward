@@ -14,6 +14,7 @@ class FakeSource implements TrainDataSource {
       { id: "S01820", name: "MILANO ROGOREDO", label: "Milano Rogoredo" },
       { id: "S01700", name: "MILANO CENTRALE", label: "Milano Centrale" },
     ];
+    if (query.toLowerCase().includes("napoli")) return [{ id: "S09218", name: "NAPOLI CENTRALE", label: "Napoli Centrale" }];
     return [{ id: "S06421", name: "FIRENZE SANTA MARIA NOVELLA", label: "Firenze Santa Maria Novella" }];
   }
   async departures(): Promise<Record<string, unknown>[]> {
@@ -81,4 +82,32 @@ test("trainStatus keeps scheduled platform explicitly unconfirmed", async () => 
   assert.equal(train.platformStatus, "scheduled");
   assert.equal(train.actualPlatform, undefined);
   assert.equal((await new TrainService(source).status(train.trainRef)).departed, false);
+});
+
+test("retarget follows the same departed run to a later station", async () => {
+  const source = new FakeSource();
+  const service = new TrainService(source);
+  const first = await service.findNextTrain("Milano Rogoredo", "Firenze Santa Maria Novella", new Date(now).toISOString());
+  const retargeted = await service.retarget(first.trainRef, "Napoli Centrale");
+  assert.equal(retargeted.trainNumber, first.trainNumber);
+  assert.equal(retargeted.to, "Napoli Centrale");
+  assert.equal(retargeted.stops.at(-1)?.positionRelativeToDestination, 0);
+});
+
+test("arrival variance and platform are separate from departure data", async () => {
+  const source = new FakeSource();
+  source.trainStatus = async () => ({
+    categoria: "FR", fermate: [
+      { id: "S01820", stazione: "MILANO ROGOREDO", partenza_teorica: now, partenzaReale: now + 60_000,
+        binarioProgrammatoPartenza: "4", binarioEffettivoPartenza: "7" },
+      { id: "S06421", stazione: "FIRENZE SANTA MARIA NOVELLA", arrivo_teorico: now + 60 * 60_000,
+        arrivoReale: now + 62 * 60_000 + 30_000, binarioProgrammatoArrivo: "8", binarioEffettivoArrivo: "9" },
+    ],
+  });
+  const train = await new TrainService(source).findNextTrain("Milano Rogoredo", "Firenze Santa Maria Novella", new Date(now - 60_000).toISOString());
+  assert.equal(train.departureDelaySeconds, 60);
+  assert.equal(train.arrivalDelaySeconds, 150);
+  assert.equal(train.departurePlatform, "7");
+  assert.equal(train.arrivalPlatform, "9");
+  assert.equal(train.arrivalPlatformStatus, "confirmed");
 });
