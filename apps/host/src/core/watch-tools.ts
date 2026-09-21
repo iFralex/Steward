@@ -39,7 +39,7 @@ function watchDomainDescription(): string {
   return (
       "Currently source='train' is supported. Train events: train.platform_announced, train.platform_confirmed, train.platform_changed, train.departed, train.stop_arrived, train.stop_departed, train.delay_changed, train.eta_changed, train.cancelled, train.arrived. " +
       "If a scheduled-only platform is already present, watch train.platform_confirmed and train.platform_changed rather than platform_announced. " +
-      "For stop events, where.positionRelativeToDestination=-1 means the stop immediately before the user's destination and 0 means the destination. A named stop must use train.stop_arrived/train.stop_departed with where.station or where.stationId; train.arrived always means the current trainRef destination. Retarget the trainRef first when the requested destination differs. Use once=true for one-shot milestones."
+      "For stop events, where.positionRelativeToDestination=-1 means the stop immediately before the user's destination and 0 means the destination. A named stop must use train.stop_arrived/train.stop_departed with where.station or where.stationId; train.arrived always means the current trainRef destination. For another downstream station on the same physical run, create a separate watcher on the same trainRef with a named-stop rule. Use once=true for one-shot milestones."
       + " For a time-relative milestone use trigger={kind:'before_time',field:'estimatedArrivalMs',minutes:30}; it follows live ETA changes and fires on the first poll inside the window."
   );
 }

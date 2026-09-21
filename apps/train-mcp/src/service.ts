@@ -54,20 +54,6 @@ export class TrainService {
     return normalizeStatus(raw, ref).value;
   }
 
-  /** Keep following the same physical run while changing the observed segment.
-   * This works after departure, unlike a new departure-board search. */
-  async retarget(trainRef: string, toQuery: string): Promise<TrainSnapshot> {
-    const ref = decodeTrainRef(trainRef);
-    const to = await this.resolveStation(toQuery);
-    if (to.id === ref.fromId) throw new Error("Departure and arrival stations must be different.");
-    const raw = await this.source.trainStatus(ref.originId, ref.trainNumber, ref.serviceDay);
-    if (!Object.keys(raw).length) throw new Error("No current live data is available for this train.");
-    const nextRef: TrainRefData = { ...ref, toId: to.id, toName: displayName(to) };
-    const normalized = normalizeStatus(raw, nextRef);
-    if (!normalized.routeMatches) throw new Error(`Train ${ref.trainNumber} does not serve ${displayName(to)} after the selected departure.`);
-    return normalized.value;
-  }
-
   private async resolveStation(query: string): Promise<Station> {
     let candidates = await this.source.searchStations(query);
     if (!candidates.length) {

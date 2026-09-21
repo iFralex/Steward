@@ -11,6 +11,7 @@ function snapshot(overrides: Partial<TrainSnapshot> = {}): TrainSnapshot {
       { id: "S1", name: "Milano Centrale", index: 0, cancelled: false, positionRelativeToDestination: -2 },
       { id: "S2", name: "Sesto San Giovanni", index: 1, cancelled: false, positionRelativeToDestination: -1 },
       { id: "S3", name: "Monza", index: 2, cancelled: false, positionRelativeToDestination: 0 },
+      { id: "S4", name: "Sondrio", index: 3, cancelled: false, positionRelativeToDestination: 1 },
     ],
     lastUpdated: "2026-09-18T08:00:00.000Z", source: "ViaggiaTreno", ...overrides,
   };
@@ -59,9 +60,23 @@ test("named stop rules are validated against the resource", () => {
   const adapter = new TrainWatchAdapter(unusedService);
   const base = { source: "train", resourceRef: "ref", chatId: "chat", instruction: "x" };
   assert.doesNotThrow(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived", where: { station: "monza" } }] }, snapshot()));
+  assert.doesNotThrow(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived", where: { station: "Sondrio" } }] }, snapshot()));
   assert.throws(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived" }] }, snapshot()), /requires where/);
-  assert.throws(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived", where: { station: "Sondrio" } }] }, snapshot()), /not served/);
+  assert.throws(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.stop_arrived", where: { station: "Como" } }] }, snapshot()), /not served/);
   assert.throws(() => adapter.validate({ ...base, rules: [{ id: "s", event: "train.arrived", where: { station: "Monza" } }] }, snapshot()), /train\.arrived/);
+});
+
+test("a separate watcher may observe a downstream named stop on the same trainRef", () => {
+  const adapter = new TrainWatchAdapter(unusedService);
+  const before = snapshot({ arrived: true });
+  const after = snapshot({ arrived: true });
+  after.stops[3] = { ...after.stops[3], actualArrivalMs: 30, actualArrival: "11:30" };
+
+  const [event] = adapter.events(before, after).filter((candidate) => candidate.type === "train.stop_arrived");
+  assert.equal(event.data.station, "Sondrio");
+  assert.equal(event.data.positionRelativeToDestination, 1);
+  assert.equal(adapter.isTerminal(before), false);
+  assert.equal(adapter.isTerminal(after), true);
 });
 
 test("polling becomes faster near the next domain milestone", () => {

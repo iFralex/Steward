@@ -84,16 +84,6 @@ test("trainStatus keeps scheduled platform explicitly unconfirmed", async () => 
   assert.equal((await new TrainService(source).status(train.trainRef)).departed, false);
 });
 
-test("retarget follows the same departed run to a later station", async () => {
-  const source = new FakeSource();
-  const service = new TrainService(source);
-  const first = await service.findNextTrain("Milano Rogoredo", "Firenze Santa Maria Novella", new Date(now).toISOString());
-  const retargeted = await service.retarget(first.trainRef, "Napoli Centrale");
-  assert.equal(retargeted.trainNumber, first.trainNumber);
-  assert.equal(retargeted.to, "Napoli Centrale");
-  assert.equal(retargeted.stops.at(-1)?.positionRelativeToDestination, 0);
-});
-
 test("arrival variance and platform are separate from departure data", async () => {
   const source = new FakeSource();
   source.trainStatus = async () => ({
