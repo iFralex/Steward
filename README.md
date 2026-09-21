@@ -333,6 +333,16 @@ These turns retain the conversation's read-only train, calendar, mail and
 memory tools. If generation or calling fails, a deterministic fallback push is
 delivered.
 
+The `time` adapter handles one-shot `time.reached` events for requests such as
+“call me today at 09:00”. Relative requests use `afterMinutes`. Absolute input
+contains both an ISO 8601 instant with an explicit UTC offset and the matching
+IANA zone (for example `Europe/Rome`), so
+daylight-saving transitions cannot silently shift the requested wall-clock
+time. A rule may also declare a bounded continuation: selected structured
+action outcomes schedule a durable child time watch after `afterMinutes`, up to
+`maxAttempts`. The child inherits the exact grants and event context; it cannot
+change tools or widen arguments.
+
 The train adapter currently emits platform announcement/confirmation/change,
 departure, arrival, cancellation, delay change and per-stop arrival/departure
 events. For stop rules, `positionRelativeToDestination: -1` means the stop
@@ -585,8 +595,9 @@ sequenceDiagram
 ```
 
 The host runs the combined poll-and-delivery loop immediately at startup and
-then every `WATCH_POLL_MS` (45 seconds by default, clamped to at least 15
-seconds). A process-local single-flight guard prevents overlapping executions.
+then every `WATCH_POLL_MS` (45 seconds by default). Adapters can request a
+shorter interval, down to five seconds near a time-sensitive milestone. A
+process-local single-flight guard prevents overlapping executions.
 Pending events are read oldest-first in batches of at most 20. If the original
 chat was deleted, delivery creates a `Monitor automatici` chat rather than
 dropping the event. Delivery waits when that chat already has an interactive
@@ -610,7 +621,10 @@ fails, the durable event is retried; its already composed notification text is
 stored in `watch_events.notification_text` and reused so the retry neither
 calls the agent again nor duplicates the chat message. For voice events the
 fallback is persisted before dialing: a host crash can therefore cause a push
-on restart but never an automatic redial. Per-send reports track
+on restart but never redial that same event. If the approved rule has a bounded
+continuation and the call returns a matching structured outcome such as
+`not_answered`, a distinct durable time watcher schedules the next attempt.
+Per-send reports track
 attempted, delivered, failed and pruned subscriptions. Delivery is complete
 when the chat copy exists and either no push endpoint is registered or at least
 one endpoint accepts the notification.
@@ -1136,7 +1150,7 @@ four source-neutral contracts:
 | Contract | Required meaning |
 |---|---|
 | `WatchDefinition` | `source`, opaque `resourceRef`, rules, original user `instruction`, originating `chatId`, and optional expiry. |
-| `WatchRule` | Unique rule `id`; exactly one semantic `event` or temporal `trigger`; optional equality filters, `once`, and rule-scoped tool grants. |
+| `WatchRule` | Unique rule `id`; exactly one semantic `event` or temporal `trigger`; optional equality filters, `once`, rule-scoped tool grants, and a bounded outcome continuation. |
 | `DomainEvent` | Stable resource-relative `key`, semantic `type`, timestamp, structured `data`, previous/current state, deterministic `fallbackText`, and optional localized notification title/domain guidance. |
 | `WatchAdapter` | A source name plus `snapshot`, `events`, `defaultExpiry` and `isTerminal` implementations. |
 
@@ -1174,7 +1188,12 @@ A representative train watch is data, not new scheduler code:
       "event": "train.stop_arrived",
       "where": { "positionRelativeToDestination": -1 },
       "once": true,
-      "grants": [{ "tool": "mcp__voice__call_start", "maxInvocations": 1 }]
+      "grants": [{ "tool": "mcp__voice__call_start", "maxInvocations": 1 }],
+      "continuation": {
+        "outcomes": ["not_answered", "busy"],
+        "afterMinutes": 1,
+        "maxAttempts": 10
+      }
     },
     {
       "id": "get-off",
@@ -1197,10 +1216,11 @@ not accepted: connection to Steward does not automatically make a write tool
 eligible for unattended execution.
 
 The host must be awake and connected while the watch is active. If it resumes
-only after a temporal target has already passed, Steward deliberately does not
-send a stale “30 minutes before” email. Ringback also remains subject to the
-active network's SIP reachability; the watch's persisted fallback still avoids
-an automatic redial after a crash.
+only after a relative temporal window has already passed, Steward deliberately
+does not send a stale “30 minutes before” email. An absolute `time.reached`
+watch instead fires after restart while still within its expiry. Ringback also
+remains subject to the active network's SIP reachability; the persisted event
+and child-watch keys prevent duplicated calls after a crash.
 
 Rule matching first requires an exact event type. Every `where` entry is then
 compared for deep equality against `event.data`; dot-separated keys can address

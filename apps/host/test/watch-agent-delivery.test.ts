@@ -13,6 +13,7 @@ import { WatchEngine, WatchStore, type DomainEvent, type WatchAdapter } from "@s
 import { chatStore } from "../src/core/chat-store.ts";
 import { pollAndDeliverWatchEvents } from "../src/core/watch-notification-service.ts";
 import { PushRegistry } from "../src/core/push.ts";
+import { TimeWatchAdapter } from "../src/core/time-watch-adapter.ts";
 
 class Adapter implements WatchAdapter {
   readonly source = "fake";
@@ -123,4 +124,44 @@ test("a read-only watch resumes the same chat and pushes the agent response", as
   assert.equal(seenChat, fx.chat.id);
   assert.equal(fx.store.pending().length, 0);
   fx.store.close();
+});
+
+test("an unanswered call creates a bounded time watcher and an answered retry stops the chain", async () => {
+  const store = WatchStore.open(join(mkdtempSync(join(testRoot, "continuation-")), "watches.db"));
+  const adapter = new Adapter();
+  let clock = Date.now();
+  const engine = new WatchEngine(store).register(adapter).register(new TimeWatchAdapter(() => clock));
+  const chat = chatStore().createChat("Richiamo");
+  await engine.create({
+    source: "fake", resourceRef: "train-ref", chatId: chat.id, expiresAt: Date.now() + 10 * 60_000,
+    instruction: "Chiamami ogni minuto finché rispondo",
+    rules: [{ id: "call", event: "fake.arrived", once: true,
+      grants: [{ tool: "mcp__voice__call_start" }],
+      continuation: { outcomes: ["not_answered"], afterMinutes: 1, maxAttempts: 3 } }],
+  });
+  adapter.step = 1;
+  let calls = 0;
+  const args = {
+    engine,
+    push: new PushRegistry(join(testRoot, "continuation-push.json"), async () => {}),
+    runAgentTurn: async () => { throw new Error("unexpected ordinary turn"); },
+    runVoiceTurn: async (chatId: string) => {
+      calls += 1;
+      return calls === 1
+        ? { chatId, requestId: "first", startedAt: 1, finishedAt: 2, ok: false, failureCode: "no_answer", error: "No answer", durationMs: 1 }
+        : { chatId, requestId: "second", startedAt: 3, finishedAt: 4, ok: true, durationMs: 1 };
+    },
+  };
+
+  await pollAndDeliverWatchEvents(args);
+  const child = store.active().find((watch) => watch.source === "time");
+  assert.ok(child);
+  assert.equal(child.rules[0].continuation?.attempt, 2);
+  assert.deepEqual(child.rules[0].grants, [{ tool: "mcp__voice__call_start" }]);
+
+  clock = (child.snapshot as { targetTimeMs: number }).targetTimeMs + 1;
+  await pollAndDeliverWatchEvents(args);
+  assert.equal(calls, 2);
+  assert.equal(store.active().filter((watch) => watch.source === "time").length, 0);
+  store.close();
 });

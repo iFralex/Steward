@@ -60,3 +60,21 @@ test("agent watch prompt resumes the chat and authorizes a conversational call",
   assert.match(prompt, /chiama ora l.utente/i);
   assert.match(prompt, /vt1_train/);
 });
+
+test("a scheduled call uses generic read tools instead of inventing a train resource", () => {
+  const prompt = watchAgentPrompt({
+    id: "event-time", watchId: "watch-time", chatId: "chat-time", attempts: 0,
+    instruction: "Chiamami alle 9 con il riepilogo delle nuove email",
+    resourceRef: JSON.stringify({ at: "2026-09-21T09:00:00+02:00", timeZone: "Europe/Rome" }),
+    rules: [{ id: "morning", event: "time.reached", once: true,
+      grants: [{ tool: "mcp__voice__call_start" }] }],
+    event: {
+      type: "time.reached", key: "time", timestamp: 1,
+      data: { scheduledAt: "2026-09-21T09:00:00+02:00", timeZone: "Europe/Rome" },
+      currentState: {}, fallbackText: "È l'ora del riepilogo.",
+    },
+  }, "it");
+  assert.match(prompt, /strumenti di lettura pertinenti/);
+  assert.doesNotMatch(prompt, /train_status/);
+  assert.match(prompt, /riepilogo delle nuove email/);
+});

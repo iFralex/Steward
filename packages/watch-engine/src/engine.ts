@@ -27,6 +27,19 @@ export class WatchEngine {
       if (rule.trigger && (rule.trigger.kind !== "before_time" || !rule.trigger.field || !Number.isFinite(rule.trigger.minutes) || rule.trigger.minutes < 0)) {
         throw new Error(`Invalid temporal trigger on watch rule ${rule.id}.`);
       }
+      if (rule.continuation) {
+        const continuation = rule.continuation;
+        if (!continuation.outcomes.length || !continuation.outcomes.every((outcome) => typeof outcome === "string" && outcome.trim())
+          || !Number.isFinite(continuation.afterMinutes) || continuation.afterMinutes <= 0
+          || !Number.isInteger(continuation.maxAttempts) || continuation.maxAttempts < 2 || continuation.maxAttempts > 60
+          || !rule.grants?.length) {
+          throw new Error(`Invalid continuation on watch rule ${rule.id}.`);
+        }
+        if (continuation.attempt !== undefined
+          && (!Number.isInteger(continuation.attempt) || continuation.attempt < 1 || continuation.attempt > continuation.maxAttempts)) {
+          throw new Error(`Invalid continuation attempt on watch rule ${rule.id}.`);
+        }
+      }
       if (ids.has(rule.id)) throw new Error(`Duplicate watch rule id: ${rule.id}`);
       ids.add(rule.id);
     }

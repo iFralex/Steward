@@ -26,6 +26,15 @@ export interface WatchTemporalTrigger {
   minutes: number;
 }
 
+/** A bounded follow-up scheduled from the outcome of an authorized action.
+ * `attempt` is engine-owned durable state and is never accepted from users. */
+export interface WatchContinuation {
+  outcomes: string[];
+  afterMinutes: number;
+  maxAttempts: number;
+  attempt?: number;
+}
+
 export interface WatchRule {
   id: string;
   event?: string;
@@ -34,6 +43,8 @@ export interface WatchRule {
   once?: boolean;
   /** Capabilities explicitly approved for turns caused by this rule only. */
   grants?: WatchToolGrant[];
+  /** Re-run the exact same authorized action after selected outcomes. */
+  continuation?: WatchContinuation;
 }
 
 export interface WatchDefinition {

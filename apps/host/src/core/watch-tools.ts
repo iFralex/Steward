@@ -2,6 +2,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { WatchRule, WatchToolGrant } from "@steward/watch-engine";
 import { sharedWatchEngine } from "./watch-runtime.ts";
 import { parseWatchGrant, watchCapabilityNames } from "./watch-capabilities.ts";
+import { createTimeResourceRef } from "./time-watch-adapter.ts";
 
 export function buildWatchTools(chatId: string): ToolDefinition[] {
   return [createWatchTool(chatId, false), createWatchTool(chatId, true), stopWatchTool()];
@@ -22,8 +23,12 @@ function createWatchTool(chatId: string, agentWatch: boolean): ToolDefinition {
         if (expiresAt !== undefined && Number.isNaN(expiresAt)) throw new Error("expiresAt must be an ISO 8601 date-time");
         const rules = parseRules(params.rules, agentWatch);
         if (agentWatch && !rules.some((rule) => rule.grants?.length)) throw new Error("An agent watch requires at least one rule-scoped grant");
+        const source = required(params, "source");
+        const resourceRef = source === "time"
+          ? timeResourceRef(params)
+          : required(params, "resourceRef");
         const watch = await sharedWatchEngine().create({
-          source: required(params, "source"), resourceRef: required(params, "resourceRef"),
+          source, resourceRef,
           rules, instruction: required(params, "instruction"), chatId,
           ...(expiresAt !== undefined ? { expiresAt } : {}),
         });
@@ -37,7 +42,8 @@ function createWatchTool(chatId: string, agentWatch: boolean): ToolDefinition {
 
 function watchDomainDescription(): string {
   return (
-      "Currently source='train' is supported. Train events: train.platform_announced, train.platform_confirmed, train.platform_changed, train.departed, train.stop_arrived, train.stop_departed, train.delay_changed, train.eta_changed, train.cancelled, train.arrived. " +
+      "Supported sources are 'train' and 'time'. For source='time', use event='time.reached' and pass exactly one of afterMinutes, or at plus timeZone. Absolute at values must be ISO 8601 instants with an explicit UTC offset and a matching IANA timeZone. " +
+      "Train events: train.platform_announced, train.platform_confirmed, train.platform_changed, train.departed, train.stop_arrived, train.stop_departed, train.delay_changed, train.eta_changed, train.cancelled, train.arrived. " +
       "If a scheduled-only platform is already present, watch train.platform_confirmed and train.platform_changed rather than platform_announced. " +
       "For stop events, where.positionRelativeToDestination=-1 means the stop immediately before the user's destination and 0 means the destination. A named stop must use train.stop_arrived/train.stop_departed with where.station or where.stationId; train.arrived always means the current trainRef destination. For another downstream station on the same physical run, create a separate watcher on the same trainRef with a named-stop rule. Use once=true for one-shot milestones."
       + " For a time-relative milestone use trigger={kind:'before_time',field:'estimatedArrivalMs',minutes:30}; it follows live ETA changes and fires on the first poll inside the window."
@@ -48,8 +54,11 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
   return {
       type: "object",
       properties: {
-        source: { type: "string", description: "Watch adapter name; currently train." },
-        resourceRef: { type: "string", description: "Opaque resource reference; for trains use trainRef from find_next_train." },
+        source: { type: "string", enum: ["train", "time"], description: "Watch adapter name." },
+        resourceRef: { type: "string", description: "For trains, the opaque trainRef from find_next_train. Omit for time watches." },
+        at: { type: "string", description: "For time watches, ISO 8601 date-time with explicit UTC offset, e.g. 2026-09-21T09:00:00+02:00." },
+        timeZone: { type: "string", description: "For time watches, IANA zone matching the offset in at, e.g. Europe/Rome." },
+        afterMinutes: { type: "number", exclusiveMinimum: 0, maximum: 525600, description: "For a relative time watch, minutes from now. Mutually exclusive with at/timeZone." },
         rules: { type: "array", items: { type: "object", properties: {
           id: { type: "string", description: "Unique short id within this watch." },
           event: { type: "string", description: "Domain event name." },
@@ -60,6 +69,11 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
           }, required: ["kind", "field", "minutes"], additionalProperties: false },
           where: { type: "object", additionalProperties: true, description: "Optional equality filters over event data." },
           once: { type: "boolean", description: "Fire this rule only once." },
+          continuation: { type: "object", properties: {
+            outcomes: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, description: "Structured action outcomes that schedule the next attempt, e.g. not_answered, busy, or failed." },
+            afterMinutes: { type: "number", exclusiveMinimum: 0, maximum: 1440 },
+            maxAttempts: { type: "number", minimum: 2, maximum: 60, description: "Total attempts including the first one." },
+          }, required: ["outcomes", "afterMinutes", "maxAttempts"], additionalProperties: false },
           ...(agentWatch ? { grants: { type: "array", items: { type: "object", properties: {
             tool: { type: "string", enum: watchCapabilityNames() },
             maxInvocations: { type: "number", minimum: 1 },
@@ -81,7 +95,7 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
         instruction: { type: "string", description: "The user's notification preference, preserved for the future agent turn." },
         expiresAt: { type: "string", description: "Optional ISO 8601 expiry; the adapter otherwise chooses a safe default." },
       },
-      required: ["source", "resourceRef", "rules", "instruction"],
+      required: ["source", "rules", "instruction"],
       additionalProperties: false,
     } as unknown as ToolDefinition["parameters"];
 }
@@ -108,6 +122,19 @@ function required(params: Record<string, unknown>, key: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${key} is required`);
   return value.trim();
 }
+function timeResourceRef(params: Record<string, unknown>): string {
+  const hasAfter = params.afterMinutes !== undefined;
+  const hasAbsolute = params.at !== undefined || params.timeZone !== undefined;
+  if (hasAfter === hasAbsolute) throw new Error("A time watch requires exactly one of afterMinutes, or at plus timeZone");
+  if (hasAfter) {
+    const minutes = params.afterMinutes;
+    if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0 || minutes > 525_600) {
+      throw new Error("afterMinutes must be greater than 0 and no more than 525600");
+    }
+    return createTimeResourceRef(new Date(Date.now() + minutes * 60_000).toISOString(), "UTC");
+  }
+  return createTimeResourceRef(required(params, "at"), required(params, "timeZone"));
+}
 function parseRules(value: unknown, allowGrants: boolean): WatchRule[] {
   if (!Array.isArray(value)) throw new Error("rules must be an array");
   return value.map((item) => {
@@ -118,13 +145,33 @@ function parseRules(value: unknown, allowGrants: boolean): WatchRule[] {
     if (Number(!!event) + Number(!!trigger) !== 1) throw new Error("Each rule needs exactly one of event or trigger");
     if (!allowGrants && row.grants !== undefined) throw new Error("Rule grants require create_agent_watch");
     const grants = allowGrants ? parseGrants(row.grants) : [];
+    const continuation = parseContinuation(row.continuation);
+    if (continuation && !allowGrants) throw new Error("Continuations require create_agent_watch");
+    if (continuation && !grants.length) throw new Error("A continuation requires a rule-scoped grant");
     return {
       id: required(row, "id"), ...(event ? { event } : {}), ...(trigger ? { trigger } : {}),
       ...(row.where && typeof row.where === "object" && !Array.isArray(row.where) ? { where: row.where as Record<string, unknown> } : {}),
       ...(row.once === true ? { once: true } : {}),
       ...(grants.length ? { grants } : {}),
+      ...(continuation ? { continuation } : {}),
     };
   });
+}
+
+function parseContinuation(value: unknown): WatchRule["continuation"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("continuation must be an object");
+  const row = value as Record<string, unknown>;
+  if (!Array.isArray(row.outcomes) || !row.outcomes.length
+    || !row.outcomes.every((entry) => typeof entry === "string" && entry.trim() && entry.length <= 80)) {
+    throw new Error("continuation.outcomes must contain non-empty structured outcome names");
+  }
+  if (typeof row.afterMinutes !== "number" || !Number.isFinite(row.afterMinutes)
+    || row.afterMinutes <= 0 || row.afterMinutes > 1440) throw new Error("continuation.afterMinutes must be between 0 and 1440");
+  if (!Number.isInteger(row.maxAttempts) || (row.maxAttempts as number) < 2 || (row.maxAttempts as number) > 60) {
+    throw new Error("continuation.maxAttempts must be an integer between 2 and 60");
+  }
+  return { outcomes: [...new Set(row.outcomes.map((entry) => String(entry).trim()))], afterMinutes: row.afterMinutes, maxAttempts: row.maxAttempts as number };
 }
 
 function parseTrigger(value: unknown): WatchRule["trigger"] | undefined {

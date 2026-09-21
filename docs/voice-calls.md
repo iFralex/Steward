@@ -179,9 +179,13 @@ writes use the normal voice approval flow. If another rule matched the same
 event and explicitly granted a registered constrained action, that action is
 available inside the same scoped phone turn; its deterministic argument guard
 is unchanged. A
-failed or interrupted call falls back to Web Push, and
-the fallback is persisted before dialing so a host restart never redials the
-same event automatically.
+failed or interrupted call falls back to Web Push, and the fallback is
+persisted before dialing so a host restart never redials the same event. A rule
+may explicitly pre-authorize a bounded continuation for structured outcomes
+such as `not_answered` or `busy`. In that case the host creates a durable
+one-shot time watcher for the next attempt, preserving the original event
+context and exact grant. A successful answer ends the chain; `maxAttempts` and
+the original expiry bound it even if the phone remains unavailable.
 
 ## StreamCore seam
 
