@@ -12,6 +12,8 @@ const execFileAsync = promisify(execFile);
 const TAILSCALE = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 const SIP_HOST = "sip.linphone.org";
 const SIP_PORT = 5061;
+const EXIT_NODE_SETTLE_MS = 20_000;
+const EXIT_NODE_PROBE_INTERVAL_MS = 1_000;
 
 export interface ExitNodeChoice { id: string; name: string; online: boolean }
 export interface VoiceNetworkSettings { enabled: boolean; exitNodeId: string }
@@ -58,6 +60,8 @@ export interface VoiceNetworkDeps {
   probe?: () => Promise<boolean>;
   settings?: () => VoiceNetworkSettings;
   journalFile?: string;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 async function tailscale(args: string[]): Promise<string> {
@@ -108,6 +112,8 @@ export class VoiceNetworkFallback {
       probe: deps.probe ?? sipTlsProbe,
       settings: deps.settings ?? getVoiceNetworkSettings,
       journalFile: deps.journalFile ?? journalPath(),
+      now: deps.now ?? Date.now,
+      sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     };
     // A previous host may have died mid-call. Restore before accepting a new lease.
     this.ready = this.restoreStale().catch((error) => {
@@ -185,11 +191,29 @@ export class VoiceNetworkFallback {
   }
 
   private async probeAfterSwitch(): Promise<boolean> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (await this.deps.probe()) return true;
-      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500));
+    // On macOS the CLI can acknowledge selection before the VPN route is
+    // carrying new sockets. The previous three near-immediate probes rejected
+    // a working iPhone exit node; a live test succeeded after ten seconds.
+    const startedAt = this.deps.now();
+    const deadline = startedAt + EXIT_NODE_SETTLE_MS;
+    let attempts = 0;
+    while (true) {
+      attempts += 1;
+      if (await this.deps.probe()) {
+        recordAudit({ actor: "host", eventType: "voice.network_sip_ready", risk: "low",
+          summary: "SIP TLS became reachable through call exit node", ok: true,
+          payload: { attempts, elapsedMs: this.deps.now() - startedAt } });
+        return true;
+      }
+      const remaining = deadline - this.deps.now();
+      if (remaining <= 0) {
+        recordAudit({ actor: "host", eventType: "voice.network_sip_unreachable", risk: "medium",
+          summary: "SIP TLS stayed unreachable through call exit node", ok: false,
+          payload: { attempts, elapsedMs: this.deps.now() - startedAt } });
+        return false;
+      }
+      await this.deps.sleep(Math.min(EXIT_NODE_PROBE_INTERVAL_MS, remaining));
     }
-    return false;
   }
 
   private async restoreStale(): Promise<void> {

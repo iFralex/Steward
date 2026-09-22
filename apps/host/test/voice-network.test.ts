@@ -48,6 +48,26 @@ test("blocked SIP uses selected exit node for the call and restores prior route"
   assert.equal(existsSync(f.journalFile), false);
 });
 
+test("a newly selected exit node gets time for its route to become usable", async () => {
+  let elapsed = 0;
+  let probes = 0;
+  const f = fixture(async () => {
+    probes += 1;
+    return probes > 1 && elapsed >= 10_000;
+  });
+  const network = new VoiceNetworkFallback({
+    ...f.deps,
+    now: () => elapsed,
+    sleep: async (ms) => { elapsed += ms; },
+  });
+  const lease = await network.acquire();
+  assert.equal(f.selected(), "phone");
+  assert.equal(elapsed, 10_000);
+  assert.ok(probes > 3);
+  await lease.release();
+  assert.equal(f.selected(), "");
+});
+
 test("startup restores a crashed call, but never overrides a manual route change", async () => {
   const f = fixture(async () => true);
   f.setSelected("phone");
