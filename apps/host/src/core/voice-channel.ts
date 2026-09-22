@@ -391,8 +391,10 @@ export class VoiceCallCoordinator {
       ? runner.runAutomaticTurn(chat.id, turnPrompt, options.watchEvent ? "scheduler" : "host")
       : runner.runTurn(chat.id, turnPrompt);
     void turn.then(async (result) => {
-      if (!result.ok) throw new Error(result.error || voiceCopy.status.agentFailed);
+      // A later agent/tool error (often NO ACTIVE CALL after media teardown)
+      // must not hide the first, actionable transport failure.
       if (this.terminalError) throw this.terminalError;
+      if (!result.ok) throw new Error(result.error || voiceCopy.status.agentFailed);
       if (!this.dialStarted) throw new Error(voiceCopy.status.noDial);
       this.audit({
         actor: "host", eventType: "voice.call_completed", risk: "low", summary: voiceCopy.audit.callCompleted,
@@ -520,6 +522,7 @@ export class VoiceCallCoordinator {
       return;
     }
     if (e.type === "tool_call") {
+      if (this.terminalError) return;
       const copy = voiceMessages(this.currentLanguage()).status;
       if (e.tool === "mcp__voice__call_start") {
         this.dialStarted = true;
@@ -534,15 +537,20 @@ export class VoiceCallCoordinator {
     if (e.type !== "tool_result" || !e.tool?.startsWith("mcp__voice__")) return;
     const failure = parseRingbackFailure(e.output);
     if (failure) {
-      this.terminalError = new VoiceCallFailedError(failure);
-      this.transition("failed", failure.message, failure.retryable);
+      if (!this.terminalError) {
+        this.terminalError = new VoiceCallFailedError(failure);
+        this.transition("failed", failure.message, failure.retryable);
+      }
       return;
     }
     if (e.ok === false) {
-      this.terminalError = new Error(`Ringback tool failed: ${e.tool}`);
-      this.transition("failed", this.terminalError.message, true);
+      if (!this.terminalError) {
+        this.terminalError = new Error(`Ringback tool failed: ${e.tool}`);
+        this.transition("failed", this.terminalError.message, true);
+      }
       return;
     }
+    if (this.terminalError) return;
     const text = outputText(e.output);
     const copy = voiceMessages(this.currentLanguage()).status;
     if (text.includes("[CALL ENDED]") || e.tool === "mcp__voice__call_end") this.transition("ending", copy.callEnded);
@@ -649,8 +657,10 @@ export class VoiceCallCoordinator {
       reason = cause instanceof Error ? cause.message : String(cause);
       decision = "deny";
       if (cause instanceof VoiceCallFailedError) {
-        this.terminalError = cause;
-        this.transition("failed", cause.message, cause.diagnostic.retryable);
+        if (!this.terminalError) {
+          this.terminalError = cause;
+          this.transition("failed", cause.message, cause.diagnostic.retryable);
+        }
       }
     }
 

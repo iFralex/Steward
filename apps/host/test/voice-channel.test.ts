@@ -519,6 +519,55 @@ test("interrupted media triggers one callback in the same chat without replaying
   assert.equal(coordinator.status().lastCall?.ok, true);
 });
 
+test("an interrupted voice approval retains the media failure after NO ACTIVE CALL", async () => {
+  const chat = chatStore().createChat("Approval recovery");
+  const audit: any[] = [];
+  const usage: any[] = [];
+  const finished: Array<{ chatId: string; error?: Error }> = [];
+  let resolveFinished!: () => void;
+  const completion = new Promise<void>((resolve) => { resolveFinished = resolve; });
+  const bridge = fakeBridge();
+  bridge.callTool = async (tool: string) => [{ type: "text", text: tool === "mcp__voice__call_status"
+    ? '{"ready":true,"phase":"idle"}'
+    : '[CALL FAILED] {"code":"media_interrupted","message":"RTP stopped during approval","retryable":true}' }];
+  let turns = 0;
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), (chatId, error) => {
+    finished.push({ chatId, error });
+    resolveFinished();
+  }, {
+    bridge: async () => bridge, createChat: () => chat,
+    createRunner: (emit, _scope, session) => ({
+      runTurn: async () => { throw new Error("hidden prompt expected"); },
+      runAutomaticTurn: async () => {
+        turns += 1;
+        emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+        emit({ type: "tool_result", tool: "mcp__voice__call_start", ok: true, output: "connected" } as any);
+        if (turns === 1) {
+          const approval = await session!.requestApproval({
+            tool: "create_agent_watch", input: { source: "time", afterMinutes: 1 }, chatId: chat.id,
+          });
+          assert.equal(approval.decision, "deny");
+          emit({ type: "tool_result", tool: "mcp__voice__converse", ok: false,
+            output: "[NO ACTIVE CALL] — call call_start first" } as any);
+          return { ok: false, error: "agent stopped after channel error", aborted: false, messageId: null, text: "" };
+        }
+        return { ok: true, messageId: "recovered", text: "continued" };
+      },
+      abort: async () => {},
+    }),
+    audit: ((entry: any) => audit.push(entry)) as any,
+    usage: (entry) => usage.push(entry), language: () => "it", sleep: async () => {},
+  });
+
+  await coordinator.start(undefined, "approval-recovery");
+  await completion;
+  assert.equal(turns, 2);
+  assert.deepEqual(usage.map((entry) => entry.outcome), ["media_interrupted", "completed"]);
+  assert.equal(audit.find((entry) => entry.eventType === "voice.call_failed")?.payload?.diagnostic?.code, "media_interrupted");
+  assert.equal(audit.filter((entry) => entry.eventType === "voice.recovery_scheduled").length, 1);
+  assert.deepEqual(finished, [{ chatId: chat.id, error: undefined }]);
+});
+
 test("a failed recovery never calls again", async () => {
   const chat = chatStore().createChat("Recovery limit");
   let attempts = 0;
