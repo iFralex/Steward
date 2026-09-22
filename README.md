@@ -22,7 +22,9 @@ Everything important runs locally. Your data is stored on your machine. Network 
 
 - [What Steward Does](#what-steward-does) — product-level capabilities and examples.
 - [Main Workflows](#main-workflows) — the user-visible chat, memory, Action Center, mobile, usage and audit experiences.
+- [Voice And Quick Send](#voice-and-quick-send) — authenticated phone entry points, speech settings and the Ringback transport.
 - [Live Trains And Event Monitors](#live-trains-and-event-monitors) — live Italian train data and reusable background notifications.
+- [System Health And Tool Inventory](#system-health-and-tool-inventory) — live service checks, background-job diagnostics and tool-policy visibility.
 - [Architecture](#architecture) — services and the three operating planes.
 - [End-To-End Data Journeys](#end-to-end-data-journeys) — complete chat, mail ingestion, threading, embedding and wiki-promotion flows.
 - [Retrieval Internals](#retrieval-internals) — mail, calendar, contacts, wiki and local-file search algorithms.
@@ -33,7 +35,7 @@ Everything important runs locally. Your data is stored on your machine. Network 
 - [Performance, Bounding And Backpressure](#performance-bounding-and-backpressure) — the limits that keep large local datasets and background work predictable.
 - [Trust Boundaries And Threat Model](#trust-boundaries-and-threat-model) — enforced guarantees and explicit non-goals.
 - [Engineering Decisions And Trade-Offs](#engineering-decisions-and-trade-offs) — why the system uses mirrors, SQLite, hybrid retrieval and deterministic policy.
-- [Setup](#setup) — prerequisites, development, launcher and packaging.
+- [Setup](#setup) — prerequisites, development, launcher, packaging and rollback-safe native deployment.
 
 ## What Steward Does
 
@@ -288,6 +290,22 @@ keeps the existing Steward agent, memory, tools, audit trail, and approval
 boundary. The coordinator already reserves a StreamCore transport for a future
 streaming WebRTC media path. See [Voice calls](docs/voice-calls.md).
 
+Ringback is deliberately outside the packaged `.app`: Steward pins and patches
+its runtime, but does not silently redistribute pjproject/pjsua2 inside the app
+bundle. The managed launcher keeps the MCP stdio pipe open, enforces one native
+ARM runtime with a PID/lock directory, terminates the child with the host,
+rotates the detailed SIP log, and exposes `--doctor`, `--version`, and `--stop`.
+The SIP identity is stored in `voice.env`; the password is read at runtime from
+macOS Keychain and is never passed in argv or persisted in that file.
+
+The System page selects an independent installed macOS `say` voice for English
+and Italian plus a 100–300 WPM speech rate. `Automatic` chooses a suitable voice
+for the current Steward language. Preview audio is rendered to an isolated
+temporary WAV and streamed back to the browser; the temporary directory is
+removed afterwards. During a call, the agent can change only that call's rate
+without approval. Persisting a new default is a normal gated action and uses
+the same spoken approval protocol as every other sensitive tool.
+
 ### Live Trains And Event Monitors
 
 `apps/train-mcp` reads live Italian railway data from ViaggiaTreno and exposes
@@ -325,10 +343,14 @@ originating chat, where the agent can use read-only tools to refresh facts.
 therefore requires the normal approval gate. Its generic capability registry
 currently covers voice, mail send/reply, calendar create/update/delete,
 Contacts create/update and Action Center status changes. Each argument uses an
-`exact`, trusted `template`, `one_of`, or numeric `range` constraint. Extra
-fields are denied, the runtime enables only tools granted by the rules matched
-by that event, and a durable claim prevents repeated execution. New write tools
-remain unavailable until their argument surface is explicitly registered.
+`exact`, trusted `template`, `one_of`, numeric `range`, or `relative_time`
+constraint. Relative times resolve only a registered `state.*` or `event.*`
+timestamp plus a fixed minute offset, then freeze to an exact ISO instant before
+execution. Extra fields are denied, the runtime enables only tools granted by
+the rules matched by that event, and a durable claim prevents repeated
+execution. New write tools remain unavailable until their argument surface is
+explicitly registered.
+
 These turns retain the conversation's read-only train, calendar, mail and
 memory tools. If generation or calling fails, a deterministic fallback push is
 delivered.
@@ -337,16 +359,21 @@ The `time` adapter handles one-shot `time.reached` events for requests such as
 “call me today at 09:00”. Relative requests use `afterMinutes`. Absolute input
 uses the same convention as Calendar: an RFC 3339 instant with an explicit UTC
 offset, normalized to UTC internally and rendered in the Mac's local timezone
-with the date-specific offset. A rule may also declare a bounded continuation: selected structured
-action outcomes schedule a durable child time watch after `afterMinutes`, up to
-`maxAttempts`. The child inherits the exact grants and event context; it cannot
-change tools or widen arguments.
+with the date-specific offset. Relative delays are converted to an absolute
+instant before the approval request is shown, so time spent deciding on a gated
+future action cannot move its deadline. A rule may also declare a bounded
+continuation: selected structured action outcomes schedule a durable child time
+watch after `afterMinutes`, up to `maxAttempts`. The child inherits the exact
+grants and event context; it cannot change tools or widen arguments.
 
 The train adapter currently emits platform announcement/confirmation/change,
-departure, arrival, cancellation, delay change and per-stop arrival/departure
-events. For stop rules, `positionRelativeToDestination: -1` means the stop
-immediately before the requested destination and `0` means the destination
-itself. A generic `before_time` trigger can fire relative to a live timestamp,
+departure, arrival, cancellation, delay/ETA change and per-stop
+arrival/departure events. Named-stop rules are validated against the current
+route at creation and use `where.station` or the stable `where.stationId`; a
+separate watcher observes a different downstream stop without mutating the
+opaque `trainRef`. For relative stop rules, `positionRelativeToDestination: -1`
+means the stop immediately before the requested destination and `0` means the
+destination itself. A generic `before_time` trigger can fire relative to a live timestamp,
 such as 30 minutes before `estimatedArrivalMs`; a moving train ETA therefore
 moves the deadline until the rule fires. Rules can be one-shot, watches expire
 automatically after the journey, and event keys prevent duplicate delivery
@@ -395,6 +422,47 @@ The host exposes the ledger at `/audit` (filterable by actor, event type, risk, 
 
 ![The Audit page: a filterable event timeline with a redacted per-event detail panel](docs/images/audit-page.png)
 
+### System Health And Tool Inventory
+
+The System page is an active diagnostic surface, not a static list of configured
+services. `GET /system/status` builds one bounded snapshot in parallel from:
+
+- HTTP probes for the host, gateway, Ollama and LLM Wiki;
+- gateway model discovery and presence of the local `bge-m3` embedding model;
+- scheduler log-tail inspection, including the last known result of each job;
+- local speech configuration, watch-store activity and the last watch poll and
+  delivery observed by this host process;
+- Web Push subscriptions and the most recent per-endpoint delivery report;
+- voice state and existence of Ringback's configured Whisper model, without
+  spawning a second Ringback process;
+- readability/writability of primary SQLite stores, available disk space and
+  macOS Mail/Calendar data access;
+- a fresh MCP `tools/list` plus a harmless connector-specific smoke call where
+  one is defined.
+
+Each MCP tool is shown with its fully qualified name, source, scope
+(`chat`/`call`/`watch`/`all`), current deterministic policy decision, call/error
+totals and most recent result from the Usage ledger. Discovery is cached and
+combined with a bundled manifest: if an MCP server is temporarily down, the UI
+keeps its tool inventory visible and marks the service unavailable instead of
+making the tools disappear. Native host tools such as `create_watch`,
+`create_agent_watch`, `stop_watch`, `ask_user` and the call-only speech-rate
+tool are reported through the same model.
+
+Health is intentionally observational. Probes have short timeouts, close their
+temporary MCP clients, and never start an external action. State transitions
+between `ok`, `warning`, `error` and `unknown` are written to Audit only when
+the state changes. Scheduler and watch checks distinguish “not observed in this
+process” from a verified failure, avoiding false certainty after startup.
+
+The native launcher complements this runtime view with a localized AppKit
+startup overlay. It reports the Ollama, gateway, wiki, host and web-loading
+stages while the WebKit view remains hidden underneath, degrades non-critical
+embedding failures to warnings, and offers a retry only for terminal repository
+or navigation failures. The overlay is removed with a short fade only after a
+real page finishes loading, avoiding both a blank window and an HTML placeholder
+that would replace the actual navigation state.
+
 ## Architecture
 
 ```text
@@ -413,14 +481,15 @@ The host exposes the ledger at `/audit` (filterable by actor, event type, risk, 
 │ health/startup     │    │ usage ledger, file registry, push,  │
 └────────────────────┘    │ speech, Action Center executor      │
                           │ watch engine, event queue           │
-                          └───────┬────────────────────▲────────┘
-                                  │ MCP stdio bridge    │ OpenAI-compatible
-                                  │                     │
-        ┌─────────────────────────┴──────────┐  ┌──────┴──────────────────┐
-        │ MCP connectors                      │  │ apps/llm-gateway :4000  │
-        │ llm-wiki, mail, calendar, contacts, │  │ tier-1..tier-6,         │
-        │ shell, trains, action-center        │  │ local-embed, rates      │
-        └──────────────▲──────────────────────┘  └─────────▲───────────────┘
+                          └───────┬───────────┬────────▲────────┘
+                                  │           │        │ OpenAI-compatible
+                                  │ MCP stdio │        │
+        ┌───────────────────────────────┐ ┌──────────┐  ┌─────────────────────────┐
+        │ MCP connectors                │ │ Ringback │  │ apps/llm-gateway :4000  │
+        │ wiki, mail, calendar,         │ │ external │  │ tier-1..tier-6,         │
+        │ contacts, shell, trains       │ │ SIP MCP  │  │ local-embed, rates      │
+        └──────────────▲────────────────┘ └────┬─────┘  └─────────▲───────────────┘
+                       │                       └────────▶ Linphone / phone
                        │ local DB / AppleScript / files       │
         ┌──────────────┴──────────────────────────────────────┴────┐
         │ apps/scheduler                                             │
@@ -433,7 +502,7 @@ There are three operating planes:
 
 1. **Interactive plane** — the user chats in the web UI; the host runs an agent and exposes tools through MCP. Read actions can run directly. Writes become approval cards.
 2. **Background plane** — the scheduler keeps local indexes fresh, embeds mail, distills durable knowledge into the wiki, scans for action items and confirms write operations; the host watch engine polls active resource monitors and delivers matching events.
-3. **Reliability plane** — writes are journaled before execution, confirmed against local mirrors afterwards, and retried safely if they did not actually land.
+3. **Reliability plane** — writes are journaled before execution and confirmed against local mirrors; watch events, voice outcomes and temporary network-route changes have their own durable claims or journals so retries cannot silently duplicate effects.
 
 ## End-To-End Data Journeys
 
@@ -490,6 +559,87 @@ streaming protocol events for live rendering; headless callers use the return
 value for control flow.
 
 The UI receives protocol events rather than provider-specific objects. Messages, tool starts/results/errors, questions, approval requests and Action Center state therefore remain portable across the browser, installed PWA, native WebKit window and future clients.
+
+### A Phone Call From HTTP To SIP And Back
+
+Voice is a channel over the same `ChatManager`, not a second assistant. The
+transport owns SIP media; the host still owns chat identity, agent context,
+tool policy, approvals, Audit and Usage.
+
+```mermaid
+sequenceDiagram
+    participant Shortcut as iPhone Shortcut / PWA
+    participant Host as VoiceCallCoordinator
+    participant Net as VoiceNetworkFallback
+    participant Agent as ChatManager
+    participant MCP as Ringback MCP
+    participant Phone as Linphone / phone
+
+    Shortcut->>Host: POST /quick-call or /voice/call + requestId
+    Host->>MCP: initialize, tools/list, call_status
+    Note over Host: No chat or SIP INVITE exists until preflight passes
+    Host->>Net: acquire call-scoped route lease
+    Net-->>Host: direct SIP usable or reversible exit-node route
+    Host->>Agent: hidden automatic turn in a fresh/existing chat
+    Agent->>MCP: call_start(opening line)
+    MCP->>Phone: SIP INVITE + RTP
+    loop Spoken turns
+        Phone-->>MCP: audio
+        MCP-->>Agent: final transcription
+        Agent->>MCP: converse(short localized reply)
+        MCP->>Phone: synthesized speech
+    end
+    Agent->>MCP: call_end
+    MCP-->>Host: confirmed remote teardown / structured outcome
+    Host->>Net: release lease and restore previous route
+    Host->>Host: persist chat, Audit event and voice Usage row
+```
+
+`/quick-call` accepts only an empty object or `requestId`; `/voice/call` also
+accepts a bounded custom `openingLine`. Both routes use the normal bearer token,
+return `202` once the asynchronous turn has started, and create a new chat only
+after Ringback passes preflight. Preflight checks MCP startup, presence of
+`call_start`, `call_status`, and `call_end`, then calls `call_status`; this safe
+check is retried once, whereas a real unanswered call is never blindly redialed.
+
+Ringback has one process-global SIP session, so the coordinator admits one call
+at a time. A second request receives `409`, `retryAfterMs` and the live state.
+Caller-supplied request IDs are cached for ten minutes: replaying the same HTTP
+request returns the original `chatId` instead of issuing another INVITE. Status
+exposes `preflighting`, `starting`, `ringing`, `speaking`, `listening`,
+`processing`, `ending` and `failed` phases; the client polls
+only while a call is active.
+
+The call is started by a hidden host control turn, so “call the user now” is not
+misrepresented as a user-authored transcript message. Ringback transcription is
+returned to the same persisted agent session, which can query memory and
+read-only connectors between spoken turns. `packages/mcp-bridge` preserves
+empty successful content blocks instead of treating them as missing results,
+preventing a completed transcription from becoming a silent agent turn.
+The host snapshots the selected English/Italian locale for its active-call
+prompt and approval vocabulary. Ringback reads the persisted language before
+later Whisper inference and localized `say` synthesis, so settings changes do
+not require rebuilding its model runtime.
+
+Terminal media state is data, not inferred from whether the MCP request itself
+resolved. Steward parses Ringback's `[CALL FAILED]` JSON marker and preserves
+stable outcomes (`no_answer`, `rejected`, `busy`, `unreachable`, `timeout`,
+`auth_failed`, `server_error`, `media_error`, `media_stalled`,
+`media_interrupted`, `network_error`). Socket/reset language can reclassify a
+nominal SIP 503 as a network failure while retaining the original status and
+reason. The first actionable media failure is latched: a later `NO ACTIVE CALL`
+during cleanup or an interrupted approval cannot overwrite it. Duration,
+failure code and SIP diagnostics flow to `/voice/status`, Audit and the dedicated
+voice section of Usage.
+
+The native Ringback patches make this contract observable at the media edge.
+They use CoreAudio for a stable pjproject conference bridge while keeping the
+Mac microphone out of RTP, run half-duplex turns, require confirmed remote SIP
+teardown, and distinguish two legitimate silent replies from a connected call
+whose incoming RTP has stopped. Detailed SIP diagnostics are bounded by log
+rotation. The managed shell wrapper launches the asynchronous Python MCP child
+with explicit `<&0`; without that redirection non-interactive Bash would replace
+stdin with `/dev/null` and the stdio server would exit during initialization.
 
 ### Live Train Lookup And Refresh
 
@@ -1037,6 +1187,61 @@ The approval card carries the proposed tool and arguments. The user can approve 
 
 Pending approvals live in the chat's `Session` and expire after `APPROVAL_TIMEOUT_MS`. A timeout resolves to denial. The headless `/quick-send` runner has no attached client; if it reaches a gated write, the approval request has nowhere to go and safely times out rather than executing unattended.
 
+### Spoken Approval Is A Host Sub-Protocol
+
+A phone call does not weaken the desktop policy. `allow` tools remain automatic,
+`deny` remains non-overridable, and a `gate` request pauses the agent while the
+host talks to Ringback directly. The coordinator serializes approvals against
+the single active media session and deterministically reads the exact tool,
+canonical arguments and approval preview. The model neither writes this prompt
+nor interprets the answer.
+
+The accepted commands are exact localized intents: approve, reject or repeat.
+“Repeat” replays the immutable request; ambiguous input gets one constrained
+retry and then resolves to denial. The host calls the original
+`Session.resolveApproval` request at most once, so the normal permission gate
+executes the unchanged input only after a positive command. Voice does not offer
+approve-with-edit: revisions return to the richer PWA flow. Prompt, repeat,
+decision/failure and timing are correlated to the same request in Audit and
+recorded as `voice.approval` in Usage; audio itself is not retained.
+
+`create_agent_watch` receives a human-readable spoken summary rather than raw
+nested JSON. It names the future time/event, constrained capabilities, retry
+continuation and whether push fallback was explicitly authorized. This is only
+presentation: the actual authority remains the parsed, rule-scoped grant stored
+by the watch engine.
+
+### Voice Recovery And Call-Scoped Network Changes
+
+There are two deliberately different retry paths:
+
+1. A `network_error` before the phone connects may switch once to a configured
+   Tailscale exit node and retry the dial in the same chat. A 20-second bounded
+   probe loop waits for macOS to actually route new TLS sockets; the CLI can
+   acknowledge the selection before the route is usable.
+2. `media_interrupted` after a connected call schedules one replacement call
+   after three seconds in the same persisted chat. It asks what the user last
+   heard, does not assume the last utterance arrived, never repeats an external
+   write automatically, and requires any interrupted approval again. Normal
+   hangup, no answer, rejection, silence and a failed recovery do not recurse.
+
+The network fallback is a lease, not a permanent VPN preference. Before changing
+the route it atomically journals the selected and previous Tailscale peer IDs,
+then addresses the exit node by its current `100.x` IP from `tailscale status`.
+Release restores the previous route only if the configured call route is still
+selected, so a user's manual mid-call change wins. Startup tries to repair a
+stale journal left by a crashed host before issuing another lease. Settings
+cannot change while a call is active, only an online peer advertising
+`ExitNodeOption` is accepted, and SIP reachability is verified with an
+authorized TLS connection to `sip.linphone.org:5061`.
+
+Recovery authority is equally narrow. A manual call receives the normal voice
+policy. A watch call receives only the union of grants on the rules matched by
+that event plus one dial. A replacement call gets one fresh dial claim, while
+all other tools remain subject to the original durable guard. This prevents a
+transport retry from becoming a second authorization for mail, calendar or
+other side effects.
+
 ### Journal, Confirmation And Retry
 
 Approval answers “may this be attempted?” It does not prove that Mail.app or Calendar.app actually committed the operation. Side-effecting connectors therefore use `packages/write-ops`:
@@ -1221,11 +1426,14 @@ A representative train watch is data, not new scheduler code:
 The capability registry lives in `apps/host/src/core/watch-capabilities.ts`.
 Registering another write tool declares its allowed and required argument
 fields, whether constraints are mandatory, its execution mode and invocation
-limit. The shared guard then supplies template resolution, exact/set/range
-matching, rejection of extra fields, durable claims, Usage and Audit without
-changes to the watch engine or scheduler. Arbitrary MCP names are intentionally
-not accepted: connection to Steward does not automatically make a write tool
-eligible for unattended execution.
+limit. The shared guard then supplies template and relative-time resolution,
+exact/set/range matching, rejection of extra fields, durable claims, Usage and
+Audit without changes to the watch engine or scheduler. Calendar creation
+prefers the stable `calendarId`; a legacy title is accepted only if it resolves
+to exactly one calendar, preventing an adaptive action from targeting an
+ambiguous duplicate name. Arbitrary MCP names are intentionally not accepted:
+connection to Steward does not automatically make a write tool eligible for
+unattended execution.
 
 The host must be awake and connected while the watch is active. If it resumes
 only after a relative temporal window has already passed, Steward deliberately
@@ -1287,6 +1495,7 @@ The train adapter maps snapshot transitions as follows:
 | `train.platform_changed` | Previous and current platform both exist and differ | Previous/new platform and current confidence. |
 | `train.departed`, `train.arrived`, `train.cancelled` | Corresponding boolean changes from false to true | Train, segment, delay, platform and update time. |
 | `train.delay_changed` | Delay minutes differ | Old and new delay. |
+| `train.eta_changed` | Estimated arrival timestamp differs | Previous/new ETA and the refreshed train state. |
 | `train.stop_arrived`, `train.stop_departed` | A stop gains the corresponding actual timestamp | Station ID/name/index, next stop and relative destination position. |
 
 Train watches are terminal when the requested train is arrived or cancelled.
@@ -1374,6 +1583,13 @@ Steward is designed to retain narrower functionality when a dependent service is
 | Push subscription is expired | The dead subscription is pruned and the per-send delivery report records the failure; an all-failed watch or Action notification remains eligible for retry. The underlying chat/Action remains available in the UI. |
 | ViaggiaTreno is unavailable or has no live board result | Train tools return an explicit error; existing watches retain their last snapshot and record the polling error for a later retry. |
 | LLM notification generation repeatedly fails | The durable event remains pending during bounded retries, then Steward sends the adapter's deterministic fallback message. |
+| Ringback preflight fails | No chat and no SIP INVITE are created. The authenticated caller receives an explicit unavailable response after one safe health-check retry. |
+| Voice channel is already active | Manual callers receive `409`; watch events remain durably pending and are retried when the coordinator reports idle, including after restart. Busy is not treated as call failure and cannot trigger fallback push. |
+| SIP is blocked on the direct route | If explicitly configured, a call-scoped Tailscale exit-node lease is acquired and probed for up to 20 seconds. The previous route is restored after the call or repaired from the journal after a crash. |
+| Remote audio stalls after connection | Ringback emits `media_interrupted`; Steward makes at most one continuation call in the same chat. Normal hangup, silence and unanswered dialing never enter this recovery path. |
+| A watch-started call fails | A push is sent only if every matched voice rule explicitly set `voiceFallback: "push"`; a call-only rule vetoes cross-channel fallback. The event is claimed before dialing and is never redialed merely because delivery restarts. |
+| Action notification SQLite polling fails | The best-effort poll logs the error and releases its single-flight guard; the host, chat and unrelated services remain alive for a later poll. |
+| MCP service is offline during system diagnostics | The service is marked unavailable, but its last discovered or bundled tool inventory remains visible with policy and historical usage. |
 | Gateway rates unavailable | Usage display falls back to configured static rates; raw tokens remain recorded. |
 
 This degradation model is deliberate: a missing probabilistic or remote capability should not make deterministic local data inaccessible.
@@ -1387,7 +1603,10 @@ Local-first does not mean unbounded. Several limits keep cold starts, model cont
 | Mail SQLite | WAL mode, best-effort 2 GiB mmap and 64 MiB page cache | Multiple readers can search while ingestion writes; large local archives avoid repeated cold-page reads. |
 | Ranked mail search | 50 lexical + 50 vector candidates | Ranking stays fast before RRF and final filtering. |
 | Train lookup | Current departure-board candidates, direct services only | Bounds live API calls and avoids pretending to be a full journey planner. |
-| Watch polling | 45 s by default, minimum 15 s, no overlapping poll/delivery loop | Keeps mobile updates timely without creating concurrent duplicate work. |
+| Watch polling | 45 s default; configured base has a 15 s floor; adapters can request urgency down to a global 5 s floor; no overlapping poll/delivery loop | Keeps ordinary polling economical while allowing time-sensitive milestones without concurrent duplicate work. |
+| Voice admission | One active SIP session; 10-minute request-id idempotency; two bounded preflight attempts | Matches Ringback's process-global media state and prevents Shortcut/network retries from double-dialing. |
+| Voice recovery | One network retry before answer; one media-interruption callback after connection | Repairs transient transport failures without turning recovery into an unbounded call loop. |
+| Voice network readiness | SIP TLS probes every second for at most 20 s after exit-node selection | Accommodates asynchronous macOS route convergence while bounding call startup. |
 | Trigram search | Up to 500 candidates per field | Substring filters drive selection without scanning all inline bodies. |
 | Unranked mail browse | 500-row window; final API limit max 100 | Supports sorting/pagination without materializing the entire archive. |
 | Action-planner mail page | Up to 6 compact results; threads and large bodies expose continuation offsets | Avoids full-message context by default. |
@@ -1476,6 +1695,9 @@ Steward assumes model output, email content, document content and tool arguments
 | Filesystem discovery → mutation | Separate read/write tools and sensitive-path guards. |
 | Host → model provider | Local gateway isolates provider credentials and routing. |
 | Browser → local data | Auth token on WebSocket/data routes; tokenized file registry instead of arbitrary paths. |
+| Spoken response → tool execution | Host-owned exact-command parser resolves the original pending approval; the agent never interprets its own authorization. |
+| Watch rule → future side effect | Registered capability schema, exact/template/set/range/relative-time constraints, rule-scoped tool exposure and durable invocation claims. |
+| Steward → system network route | Call-scoped journaled lease restores the previous Tailscale route and refuses to overwrite a later manual route choice. |
 | Raw event → persisted audit | Secret/body redaction occurs before the payload is written to disk. |
 
 An email can contain text that tries to instruct the agent to send data or run a command. That content may influence the model's reasoning, but it cannot change `tool-policy.ts`, approve its own write or turn a denied tool into an allowed one. The user still needs to assess the proposed action and recipient.
@@ -1540,6 +1762,30 @@ Prompts are probabilistic instructions to a model. Authorization must be determi
 
 Durability and urgency are orthogonal. A passport or long-term decision belongs in memory but may need no action; a routine scheduling request may need action but is not durable knowledge. Separate pipelines let each use its own state, thresholds and lifecycle.
 
+### Why Is Voice A Channel Instead Of A Separate Agent?
+
+Phone audio changes transport and turn-taking, not authority or memory. Reusing
+`ChatManager` keeps the same persisted conversation, MCP tools, policy wrappers,
+Usage attribution and Audit semantics. A transport-neutral coordinator lets a
+future streaming implementation replace Ringback without changing `/voice/*`
+or creating a second security model.
+
+### Why Are Call Retries Split By Failure Phase?
+
+A pre-answer network failure has not yet delivered speech and can safely try one
+alternate route. A connected media interruption is different: the user may have
+heard only part of the turn or approved nothing. Its recovery must preserve the
+chat, re-establish conversational position and refuse to replay external effects.
+No-answer and normal hangup are user outcomes, not infrastructure retries.
+
+### Why Immutable Native Releases Instead Of Updating In Place?
+
+The app bundle and Ringback runtime contain compiled, architecture-sensitive
+dependencies. Building a complete candidate beside the active release makes
+verification and rollback meaningful and avoids half-updated processes. User
+state remains external, while pre-cutover SQLite snapshots provide recovery
+evidence without pretending that rolling code back should also erase newer data.
+
 ## Extending Steward Safely
 
 Adding a connector is more than registering an MCP server. A complete integration should:
@@ -1563,8 +1809,8 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 
 | Path | Purpose |
 |---|---|
-| [apps/web](apps/web/) | React + Vite + PWA UI. Provides chat, chat list, mobile layout, Action Center with persistent filters and visible/total diagnostics, approval/question cards, tool cards, rich cards, file uploads/chips, audio recording, Usage page, Audit page, System page, phone pairing, notification controls and service worker. |
-| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket sessions, returns structured headless-turn results, runs Pi sessions including durable watch-event continuations, loads MCP tools, applies the tool policy, stores chats, records usage, handles approvals/questions, serves tokenized files, registers uploaded/local files, manages auth/pairing, push, speech transcription, system status and the audit ledger. |
+| [apps/web](apps/web/) | React + Vite + PWA UI. Provides chat, chat list, mobile layout, Action Center with persistent filters and visible/total diagnostics, approval/question cards, tool cards, rich cards, file uploads/chips, audio recording, Usage page, Audit page, live System/tool diagnostics, voice/network settings and preview, phone pairing, notification controls and service worker. |
+| [apps/host](apps/host/) | Node host on `:4317`. Serves the built UI, owns WebSocket and voice sessions, returns structured headless-turn results, runs Pi sessions including durable watch-event continuations, loads MCP tools, applies policy and spoken approvals, stores chats, records usage, handles files/auth/pairing/push/transcription, coordinates Ringback/recovery/network leases, builds system status and owns the audit ledger. |
 | [packages/protocol](packages/protocol/) | Dependency-free event contract between host and clients. Keeps chat, approvals, questions, tool calls, files and Action Center state portable across future clients. |
 | [packages/mcp-bridge](packages/mcp-bridge/) | Converts stdio MCP servers into Pi custom tools named like `mcp__server__tool`. |
 | [apps/llm-gateway](apps/llm-gateway/) | Local OpenAI-compatible gateway on `:4000`. Provides `tier-1` through `tier-6`, `local-embed`, `/rates`, `/health`, `/v1/models`, chat completions and embeddings. Routes to Ollama and DeepSeek by default. |
@@ -1587,7 +1833,9 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 | [packages/applescript](packages/applescript/) | Shared `osascript` runner with escaping, timeouts and transient-error handling. |
 | [packages/sensitive-path](packages/sensitive-path/) | Shared path guard for secrets and sensitive filesystem locations. |
 | [apps/wiki-add](apps/wiki-add/) | CLI and Finder Quick Actions for adding files/folders to LLM Wiki sources. |
-| [apps/mac-launcher](apps/mac-launcher/) | SwiftPM menu-bar app. Opens a WebKit window, registers `Command+Shift+Space`, checks/starts services, packages a self-contained `.app`, and reads production overrides from `~/Library/Application Support/Steward/config.env`. |
+| [apps/mac-launcher](apps/mac-launcher/) | SwiftPM menu-bar app. Opens a WebKit window behind a localized native startup/status overlay, registers `Command+Shift+Space`, checks/starts services, packages a self-contained `.app`, and reads production overrides from `~/Library/Application Support/Steward/config.env`. |
+| [tools/run-ringback-managed.sh](tools/run-ringback-managed.sh) and Ringback patches | External native SIP/MCP lifecycle boundary. Pins and diagnoses the runtime, preserves stdio, localizes STT/TTS, emits structured SIP/media failures, confirms remote hangup and detects stalled RTP. |
+| [tools/steward-deploy.mjs](tools/steward-deploy.mjs) | Apple Silicon installer/updater. Builds immutable app and Ringback releases, verifies architecture/checksums, snapshots primary SQLite stores, performs health-checked cutover and rolls the app symlink back without discarding newer user data. |
 
 ## LLM Gateway And Models
 
@@ -1625,6 +1873,10 @@ Most Steward data lives under `~/Library/Application Support/`:
 | `Steward/vapid.json` | Persisted VAPID keys for Web Push. |
 | `Steward/push-subscriptions.json` | Registered browser/PWA push subscriptions. |
 | `Steward/config.env` | Packaged launcher/service overrides and secrets. |
+| `Steward/voice-settings.json` | Default speech rate and independent installed voice selection for each supported language; mode `0600`. |
+| `Steward/voice-call-settings.json` | Ephemeral per-call speech-rate override; cleared at call start/end. |
+| `Steward/voice-network.json` | User-selected call-only Tailscale fallback and stable exit-node peer ID. |
+| `Steward/voice-network.json.journal` | Write-ahead record of a temporary route change; normally absent and consumed during release/startup recovery. |
 | `Steward/watches.db` | Persistent generic watch definitions, resource snapshots and queued/delivered events. |
 | `mail-mirror/mail.db` and `mail-mirror/blobs/` | Mirrored mail messages, threads, indexes, embedding state and attachment blobs. |
 | `mail-promoter/` | Mail promotion state and note tracking. |
@@ -1637,6 +1889,8 @@ Most Steward data lives under `~/Library/Application Support/`:
 | `steward-usage/usage.db` | Token/cost/tool usage ledger. |
 | `steward-audit/audit.db` | Redacted audit trail of chat, tool, approval, write-op and Action Center events. |
 | `steward-uploads/` | Files uploaded through the web UI. |
+| `Steward/ringback/` or managed release path | External Ringback source/runtime, non-secret SIP configuration, pinned manifest and process lock. SIP password remains in macOS Keychain service `com.steward.ringback.sip`. |
+| `Steward/deploy/` | Immutable releases, active/previous release metadata, deployment lock and pre-cutover SQLite snapshots. |
 
 Read sources include:
 
@@ -1671,6 +1925,8 @@ Steward is designed so trust is structural, not based on the model behaving perf
 
 - **Default-deny tools** — [apps/host/src/core/tool-policy.ts](apps/host/src/core/tool-policy.ts) classifies tool calls. Read-only tools are allow-listed. Sensitive writes are gated. Unknown or disallowed tools are denied.
 - **Human approval for writes** — the agent can request an action, but the host turns it into an approval card before execution.
+- **Host-owned spoken approval** — phone approvals use exact localized commands against the original pending request; ambiguous speech fails closed and the agent never interprets consent.
+- **Scoped future authority** — automatic watch actions are limited to registered capabilities, constrained arguments, matched rules and durable invocation counts.
 - **Write journal** — AppleScript writes are recorded before they run and confirmed afterwards against local mirrors.
 - **Audit trail** — chat messages, tool policy/approval decisions, write-ops and Action Center events are recorded in a redacted SQLite ledger ([packages/audit-log](packages/audit-log/)); secrets and full email/document bodies are never persisted, only short snippets.
 - **No raw shell** — shell-like commands are parsed and executed with explicit binaries/argv. Dangerous shell features are rejected.
@@ -1679,6 +1935,8 @@ Steward is designed so trust is structural, not based on the model behaving perf
 - **Local-first services** — host/gateway default to local listeners. Mobile access is opt-in.
 - **Opaque file serving** — files are exposed to the UI through registered tokens, not arbitrary open paths.
 - **Provider isolation** — model keys live behind the gateway. The host talks to the gateway, not directly to every provider.
+- **External voice credentials** — the SIP password lives in macOS Keychain, not Ringback's environment file, command line or Steward release directories.
+- **Reversible network fallback** — a write-ahead lease limits Tailscale exit-node changes to a call and preserves later manual route choices.
 
 ## Setup
 
@@ -1699,6 +1957,10 @@ ollama pull llama3.2:1b
 - Optional per-project overrides (e.g. Whisper language) go in `apps/host/.env`, same convention — see [apps/host/.env.example](apps/host/.env.example).
 - Full Disk Access for the terminal, launcher or packaged app running Steward.
 - Automation permissions when macOS prompts for Mail/Calendar/Contacts writes.
+- Optional phone calls require Linphone/SIP, native ARM Homebrew at
+  `/opt/homebrew`, and the external Ringback setup described in
+  [Voice calls](docs/voice-calls.md). Docker remains an explicit fallback, not
+  an automatic runtime dependency.
 
 ### Development Run
 
@@ -1780,8 +2042,14 @@ The bundle includes:
 - compiled service entrypoints;
 - Node runtime;
 - required native dependencies such as `better-sqlite3` and `sqlite-vec`;
-- bundled speech runtime files when present.
+- bundled speech runtime files when present, with the Whisper model checksum
+  verified during packaging;
 - the live train MCP connector and generic watch engine used by the host.
+
+Ringback is installed beside releases under Steward's Application Support
+directory rather than copied into the application bundle. This keeps its
+pjproject/pjsua2 licensing and native runtime boundary explicit while still
+letting the deployment workflow pin, verify and roll it back with the app.
 
 Production overrides and secrets go in:
 
@@ -1794,6 +2062,52 @@ Logs go in:
 ```text
 ~/Library/Logs/Steward/
 ```
+
+### Reproducible Native Installation And Updates
+
+The production deployment workflow targets Apple Silicon and uses immutable
+release directories under
+`~/Library/Application Support/Steward/deploy/releases/`. `/Applications/Steward.app`
+is the active symlink; mutable chats, watches, settings, logs, uploads, ledgers
+and Keychain credentials remain outside every release.
+
+```sh
+# Inspect ARM Homebrew, Node/npm, app/Ringback state and prerequisites.
+npm run deploy:doctor
+
+# First native install; omit voice with --no-voice.
+npm run deploy:install -- --sip-user=YOUR_LINPHONE_NAME
+
+# Build, verify, cut over, smoke-test and retain the previous release.
+npm run deploy:update
+
+# Verify the active installation or return to the previous release.
+npm run deploy:verify
+npm run deploy:rollback
+```
+
+Installation uses the lockfile, builds a self-contained app, creates a distinct
+Ringback/pjproject runtime, stores the SIP password in Keychain and validates
+architecture, bundle layout, runtime manifest, pjsua2 import and the pinned
+Whisper model SHA-256 before cutover. Updating copies only the non-secret SIP
+identity. `--stage-only` can do expensive build work while Steward runs;
+activation refuses to switch while an existing host still responds.
+
+Cutover first creates SQLite-consistent backups of chats, watches, Audit, Usage
+and Action Center under `deploy/backups/<release-id>/`, then changes the app
+symlink atomically and launches the candidate. If its health smoke test fails,
+the deployer asks it to quit, waits for the host to stop and rolls the symlink
+back. The first managed install preserves an existing ordinary app bundle as a
+legacy release. Rollback intentionally does not restore data snapshots, because
+that would erase conversations and events created after the update; database
+migrations must therefore remain backward-compatible unless an explicit data
+recovery is planned.
+
+A weekly ARM macOS workflow rehearses a clean package, install, update and
+rollback without SIP credentials. CI proves build/deployment mechanics, not
+real Linphone reachability, Tailscale routing or macOS privacy prompts; those
+remain release checks on the target devices. See
+[Native installation and updates](docs/native-deployment.md).
 
 ## Important Environment Variables
 
@@ -1822,8 +2136,11 @@ Logs go in:
 | `STEWARD_VOICE_TRANSPORT` | Optional voice transport: `ringback`; `streamcore` is reserved for the future adapter. |
 | `STEWARD_RINGBACK_LAUNCHER` | Absolute path to Ringback's Steward-managed MCP launcher. |
 | `STEWARD_VOICE_OPENING_LINE` | Default first sentence spoken when `/voice/call` starts. |
+| `STEWARD_VOICE_PREFLIGHT_TIMEOUT_MS` | Timeout for MCP startup/tool discovery and the safe Ringback status probe; default `10000`, minimum `1000`. |
 | `STEWARD_VOICE_SETTINGS_FILE` | Optional override for persisted default speech rate and voice; normally managed from System settings. |
 | `STEWARD_VOICE_CALL_SETTINGS_FILE` | Optional override for the ephemeral per-call speech-rate file. |
+| `STEWARD_VOICE_NETWORK_SETTINGS_FILE` | Optional override for persisted call-network fallback settings and its adjacent recovery journal. |
+| `STEWARD_VOICE_EXIT_NODE_ID` | Stable Tailscale peer ID for the call-scoped SIP fallback; overrides the saved peer selection without hard-coding its current IP. |
 | `STEWARD_STREAMCORE_URL` | Reserved base URL for the future StreamCore adapter. |
 | `TRAIN_MCP_ENTRY` | Override the train MCP entrypoint; normally set automatically by the packaged launcher. |
 | `VIAGGIATRENO_BASE_URL` | Override the ViaggiaTreno endpoint, primarily for testing or a compatible proxy. |
@@ -1858,6 +2175,23 @@ npm test -w @steward/host
 # Real gateway + real ViaggiaTreno through the same ChatManager/tool path as the PWA.
 npm run smoke:trains -w @steward/host
 ```
+
+Voice reliability is kept deterministic in CI: host tests inject Ringback tool
+events and network leases to cover preflight-before-chat, request-id
+idempotency, spoken allow/deny/repeat, structured SIP errors, busy watch
+deferral, fallback veto, route restoration, one-shot network/media recovery and
+non-replay of granted actions. Launcher tests also assert explicit MCP stdin,
+confirmed remote hangup and bounded SIP diagnostics. Native deployment logic
+uses isolated temporary roots and a fake app bundle:
+
+```sh
+npm test -w @steward/host
+npm run test:deploy
+```
+
+These tests intentionally do not place a real phone call. SIP credentials,
+Linphone reachability, RTP behavior, Tailscale route convergence and macOS
+privacy prompts require a manual smoke test on the target devices.
 
 The smoke flow creates isolated temporary chat/watch/audit/usage databases. It
 asks the live agent to resolve a dictated station, find and refresh a real
