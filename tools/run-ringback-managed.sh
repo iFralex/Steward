@@ -57,8 +57,9 @@ check_runtime() {
 
 doctor() {
   load_environment
-  local ok=true python_arch="missing" pjsua2=false version="unknown"
+  local ok=true python_arch="missing" pjsua2=false version="unknown" model_verified=false expected_hash="" actual_hash=""
   [ -f "$MANIFEST" ] && version="$(sed -nE 's/.*"runtimeVersion"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$MANIFEST" | head -1)"
+  [ -f "$MANIFEST" ] && expected_hash="$(sed -nE 's/.*"whisperModelSha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$MANIFEST" | head -1)"
   if [ -x "$PYTHON_BIN" ]; then
     python_arch="$(file -b -L "$PYTHON_BIN" 2>/dev/null || echo unknown)"
   fi
@@ -68,8 +69,12 @@ doctor() {
   else
     ok=false
   fi
-  printf '{"ok":%s,"runtimeVersion":"%s","architecture":"%s","pythonArchitecture":"%s","pjsua2":%s,"credentialStore":"%s","managed":true}\n' \
-    "$ok" "$version" "$(uname -m)" "$(printf '%s' "$python_arch" | sed 's/["\\]/\\&/g')" "$pjsua2" "$CREDENTIAL_STORE"
+  if [ -n "$expected_hash" ] && [ -f "${WHISPER_MODEL:-}" ]; then
+    actual_hash="$(shasum -a 256 "$WHISPER_MODEL" | awk '{print $1}')"
+    [ "$actual_hash" = "$expected_hash" ] && model_verified=true || ok=false
+  fi
+  printf '{"ok":%s,"runtimeVersion":"%s","architecture":"%s","pythonArchitecture":"%s","pjsua2":%s,"modelVerified":%s,"credentialStore":"%s","managed":true}\n' \
+    "$ok" "$version" "$(uname -m)" "$(printf '%s' "$python_arch" | sed 's/["\\]/\\&/g')" "$pjsua2" "$model_verified" "$CREDENTIAL_STORE"
   [ "$ok" = true ]
 }
 

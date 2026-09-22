@@ -5,7 +5,13 @@
     "build:web-host": "npm run build -w @steward/web && npm run typecheck -w @steward/host",
     "icon:mac": "node apps/mac-launcher/scripts/make-icon.mjs",
     "launcher:mac": "swift run --package-path apps/mac-launcher StewardLauncher",
-    "package:mac": "node --import tsx apps/mac-launcher/package-mac.mts"
+    "package:mac": "node --import tsx apps/mac-launcher/package-mac.mts",
+    "deploy:doctor": "node tools/steward-deploy.mjs doctor",
+    "deploy:install": "node tools/steward-deploy.mjs install",
+    "deploy:update": "node tools/steward-deploy.mjs update",
+    "deploy:verify": "node tools/steward-deploy.mjs verify",
+    "deploy:rollback": "node tools/steward-deploy.mjs rollback",
+    "test:deploy": "node --test tools/steward-deploy.test.mjs"
   },
   "workspaces": [
     "apps/host",

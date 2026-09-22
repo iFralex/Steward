@@ -1,0 +1,52 @@
+name: Steward native deployment rehearsal
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+jobs:
+  clean-install-and-update:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Verify ARM runner
+        run: test "$(uname -m)" = arm64
+      - name: Install locked dependencies
+        run: |
+          npm ci
+          npm ci --prefix apps/llm-wiki
+      - name: Build the full native bundle
+        run: npm run package:mac
+      - name: Build the pinned native Ringback runtime
+        env:
+          STEWARD_RINGBACK_DIR: ${{ runner.temp }}/ringback
+          PJPROJECT_DIR: ${{ runner.temp }}/pjproject-2.17
+          STEWARD_PACKAGED_APP: ${{ github.workspace }}/dist/mac/Steward.app
+        run: |
+          ./tools/setup-ringback.sh
+          "$STEWARD_RINGBACK_DIR/steward-run-voice-mcp.sh" --doctor > "$RUNNER_TEMP/ringback-doctor.json" || true
+          node -e 'const d=require(process.argv[1]); if (d.architecture!=="arm64" || !d.pjsua2 || !d.modelVerified) process.exit(1)' "$RUNNER_TEMP/ringback-doctor.json"
+      - name: Test installer and rollback logic
+        run: node --test tools/steward-deploy.test.mjs
+      - name: Rehearse a clean install, update and rollback with the real bundle
+        env:
+          STEWARD_DEPLOY_ROOT: ${{ runner.temp }}/steward-deploy
+          STEWARD_APP_PATH: ${{ runner.temp }}/Steward.app
+          STEWARD_CONFIG_FILE: ${{ runner.temp }}/config.env
+        run: |
+          echo "HOST_PORT=59999" > "$STEWARD_CONFIG_FILE"
+          echo "WATCH_DB=$RUNNER_TEMP/missing-watches.db" >> "$STEWARD_CONFIG_FILE"
+          echo "CHATS_DIR=$RUNNER_TEMP/missing-chats" >> "$STEWARD_CONFIG_FILE"
+          echo "AUDIT_DIR=$RUNNER_TEMP/missing-audit" >> "$STEWARD_CONFIG_FILE"
+          echo "USAGE_DIR=$RUNNER_TEMP/missing-usage" >> "$STEWARD_CONFIG_FILE"
+          echo "ACTION_CENTER_DIR=$RUNNER_TEMP/missing-actions" >> "$STEWARD_CONFIG_FILE"
+          node tools/steward-deploy.mjs install --bundle=dist/mac/Steward.app --no-voice --no-launch
+          node tools/steward-deploy.mjs update --bundle=dist/mac/Steward.app --no-voice --no-launch
+          node tools/steward-deploy.mjs rollback
+          node tools/steward-deploy.mjs verify

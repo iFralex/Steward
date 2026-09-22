@@ -8,7 +8,7 @@ if [ "${1:-}" = "--migrate-legacy" ]; then
   shift
 fi
 USERNAME="${1:-}"
-VOICE_ENV="$HOME/Library/Application Support/Steward/ringback/voice.env"
+VOICE_ENV="${STEWARD_RINGBACK_DIR:-$HOME/Library/Application Support/Steward/ringback}/voice.env"
 KEYCHAIN_SERVICE="com.steward.ringback.sip"
 
 case "$USERNAME" in

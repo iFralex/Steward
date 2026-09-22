@@ -9,9 +9,10 @@ RINGBACK_DIR="${STEWARD_RINGBACK_DIR:-$HOME/Library/Application Support/Steward/
 STEWARD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-auto}"
 ARM_BREW="/opt/homebrew/bin/brew"
-PACKAGED_WHISPER_MODEL="/Applications/Steward.app/Contents/Resources/speech/models/ggml-base.bin"
+PACKAGED_WHISPER_MODEL="${STEWARD_PACKAGED_APP:-/Applications/Steward.app}/Contents/Resources/speech/models/ggml-base.bin"
 WHISPER_MODEL_NAME="ggml-large-v3-turbo-q5_0.bin"
 WHISPER_STREAM_MODEL_NAME="ggml-base.bin"
+WHISPER_MODEL_SHA256="394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
 
 if [ -e "$RINGBACK_DIR" ] && [ ! -d "$RINGBACK_DIR/.git" ]; then
   echo "Refusing to overwrite existing non-git path: $RINGBACK_DIR" >&2
@@ -126,6 +127,11 @@ else
   # Ringback defaults to English-only Whisper models. Use the multilingual
   # Turbo q5 model (~547 MiB), with language selected dynamically by Steward.
   NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1 WHISPER_MODEL_NAME="$WHISPER_MODEL_NAME" "$RINGBACK_DIR/setup.sh"
+  MODEL_SHA256_ACTUAL="$(shasum -a 256 "$HOME/.whisper-models/$WHISPER_MODEL_NAME" | awk '{print $1}')"
+  [ "$MODEL_SHA256_ACTUAL" = "$WHISPER_MODEL_SHA256" ] || {
+    echo "Ringback Whisper model checksum mismatch; refusing to enable this runtime." >&2
+    exit 1
+  }
 
   # pjproject's default flat namespace can bind Python to the wrong OpenSSL on
   # macOS and crash during SIP initialization. The upstream repair omits nested

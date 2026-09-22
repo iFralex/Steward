@@ -3,7 +3,25 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { VoiceNetworkFallback } from "../src/core/voice-network.ts";
+import { VoiceNetworkFallback, getVoiceNetworkSettings } from "../src/core/voice-network.ts";
+
+test("exit-node identity can be supplied through the environment", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "voice-network-env-")), "settings.json");
+  const beforeFile = process.env.STEWARD_VOICE_NETWORK_SETTINGS_FILE;
+  const beforeId = process.env.STEWARD_VOICE_EXIT_NODE_ID;
+  try {
+    process.env.STEWARD_VOICE_NETWORK_SETTINGS_FILE = file;
+    process.env.STEWARD_VOICE_EXIT_NODE_ID = "phone-peer-id";
+    assert.deepEqual(getVoiceNetworkSettings(), { enabled: true, exitNodeId: "phone-peer-id" });
+    writeFileSync(file, JSON.stringify({ enabled: true, exitNodeId: "outdated-peer" }));
+    assert.deepEqual(getVoiceNetworkSettings(), { enabled: true, exitNodeId: "phone-peer-id" });
+  } finally {
+    if (beforeFile === undefined) delete process.env.STEWARD_VOICE_NETWORK_SETTINGS_FILE;
+    else process.env.STEWARD_VOICE_NETWORK_SETTINGS_FILE = beforeFile;
+    if (beforeId === undefined) delete process.env.STEWARD_VOICE_EXIT_NODE_ID;
+    else process.env.STEWARD_VOICE_EXIT_NODE_ID = beforeId;
+  }
+});
 
 function fixture(probe: () => Promise<boolean>) {
   const journalFile = join(mkdtempSync(join(tmpdir(), "voice-network-")), "route.json");

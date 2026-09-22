@@ -1,6 +1,7 @@
 {
-  "runtimeVersion": "1",
+  "runtimeVersion": "2",
   "ringbackCommit": "dfadf47ef5f106079cb11d48daaa4da39825e140",
+  "whisperModelSha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
   "architecture": "arm64",
   "homebrewPrefix": "/opt/homebrew",
   "managedLauncher": "steward-run-voice-mcp.sh"

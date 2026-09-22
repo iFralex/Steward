@@ -74,6 +74,14 @@ Ringback remains an external optional component rather than being copied into
 the packaged app. This avoids silently combining its pjproject/pjsua2 GPL
 runtime with Steward's distributable bundle.
 
+The call-scoped Tailscale fallback can select the iPhone exit node by setting
+`STEWARD_VOICE_EXIT_NODE_ID` in `~/Library/Application Support/Steward/config.env`.
+Use the peer `ID` from `tailscale status --json`, not a hard-coded Tailscale IP.
+This value overrides the saved exit-node choice; the saved enabled/disabled
+switch still applies. On a fresh installation with no saved network settings,
+the presence of this variable enables the fallback. Steward restores the
+previous route after the call.
+
 The Steward launcher owns Ringback's lifecycle through a single-instance lock
 and PID file. Ringback starts as an MCP child, receives termination when the
 host exits, and removes stale locks on the next launch. Diagnose the native ARM

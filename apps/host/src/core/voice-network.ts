@@ -27,10 +27,11 @@ export function voiceNetworkSettingsPath(): string {
 function journalPath(): string { return `${voiceNetworkSettingsPath()}.journal`; }
 
 export function getVoiceNetworkSettings(): VoiceNetworkSettings {
+  const configuredId = process.env.STEWARD_VOICE_EXIT_NODE_ID?.trim();
   try {
     const raw = JSON.parse(readFileSync(voiceNetworkSettingsPath(), "utf8")) as Partial<VoiceNetworkSettings>;
-    return { enabled: raw.enabled === true, exitNodeId: typeof raw.exitNodeId === "string" ? raw.exitNodeId : "" };
-  } catch { return { enabled: false, exitNodeId: "" }; }
+    return { enabled: raw.enabled === true, exitNodeId: configuredId || (typeof raw.exitNodeId === "string" ? raw.exitNodeId : "") };
+  } catch { return { enabled: Boolean(configuredId), exitNodeId: configuredId ?? "" }; }
 }
 
 export function setVoiceNetworkSettings(value: unknown, choices: ExitNodeChoice[]): VoiceNetworkSettings {
