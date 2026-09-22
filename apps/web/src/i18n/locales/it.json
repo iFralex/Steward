@@ -158,6 +158,12 @@
     "saveSettings": "Salva impostazioni voce",
     "saving": "Salvataggio…",
     "settingsSaved": "Impostazioni voce salvate.",
+    "networkFallback": "Usa automaticamente un exit node Tailscale se la rete blocca le chiamate",
+    "exitNode": "Exit node di ripiego",
+    "selectExitNode": "Seleziona un dispositivo",
+    "savedExitNodeUnavailable": "Dispositivo salvato non disponibile",
+    "offline": "non in linea",
+    "networkHint": "Durante la chiamata tutto il traffico Internet del Mac passa da questo dispositivo. Steward ripristina la rete precedente al termine.",
     "states": {
       "disabled": "disattivata",
       "idle": "pronta",

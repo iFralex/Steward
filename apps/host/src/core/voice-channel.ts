@@ -15,6 +15,7 @@ import { getUserLang } from "./notification-lang.ts";
 import { localizedOpeningLine, voiceMessages, type VoiceLang } from "./voice-i18n.ts";
 import { clearCallVoiceOverride } from "./voice-settings.ts";
 import { buildVoiceSettingsTool } from "./voice-settings-tool.ts";
+import type { NetworkLease, VoiceNetworkFallback } from "./voice-network.ts";
 
 export type VoiceCallState =
   | "disabled" | "idle" | "preflighting" | "starting" | "ringing"
@@ -81,6 +82,7 @@ interface VoiceCoordinatorDeps {
   onIdle?: () => void | Promise<void>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  network?: VoiceNetworkFallback;
 }
 
 interface VoiceStartOptions {
@@ -90,6 +92,8 @@ interface VoiceStartOptions {
   executionGuard?: ToolExecutionGuard;
   watchEvent?: boolean;
   recoveryAttempt?: number;
+  networkRetryAttempt?: number;
+  networkLease?: NetworkLease;
 }
 
 const PREFLIGHT_ATTEMPTS = 2;
@@ -256,6 +260,7 @@ export class VoiceCallCoordinator {
   private retryable: boolean | undefined;
   private terminalError: Error | null = null;
   private dialStarted = false;
+  private callConnected = false;
   private recoveryPending = false;
   private lastCall: VoiceCallSummary | undefined;
   private state: VoiceCallState;
@@ -350,9 +355,12 @@ export class VoiceCallCoordinator {
     this.startedAt = this.deps.now();
     this.terminalError = null;
     this.dialStarted = false;
+    this.callConnected = false;
     this.transition("preflighting", voiceCopy.status.checking);
+    let networkLease = options.networkLease;
     try {
       await this.preflight();
+      networkLease ??= await this.deps.network?.acquire();
       this.audit({
         actor: "host", eventType: "voice.preflight_passed", risk: "low", summary: voiceCopy.status.preflightPassed,
         correlationId: requestId, ok: true, payload: { transport: "ringback" },
@@ -426,7 +434,7 @@ export class VoiceCallCoordinator {
       });
       const summary = this.finish(chat.id, requestId, error);
       completedSummary = summary;
-      if (!options.watchEvent && !this.shouldRecover(summary, options)) {
+      if (!options.watchEvent && !this.shouldRecover(summary, options) && !this.shouldRetryNetwork(summary, options, networkLease)) {
         try { await this.onFinished?.(chat.id, error); } catch { /* completion callback is best-effort */ }
       }
     }).finally(async () => {
@@ -441,8 +449,33 @@ export class VoiceCallCoordinator {
         this.startedAt = null;
         this.transition("idle", this.lastCall?.ok ? voiceCopy.status.lastCompleted : voiceCopy.status.lastFailed, !this.lastCall?.ok);
       }
-      if (!completedSummary) return;
+      if (!completedSummary) {
+        await networkLease?.release();
+        return;
+      }
+      if (this.shouldRetryNetwork(completedSummary, options, networkLease)) {
+        this.recoveryPending = true;
+        try {
+          if (!await networkLease!.retryDial()) throw new Error("SIP remains unreachable through the selected exit node");
+          this.recoveryPending = false;
+          const retry = await this.begin(undefined, undefined, {
+            ...options, chatId: chat.id, networkRetryAttempt: 1, networkLease,
+          });
+          complete(await retry.completion);
+        } catch (cause) {
+          this.recoveryPending = false;
+          const error = cause instanceof Error ? cause : new Error(String(cause));
+          this.audit({ actor: "host", eventType: "voice.network_retry_failed", risk: "medium", summary: error.message,
+            chatId: chat.id, correlationId: requestId, ok: false });
+          await networkLease?.release();
+          if (!options.watchEvent) try { await this.onFinished?.(chat.id, error); } catch { /* best-effort */ }
+          complete(completedSummary);
+          this.notifyIdle();
+        }
+        return;
+      }
       if (!this.shouldRecover(completedSummary, options)) {
+        await networkLease?.release();
         complete(completedSummary);
         this.notifyIdle();
         return;
@@ -459,13 +492,14 @@ export class VoiceCallCoordinator {
         if (this.activeChatId || this.activeRequestId) throw new VoiceBusyError(voiceCopy.status.busy);
         this.recoveryPending = false;
         const recovery = await this.begin(voiceCopy.resumeOpeningLine, undefined, {
-          ...options, chatId: chat.id, recoveryAttempt: 1,
+          ...options, chatId: chat.id, recoveryAttempt: 1, networkLease,
           executionGuard: options.executionGuard ? recoveryExecutionGuard(options.executionGuard) : undefined,
           prompt: voiceCopy.resumePrompt(voiceCopy.resumeOpeningLine),
         });
         complete(await recovery.completion);
       } catch (cause) {
         this.recoveryPending = false;
+        await networkLease?.release();
         const error = cause instanceof Error ? cause : new Error(String(cause));
         this.audit({
           actor: "host", eventType: "voice.recovery_skipped", risk: "medium", summary: error.message,
@@ -491,6 +525,11 @@ export class VoiceCallCoordinator {
     // Silence, a deliberate hangup, and failed dialing are not evidence of a
     // dropped media stream. Never redial those or loop a recovery attempt.
     return summary.failureCode === "media_interrupted" && this.dialStarted && !options.recoveryAttempt;
+  }
+
+  private shouldRetryNetwork(summary: VoiceCallSummary, options: VoiceStartOptions, lease?: NetworkLease): boolean {
+    return !!lease?.enabled && summary.failureCode === "network_error" && this.dialStarted && !this.callConnected
+      && !options.networkRetryAttempt && !options.recoveryAttempt;
   }
 
   private async preflight(): Promise<void> {
@@ -570,6 +609,7 @@ export class VoiceCallCoordinator {
     }
     if (this.terminalError) return;
     const text = outputText(e.output);
+    if (e.tool === "mcp__voice__call_start") this.callConnected = true;
     const copy = voiceMessages(this.currentLanguage()).status;
     if (text.includes("[CALL ENDED]") || e.tool === "mcp__voice__call_end") this.transition("ending", copy.callEnded);
     else this.transition("processing", copy.replyReceived);

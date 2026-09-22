@@ -86,6 +86,12 @@ interface VoiceSettings {
   availableVoices: Array<{ name: string; locale: string }>;
 }
 
+interface VoiceNetworkSettings {
+  enabled: boolean;
+  exitNodeId: string;
+  choices: Array<{ id: string; name: string; online: boolean }>;
+}
+
 export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const { t, i18n } = useTranslation();
   const [status, setStatus] = useState<SystemStatus | null>(null);
@@ -103,6 +109,8 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState<string | null>(null);
   const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettings | null>(null);
+  const [voiceNetwork, setVoiceNetwork] = useState<VoiceNetworkSettings | null>(null);
+  const [voiceNetworkBusy, setVoiceNetworkBusy] = useState(false);
   const [voiceRate, setVoiceRate] = useState(175);
   const [voiceName, setVoiceName] = useState<VoiceSettings["voice"]>("auto");
   const [voiceSettingsBusy, setVoiceSettingsBusy] = useState(false);
@@ -116,16 +124,18 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     setLoading(true);
     setError(null);
     try {
-      const [statusRes, actionsRes, voiceRes, voiceSettingsRes] = await Promise.all([
+      const [statusRes, actionsRes, voiceRes, voiceSettingsRes, voiceNetworkRes] = await Promise.all([
         authFetch(`${httpBase}/system/status`, token, onUnauthorized),
         authFetch(`${httpBase}/settings/actions`, token, onUnauthorized),
         authFetch(`${httpBase}/voice/status`, token, onUnauthorized),
         authFetch(`${httpBase}/settings/voice`, token, onUnauthorized),
+        authFetch(`${httpBase}/settings/voice/network`, token, onUnauthorized),
       ]);
       if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
       if (!actionsRes.ok) throw new Error(`HTTP ${actionsRes.status}`);
       if (!voiceRes.ok) throw new Error(`HTTP ${voiceRes.status}`);
       if (!voiceSettingsRes.ok) throw new Error(`HTTP ${voiceSettingsRes.status}`);
+      if (!voiceNetworkRes.ok) throw new Error(`HTTP ${voiceNetworkRes.status}`);
       setStatus(await statusRes.json() as SystemStatus);
       setActionAutomation(await actionsRes.json() as ActionAutomationSettings);
       setVoice(await voiceRes.json() as VoiceChannelStatus);
@@ -133,6 +143,7 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
       setVoiceSettingsState(speech);
       setVoiceRate(speech.rateWpm);
       setVoiceName(speech.voice);
+      setVoiceNetwork(await voiceNetworkRes.json() as VoiceNetworkSettings);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -288,6 +299,21 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     }
   };
 
+  const saveVoiceNetwork = async (enabled: boolean, exitNodeId: string) => {
+    setVoiceNetworkBusy(true);
+    setError(null);
+    try {
+      const res = await authFetch(`${httpBase}/settings/voice/network`, token, onUnauthorized, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled, exitNodeId }),
+      });
+      const body = await res.json() as VoiceNetworkSettings | { error?: string };
+      if (!res.ok) throw new Error("error" in body && body.error ? body.error : `HTTP ${res.status}`);
+      setVoiceNetwork(body as VoiceNetworkSettings);
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setVoiceNetworkBusy(false); }
+  };
+
   const previewVoiceSettings = async () => {
     setVoicePreviewBusy(true);
     setVoicePreviewError(null);
@@ -422,6 +448,28 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
                 {voicePreviewError && <p className="text-destructive text-sm">{voicePreviewError}</p>}
               </div>
             )}
+          </div>
+          <div className="grid gap-2 border-t pt-4 text-sm">
+            <label className="flex items-center gap-2 font-medium">
+              <input type="checkbox" checked={voiceNetwork?.enabled ?? false}
+                disabled={!voiceNetwork || voiceNetworkBusy || (voice?.state !== "idle" && voice?.state !== "disabled")}
+                onChange={(event) => void saveVoiceNetwork(event.target.checked, voiceNetwork?.exitNodeId ?? "")} />
+              {t("system.voice.networkFallback")}
+            </label>
+            <label className="grid max-w-sm gap-1">
+              <span>{t("system.voice.exitNode")}</span>
+              <select className="border-input bg-background h-9 rounded-md border px-3"
+                value={voiceNetwork?.exitNodeId ?? ""}
+                disabled={!voiceNetwork || voiceNetworkBusy || (voice?.state !== "idle" && voice?.state !== "disabled")}
+                onChange={(event) => void saveVoiceNetwork(voiceNetwork?.enabled ?? false, event.target.value)}>
+                <option value="">{t("system.voice.selectExitNode")}</option>
+                {voiceNetwork?.exitNodeId && !voiceNetwork.choices.some((node) => node.id === voiceNetwork.exitNodeId) && (
+                  <option value={voiceNetwork.exitNodeId}>{t("system.voice.savedExitNodeUnavailable")}</option>
+                )}
+                {voiceNetwork?.choices.map((node) => <option key={node.id} value={node.id}>{node.name}{node.online ? "" : ` · ${t("system.voice.offline")}`}</option>)}
+              </select>
+            </label>
+            <p className="text-muted-foreground text-xs">{t("system.voice.networkHint")}</p>
           </div>
         </CardContent>
       </Card>

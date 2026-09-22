@@ -12,6 +12,7 @@ import {
 } from "../src/core/voice-channel.ts";
 import { chatStore } from "../src/core/chat-store.ts";
 import { localizedOpeningLine, voiceMessages } from "../src/core/voice-i18n.ts";
+import type { VoiceNetworkFallback } from "../src/core/voice-network.ts";
 
 test("voice config is disabled unless explicitly selected", () => {
   assert.deepEqual(loadVoiceChannelConfig({}), { transport: "disabled" });
@@ -492,6 +493,44 @@ test("structured SIP failures reach status, Usage, Audit, and completion callbac
   const failed = audit.find((event) => event.eventType === "voice.call_failed");
   assert.equal(failed.durationMs, 4_000);
   assert.equal(failed.payload.diagnostic.sipStatus, 480);
+});
+
+test("a pre-answer SIP network error switches route once and retries in the same chat", async () => {
+  const chat = chatStore().createChat("Network retry");
+  let turns = 0;
+  let switched = 0;
+  let released = 0;
+  const network = {
+    acquire: async () => ({
+      enabled: true,
+      retryDial: async () => { switched += 1; return true; },
+      release: async () => { released += 1; },
+    }),
+  } as VoiceNetworkFallback;
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), undefined, {
+    network, bridge: async () => fakeBridge(), createChat: () => chat,
+    createRunner: (emit) => ({
+      runTurn: async () => { throw new Error("unexpected visible prompt"); },
+      runAutomaticTurn: async (chatId) => {
+        assert.equal(chatId, chat.id);
+        turns += 1;
+        emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+        emit({ type: "tool_result", tool: "mcp__voice__call_start", ok: turns > 1,
+          output: turns === 1
+            ? '[CALL FAILED] {"code":"network_error","message":"TLS reset","retryable":true}'
+            : "connected" } as any);
+        return { ok: true, messageId: "done", text: "done" };
+      },
+      abort: async () => {},
+    }),
+    audit: (() => {}) as any, usage: () => {}, sleep: async () => {},
+  });
+  const summary = await coordinator.runWatchEvent(chat.id, "Call user", "network-retry");
+  assert.equal(summary.ok, true);
+  assert.equal(summary.chatId, chat.id);
+  assert.equal(turns, 2);
+  assert.equal(switched, 1);
+  assert.equal(released, 1);
 });
 
 test("interrupted media triggers one callback in the same chat without replaying actions", async () => {

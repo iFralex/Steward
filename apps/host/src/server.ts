@@ -33,6 +33,7 @@ import { SpeechUnavailableError, transcribeAudioPayload, type AudioPayload } fro
 import { VoiceBusyError, VoiceCallCoordinator, VoiceUnavailableError } from "./core/voice-channel.ts";
 import { getVoiceSettings, listSystemVoices, setVoiceSettings } from "./core/voice-settings.ts";
 import { renderVoicePreview } from "./core/voice-preview.ts";
+import { VoiceNetworkFallback, getVoiceNetworkSettings, setVoiceNetworkSettings } from "./core/voice-network.ts";
 
 /** Origins allowed to talk to the host: the served UI itself, plus the vite dev
  *  server — but the vite origins only outside production (the packaged app sets
@@ -301,7 +302,7 @@ async function gatewayRatesMap(baseUrl: string): Promise<Record<string, FlatRate
 }
 
 /** HTTP routes: POST /upload, GET /usage (cost/token stats), GET /file/<token>. */
-function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: VoiceCallCoordinator, req: IncomingMessage, res: ServerResponse): void {
+function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: VoiceCallCoordinator, voiceNetwork: VoiceNetworkFallback, req: IncomingMessage, res: ServerResponse): void {
   const url = req.url ?? "";
   if (
     req.headers.origin !== undefined &&
@@ -596,6 +597,26 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
     });
     return;
   }
+  if (req.method === "GET" && url.startsWith("/settings/voice/network")) {
+    void voiceNetwork.choices().then((choices) => {
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ ...getVoiceNetworkSettings(), choices }));
+    });
+    return;
+  }
+  if (req.method === "POST" && url.startsWith("/settings/voice/network")) {
+    void readRequestBody(req).then(async (raw) => {
+      if (voiceCalls.isBusy()) throw new Error("Cannot change the call network during a call");
+      const choices = await voiceNetwork.choices();
+      const settings = setVoiceNetworkSettings(JSON.parse(raw), choices);
+      res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ ...settings, choices }));
+    }).catch((err) => {
+      res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+      res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+    });
+    return;
+  }
   if (req.method === "POST" && url.startsWith("/settings/voice/preview")) {
     void readRequestBody(req).then(async (raw) => {
       const body = raw ? JSON.parse(raw) as { rateWpm?: unknown; voice?: unknown } : {};
@@ -792,6 +813,7 @@ function isAuditRisk(value: string | null): value is AuditRisk {
 
 export function startServer(config: HostConfig): WebSocketServer {
   const pushRegistry = new PushRegistry(pushSubscriptionsPath());
+  const voiceNetwork = new VoiceNetworkFallback();
   let pollWatches: () => Promise<void> = async () => {};
   const voiceCalls = new VoiceCallCoordinator(config, async (chatId, error) => {
     const italian = getNotificationLang() === "it";
@@ -804,7 +826,7 @@ export function startServer(config: HostConfig): WebSocketServer {
       chatId,
       type: "chat-reply",
     }).catch(() => { /* best-effort: the transcript is already persisted */ });
-  }, { onIdle: () => pollWatches() });
+  }, { onIdle: () => pollWatches(), network: voiceNetwork });
   setPushRegistry(pushRegistry);
   // The scheduler writes Actions in a separate process. Polling this local
   // SQLite DB lets the host push them even when no browser/PWA is connected.
@@ -1262,7 +1284,7 @@ export function startServer(config: HostConfig): WebSocketServer {
   });
 
   // HTTP for the Mac's own WebView — localhost only, never exposed on the tailnet.
-  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, voiceCalls, req, res));
+  const httpServer = createServer((req, res) => handleHttp(config, pushRegistry, voiceCalls, voiceNetwork, req, res));
   httpServer.on("upgrade", acceptUpgrade);
   httpServer.listen(config.port, "127.0.0.1", () => {
     console.log(`[host] http://127.0.0.1:${config.port} (localhost)`);
@@ -1273,7 +1295,7 @@ export function startServer(config: HostConfig): WebSocketServer {
     const tlsPort = Number(process.env.STEWARD_TLS_PORT ?? config.port + 1);
     const httpsServer = createHttpsServer(
       { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) },
-      (req, res) => handleHttp(config, pushRegistry, voiceCalls, req, res),
+      (req, res) => handleHttp(config, pushRegistry, voiceCalls, voiceNetwork, req, res),
     );
     httpsServer.on("upgrade", acceptUpgrade);
     httpsServer.listen(tlsPort, "0.0.0.0", () => {
