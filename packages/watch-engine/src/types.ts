@@ -45,6 +45,8 @@ export interface WatchRule {
   grants?: WatchToolGrant[];
   /** Re-run the exact same authorized action after selected outcomes. */
   continuation?: WatchContinuation;
+  /** Voice-only rules never send a fallback push unless explicitly requested. */
+  voiceFallback?: "push";
 }
 
 export interface WatchDefinition {

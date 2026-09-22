@@ -78,6 +78,7 @@ interface VoiceCoordinatorDeps {
   usage?: (record: VoiceCallRecord) => void;
   toolUsage?: (record: ToolCallRecord) => void;
   language?: () => VoiceLang;
+  onIdle?: () => void | Promise<void>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -134,6 +135,7 @@ export function formatVoiceApprovalRequest(
       when,
       actions: grants.map((grant) => copy.watchAction(String(grant.tool ?? ""))).filter(Boolean).join(", ") || jsonForSpeech(rules, lang),
       ...(continuationSummary ? { continuation: continuationSummary } : {}),
+      ...(rules.some((rule) => rule.voiceFallback === "push") ? { pushFallback: true } : {}),
     });
     return [copy.title, summary, copy.instruction].join(" ");
   }
@@ -254,6 +256,7 @@ export class VoiceCallCoordinator {
   private retryable: boolean | undefined;
   private terminalError: Error | null = null;
   private dialStarted = false;
+  private recoveryPending = false;
   private lastCall: VoiceCallSummary | undefined;
   private state: VoiceCallState;
   private readonly idempotency = new Map<string, { result: VoiceCallStarted; expiresAt: number }>();
@@ -299,6 +302,10 @@ export class VoiceCallCoordinator {
     };
   }
 
+  isBusy(): boolean {
+    return !!(this.activeChatId || this.activeRequestId || this.recoveryPending);
+  }
+
   async start(openingLine?: string, requestedId?: string): Promise<VoiceCallStarted> {
     const suppliedId = requestedId?.trim();
     if (suppliedId) {
@@ -332,6 +339,7 @@ export class VoiceCallCoordinator {
     this.pruneIdempotency();
     const previous = this.idempotency.get(requestId);
     if (previous) throw new VoiceBusyError(voiceMessages(this.currentLanguage()).status.duplicate);
+    if (this.isBusy() && !options.recoveryAttempt) throw new VoiceBusyError(voiceMessages(this.currentLanguage()).status.busy);
     if (this.activeChatId || this.activeRequestId) throw new VoiceBusyError(voiceMessages(this.currentLanguage()).status.busy);
 
     const language = this.currentLanguage();
@@ -436,8 +444,10 @@ export class VoiceCallCoordinator {
       if (!completedSummary) return;
       if (!this.shouldRecover(completedSummary, options)) {
         complete(completedSummary);
+        this.notifyIdle();
         return;
       }
+      this.recoveryPending = true;
       this.audit({
         actor: "host", eventType: "voice.recovery_scheduled", risk: "medium",
         summary: voiceCopy.reconnectScheduled, chatId: chat.id, correlationId: requestId,
@@ -447,6 +457,7 @@ export class VoiceCallCoordinator {
         await this.deps.sleep(RECOVERY_DELAY_MS);
         // A manually started call takes precedence over this one-shot callback.
         if (this.activeChatId || this.activeRequestId) throw new VoiceBusyError(voiceCopy.status.busy);
+        this.recoveryPending = false;
         const recovery = await this.begin(voiceCopy.resumeOpeningLine, undefined, {
           ...options, chatId: chat.id, recoveryAttempt: 1,
           executionGuard: options.executionGuard ? recoveryExecutionGuard(options.executionGuard) : undefined,
@@ -454,6 +465,7 @@ export class VoiceCallCoordinator {
         });
         complete(await recovery.completion);
       } catch (cause) {
+        this.recoveryPending = false;
         const error = cause instanceof Error ? cause : new Error(String(cause));
         this.audit({
           actor: "host", eventType: "voice.recovery_skipped", risk: "medium", summary: error.message,
@@ -464,9 +476,15 @@ export class VoiceCallCoordinator {
           try { await this.onFinished?.(chat.id, error); } catch { /* best-effort */ }
         }
         complete(completedSummary);
+        this.notifyIdle();
       }
     });
     return { started, completion };
+  }
+
+  private notifyIdle(): void {
+    if (this.isBusy()) return;
+    try { void Promise.resolve(this.deps.onIdle?.()).catch(() => {}); } catch { /* best-effort */ }
   }
 
   private shouldRecover(summary: VoiceCallSummary, options: VoiceStartOptions): boolean {
@@ -562,6 +580,7 @@ export class VoiceCallCoordinator {
     this.activeLanguage = null;
     this.activeRequestId = null;
     this.startedAt = null;
+    this.notifyIdle();
   }
 
   private finish(chatId: string, requestId: string, error?: Error): VoiceCallSummary {

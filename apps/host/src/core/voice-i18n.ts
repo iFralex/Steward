@@ -49,7 +49,7 @@ interface VoiceMessages {
     tool: (tool: string) => string;
     arguments: (value: string) => string;
     preview: (value: string) => string;
-    watchSummary: (details: { instruction: string; when: string; actions: string; continuation?: string }) => string;
+    watchSummary: (details: { instruction: string; when: string; actions: string; continuation?: string; pushFallback?: boolean }) => string;
     watchAction: (tool: string) => string;
     watchContinuation: (details: { outcomes: string[]; afterMinutes: number; maxAttempts: number }) => string;
     instruction: string;
@@ -109,8 +109,8 @@ const MESSAGES = {
       tool: (tool) => `Tool: ${tool}.`,
       arguments: (value) => `Arguments: ${value}.`,
       preview: (value) => `Preview: ${value}.`,
-      watchSummary: ({ instruction, when, actions, continuation }) =>
-        `At ${when}, ${instruction}. Authorized action: ${actions}.${continuation ? ` ${continuation}.` : ""}`,
+      watchSummary: ({ instruction, when, actions, continuation, pushFallback }) =>
+        `At ${when}, ${instruction}. Authorized action: ${actions}.${continuation ? ` ${continuation}.` : ""}${pushFallback ? " If the call fails, send a fallback push notification." : ""}`,
       watchAction: (tool) => tool === "mcp__voice__call_start" ? "one phone call"
         : tool === "mcp__mail__send_email" ? "one email"
           : tool === "mcp__mail__reply" ? "one email reply"
@@ -209,8 +209,8 @@ const MESSAGES = {
       tool: (tool) => `Strumento: ${tool}.`,
       arguments: (value) => `Argomenti: ${value}.`,
       preview: (value) => `Anteprima: ${value}.`,
-      watchSummary: ({ instruction, when, actions, continuation }) =>
-        `Alle ${when}, ${instruction}. Azione autorizzata: ${actions}.${continuation ? ` ${continuation}.` : ""}`,
+      watchSummary: ({ instruction, when, actions, continuation, pushFallback }) =>
+        `Alle ${when}, ${instruction}. Azione autorizzata: ${actions}.${continuation ? ` ${continuation}.` : ""}${pushFallback ? " Se la chiamata fallisce, invia una notifica push di ripiego." : ""}`,
       watchAction: (tool) => tool === "mcp__voice__call_start" ? "una chiamata"
         : tool === "mcp__mail__send_email" ? "una email"
           : tool === "mcp__mail__reply" ? "una risposta email"

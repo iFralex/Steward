@@ -7,19 +7,24 @@ import { isRunning } from "./running-chats.ts";
 import { recordWatchDeliveryUsage } from "./watch-observability.ts";
 import { getNotificationLang, type NotificationLang } from "./notification-lang.ts";
 import type { TurnResult } from "./agent-runner.ts";
-import type { VoiceCallSummary } from "./voice-channel.ts";
+import { VoiceBusyError, type VoiceCallSummary } from "./voice-channel.ts";
 import { resolvedWatchGrants, watchAgentGrantTools, watchHasGrant } from "./watch-grants.ts";
 import { createTimeResourceRef } from "./time-watch-adapter.ts";
 
 let running = false;
+let rerunArgs: Parameters<typeof pollAndDeliverWatchEvents>[0] | null = null;
 
 export async function pollAndDeliverWatchEvents(args: {
   engine: WatchEngine;
   push: PushRegistry;
   runAgentTurn(chatId: string, prompt: string, pending: PendingWatchEvent): Promise<TurnResult>;
   runVoiceTurn(chatId: string, prompt: string, eventId: string, pending: PendingWatchEvent): Promise<VoiceCallSummary>;
+  isVoiceBusy?: () => boolean;
 }): Promise<void> {
-  if (running) return;
+  if (running) {
+    rerunArgs = args;
+    return;
+  }
   running = true;
   try {
     await args.engine.poll();
@@ -34,6 +39,12 @@ export async function pollAndDeliverWatchEvents(args: {
       const language = getNotificationLang();
       let body = pending.notificationText;
       let mode: "agent" | "voice" | "cached" | "fallback" = body ? "cached" : "agent";
+      const voice = voiceAuthorized(pending);
+      const voiceClaimed = voice && args.engine.store.hasActionClaim(pending.id, "mcp__voice__call_start");
+      if (voice && !body && !voiceClaimed && args.isVoiceBusy?.()) {
+        recordVoiceDeferred(pending, chatId);
+        continue;
+      }
       if (!body) {
         const auditPayload = { watchId: pending.watchId, eventId: pending.id, eventType: pending.event.type, ruleIds: pending.rules.map((rule) => rule.id) };
         recordAudit({
@@ -41,13 +52,13 @@ export async function pollAndDeliverWatchEvents(args: {
           summary: "Resuming the originating chat for a watch event", chatId,
           correlationId: pending.watchId, payload: auditPayload,
         });
-        if (voiceAuthorized(pending)) {
+        if (voice) {
           mode = "voice";
-          // Persist the fallback before the side effect. If the host dies after
-          // dialing but before marking delivery, the next process sends this
-          // cached push instead of placing a second call.
-          args.engine.store.setNotificationText(pending.id, pending.event.fallbackText);
+          // The durable action claim is written immediately before call_start.
+          // A crash after that point must not redial. No claim means an event
+          // deferred by a busy channel remains safe to deliver after restart.
           try {
+            if (voiceClaimed) throw new Error("A previous voice attempt was claimed before the host restarted.");
             const summary = await args.runVoiceTurn(chatId, watchAgentPrompt(pending, language), pending.id, pending);
             if (!summary.ok) {
               const outcome = voiceOutcome(summary);
@@ -73,6 +84,15 @@ export async function pollAndDeliverWatchEvents(args: {
             });
             continue;
           } catch (error) {
+            if (error instanceof VoiceBusyError) {
+              recordVoiceDeferred(pending, chatId);
+              continue;
+            }
+            if (!voiceFallbackAllowed(pending)) {
+              recordDeliveryFailure(args.engine, pending, chatId, startedAt,
+                error instanceof Error ? error.message : String(error), false);
+              continue;
+            }
             body = pending.event.fallbackText;
             mode = "fallback";
             store.addMessage(chatId, { id: randomUUID(), role: "assistant", text: body });
@@ -113,6 +133,12 @@ export async function pollAndDeliverWatchEvents(args: {
         }
       }
 
+      if (voice && !voiceFallbackAllowed(pending)) {
+        // Also fail closed for a cached fallback from an older host version.
+        recordDeliveryFailure(args.engine, pending, chatId, startedAt, "Voice-only watch forbids fallback push", false);
+        continue;
+      }
+
       try {
         const push = await args.push.sendAll({
           title: watchTitle(pending.event, language), body: body.slice(0, 240), tag: `watch-${pending.watchId}-${pending.id}`,
@@ -137,7 +163,26 @@ export async function pollAndDeliverWatchEvents(args: {
     }
   } finally {
     running = false;
+    if (rerunArgs) {
+      const next = rerunArgs;
+      rerunArgs = null;
+      queueMicrotask(() => { void pollAndDeliverWatchEvents(next); });
+    }
   }
+}
+
+function voiceFallbackAllowed(pending: PendingWatchEvent): boolean {
+  const voiceRules = pending.rules.filter((rule) =>
+    rule.grants?.some((grant) => grant.tool === "mcp__voice__call_start"));
+  return voiceRules.length > 0 && voiceRules.every((rule) => rule.voiceFallback === "push");
+}
+
+function recordVoiceDeferred(pending: PendingWatchEvent, chatId: string): void {
+  recordAudit({
+    actor: "scheduler", eventType: "watch.voice_deferred", risk: "low",
+    summary: "Voice channel busy; watch event remains pending", chatId, correlationId: pending.watchId,
+    payload: { watchId: pending.watchId, eventId: pending.id },
+  });
 }
 
 function pushAccepted(report: PushDeliveryReport): boolean {
@@ -262,6 +307,7 @@ export async function scheduleWatchContinuation(
     expiresAt: parent.expiresAt,
     rules: [{
       id: rule.id, event: "time.reached", once: true, grants: rule.grants,
+      ...(rule.voiceFallback ? { voiceFallback: rule.voiceFallback } : {}),
       continuation: { ...continuation, attempt: attempt + 1 },
     }],
   });

@@ -12,6 +12,7 @@ process.env.USAGE_DIR = join(testRoot, "usage");
 import { WatchEngine, WatchStore, type DomainEvent, type WatchAdapter } from "@steward/watch-engine";
 import { chatStore } from "../src/core/chat-store.ts";
 import { pollAndDeliverWatchEvents } from "../src/core/watch-notification-service.ts";
+import { VoiceBusyError } from "../src/core/voice-channel.ts";
 import { PushRegistry } from "../src/core/push.ts";
 import { TimeWatchAdapter } from "../src/core/time-watch-adapter.ts";
 
@@ -32,8 +33,9 @@ class Adapter implements WatchAdapter {
   }
 }
 
-async function fixture(voice = false) {
-  const store = WatchStore.open(join(mkdtempSync(join(testRoot, "watch-")), "watches.db"));
+async function fixture(voice = false, voiceFallback = false) {
+  const dbPath = join(mkdtempSync(join(testRoot, "watch-")), "watches.db");
+  const store = WatchStore.open(dbPath);
   const adapter = new Adapter();
   const engine = new WatchEngine(store).register(adapter);
   const chat = chatStore().createChat("Viaggio");
@@ -41,10 +43,11 @@ async function fixture(voice = false) {
     source: "fake", resourceRef: "train-ref", chatId: chat.id,
     instruction: "Chiamami alla fermata precedente",
     rules: [{ id: "before", event: "fake.arrived", once: true,
-      ...(voice ? { grants: [{ tool: "mcp__voice__call_start" as const }] } : {}) }],
+      ...(voice ? { grants: [{ tool: "mcp__voice__call_start" as const }] } : {}),
+      ...(voiceFallback ? { voiceFallback: "push" as const } : {}) }],
   });
   adapter.step = 1;
-  return { engine, store, chat };
+  return { engine, store, chat, adapter, dbPath };
 }
 
 test("an authorized event invokes one conversational voice turn in the originating chat", async () => {
@@ -78,7 +81,7 @@ test("an authorized event invokes one conversational voice turn in the originati
 });
 
 test("a failed voice event falls back to push and never redials on delivery retry", async () => {
-  const fx = await fixture(true);
+  const fx = await fixture(true, true);
   let voiceCalls = 0;
   let pushAttempts = 0;
   const push = new PushRegistry(join(testRoot, "fallback-push.json"), async () => {
@@ -106,6 +109,128 @@ test("a failed voice event falls back to push and never redials on delivery retr
   assert.equal(pushAttempts, 2);
   assert.equal(fx.store.pending().length, 0);
   fx.store.close();
+});
+
+test("a busy voice channel leaves the event pending across restart and calls when free", async () => {
+  const fx = await fixture(true);
+  let busy = true;
+  let calls = 0;
+  let pushes = 0;
+  const push = new PushRegistry(join(testRoot, "busy-push.json"), async () => { pushes += 1; });
+  push.subscribe({ endpoint: "https://push.test/busy", keys: { p256dh: "p", auth: "a" } });
+  const runVoiceTurn = async (chatId: string) => {
+    calls += 1;
+    return { chatId, requestId: "busy-event", startedAt: 1, finishedAt: 2, ok: true, durationMs: 1 };
+  };
+  await pollAndDeliverWatchEvents({
+    engine: fx.engine, push, isVoiceBusy: () => busy,
+    runAgentTurn: async () => { throw new Error("unexpected agent turn"); }, runVoiceTurn,
+  });
+  assert.equal(calls, 0);
+  assert.equal(pushes, 0);
+  assert.equal(fx.store.pending().length, 1);
+  assert.equal(fx.store.pending()[0].attempts, 0);
+  assert.equal(fx.store.pending()[0].notificationText, undefined);
+  fx.store.close();
+
+  const reopened = WatchStore.open(fx.dbPath);
+  const restartedEngine = new WatchEngine(reopened).register(fx.adapter);
+  busy = false;
+  await pollAndDeliverWatchEvents({
+    engine: restartedEngine, push, isVoiceBusy: () => busy,
+    runAgentTurn: async () => { throw new Error("unexpected agent turn"); }, runVoiceTurn,
+  });
+  assert.equal(calls, 1);
+  assert.equal(pushes, 0);
+  assert.equal(reopened.pending().length, 0);
+  reopened.close();
+});
+
+test("a late busy race also defers instead of sending fallback push", async () => {
+  const fx = await fixture(true, true);
+  let calls = 0;
+  let pushes = 0;
+  const push = new PushRegistry(join(testRoot, "late-busy-push.json"), async () => { pushes += 1; });
+  push.subscribe({ endpoint: "https://push.test/late-busy", keys: { p256dh: "p", auth: "a" } });
+  const args = {
+    engine: fx.engine, push, isVoiceBusy: () => false,
+    runAgentTurn: async () => { throw new Error("unexpected agent turn"); },
+    runVoiceTurn: async (chatId: string) => {
+      calls += 1;
+      if (calls === 1) throw new VoiceBusyError("Already calling");
+      return { chatId, requestId: "late-busy", startedAt: 1, finishedAt: 2, ok: true, durationMs: 1 };
+    },
+  };
+  await pollAndDeliverWatchEvents(args);
+  assert.equal(fx.store.pending().length, 1);
+  assert.equal(fx.store.pending()[0].notificationText, undefined);
+  assert.equal(pushes, 0);
+  await pollAndDeliverWatchEvents(args);
+  assert.equal(calls, 2);
+  assert.equal(fx.store.pending().length, 0);
+  assert.equal(pushes, 0);
+  fx.store.close();
+});
+
+test("a call-only watch records a real failure without sending another channel", async () => {
+  const fx = await fixture(true);
+  let pushes = 0;
+  const push = new PushRegistry(join(testRoot, "only-call-push.json"), async () => { pushes += 1; });
+  push.subscribe({ endpoint: "https://push.test/only-call", keys: { p256dh: "p", auth: "a" } });
+  await pollAndDeliverWatchEvents({
+    engine: fx.engine, push,
+    runAgentTurn: async () => { throw new Error("unexpected agent turn"); },
+    runVoiceTurn: async (chatId) => ({ chatId, requestId: "failed", startedAt: 1, finishedAt: 2,
+      ok: false, error: "No answer", failureCode: "no_answer", durationMs: 1 }),
+  });
+  assert.equal(pushes, 0);
+  assert.equal(fx.store.pending().length, 0);
+  const status = fx.store.raw.prepare("SELECT status FROM watch_events LIMIT 1").get() as { status: string };
+  assert.equal(status.status, "failed");
+  fx.store.close();
+});
+
+test("a matched call-only rule vetoes fallback push from another rule", async () => {
+  const fx = await fixture(true, true);
+  const parent = fx.store.get(fx.store.active()[0].id);
+  assert.ok(parent);
+  const rules = [...parent.rules, { id: "also-call", event: "fake.arrived", once: true,
+    grants: [{ tool: "mcp__voice__call_start" as const }] }];
+  fx.store.raw.prepare("UPDATE watches SET rules=? WHERE id=?").run(JSON.stringify(rules), parent.id);
+  let pushes = 0;
+  const push = new PushRegistry(join(testRoot, "mixed-rules-push.json"), async () => { pushes += 1; });
+  push.subscribe({ endpoint: "https://push.test/mixed", keys: { p256dh: "p", auth: "a" } });
+  await pollAndDeliverWatchEvents({
+    engine: fx.engine, push,
+    runAgentTurn: async () => { throw new Error("unexpected agent turn"); },
+    runVoiceTurn: async (chatId) => ({ chatId, requestId: "mixed", startedAt: 1, finishedAt: 2,
+      ok: false, error: "Call failed", durationMs: 1 }),
+  });
+  assert.equal(pushes, 0);
+  fx.store.close();
+});
+
+test("a claimed call is never redialed after restart", async () => {
+  const fx = await fixture(true, true);
+  await fx.engine.poll();
+  const pending = fx.store.pending()[0];
+  assert.ok(pending);
+  assert.equal(fx.store.claimAction(pending.id, "before", "mcp__voice__call_start"), true);
+  fx.store.close();
+
+  const reopened = WatchStore.open(fx.dbPath);
+  const engine = new WatchEngine(reopened).register(fx.adapter);
+  let pushes = 0;
+  const push = new PushRegistry(join(testRoot, "claimed-call-push.json"), async () => { pushes += 1; });
+  push.subscribe({ endpoint: "https://push.test/claimed", keys: { p256dh: "p", auth: "a" } });
+  await pollAndDeliverWatchEvents({
+    engine, push,
+    runAgentTurn: async () => { throw new Error("unexpected agent turn"); },
+    runVoiceTurn: async () => { throw new Error("claimed call must not redial"); },
+  });
+  assert.equal(pushes, 1);
+  assert.equal(reopened.pending().length, 0);
+  reopened.close();
 });
 
 test("a read-only watch resumes the same chat and pushes the agent response", async () => {
@@ -136,6 +261,7 @@ test("an unanswered call creates a bounded time watcher and an answered retry st
     source: "fake", resourceRef: "train-ref", chatId: chat.id, expiresAt: Date.now() + 10 * 60_000,
     instruction: "Chiamami ogni minuto finché rispondo",
     rules: [{ id: "call", event: "fake.arrived", once: true,
+      voiceFallback: "push",
       grants: [{ tool: "mcp__voice__call_start" }],
       continuation: { outcomes: ["not_answered"], afterMinutes: 1, maxAttempts: 3 } }],
   });
@@ -158,6 +284,7 @@ test("an unanswered call creates a bounded time watcher and an answered retry st
   assert.ok(child);
   assert.equal(child.rules[0].continuation?.attempt, 2);
   assert.deepEqual(child.rules[0].grants, [{ tool: "mcp__voice__call_start" }]);
+  assert.equal(child.rules[0].voiceFallback, "push");
 
   clock = (child.snapshot as { targetTimeMs: number }).targetTimeMs + 1;
   await pollAndDeliverWatchEvents(args);

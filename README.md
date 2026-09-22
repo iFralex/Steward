@@ -618,9 +618,13 @@ remains pending; after two failed agent attempts, the third pass uses the
 adapter's deterministic `fallbackText`. If every registered push endpoint
 fails, the durable event is retried; its already composed notification text is
 stored in `watch_events.notification_text` and reused so the retry neither
-calls the agent again nor duplicates the chat message. For voice events the
-fallback is persisted before dialing: a host crash can therefore cause a push
-on restart but never redial that same event. If the approved rule has a bounded
+calls the agent again nor duplicates the chat message. A voice event stays
+pending while the voice channel is busy, including across host restarts, and
+is retried as soon as the coordinator becomes idle. A durable action claim is
+written immediately before dialing, so a crash after that point does not redial
+the same event. A fallback push is sent only after a call failure and only when
+every matched voice rule explicitly opts in with `voiceFallback: "push"`; call-only
+rules never send one. If the approved rule has a bounded
 continuation and the call returns a matching structured outcome such as
 `not_answered`, a distinct durable time watcher schedules the next attempt.
 While the host remains running, an established call whose incoming RTP actually

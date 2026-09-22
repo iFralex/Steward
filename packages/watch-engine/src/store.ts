@@ -168,6 +168,10 @@ export class WatchStore {
       .run(key, eventId, ruleId, tool, Date.now()).changes > 0;
   }
 
+  hasActionClaim(eventId: string, tool: string): boolean {
+    return !!this.raw.prepare("SELECT 1 FROM watch_action_runs WHERE event_id=? AND tool=? LIMIT 1").get(eventId, tool);
+  }
+
   finishAction(eventId: string, ruleId: string, tool: string, error?: string): void {
     this.raw.prepare(`UPDATE watch_action_runs SET status=?, finished_at=?, last_error=? WHERE action_key=?`)
       .run(error ? "failed" : "completed", Date.now(), error?.slice(0, 500) ?? null, `${eventId}:${ruleId}:${tool}`);

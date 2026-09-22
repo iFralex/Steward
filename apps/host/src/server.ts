@@ -792,6 +792,7 @@ function isAuditRisk(value: string | null): value is AuditRisk {
 
 export function startServer(config: HostConfig): WebSocketServer {
   const pushRegistry = new PushRegistry(pushSubscriptionsPath());
+  let pollWatches: () => Promise<void> = async () => {};
   const voiceCalls = new VoiceCallCoordinator(config, async (chatId, error) => {
     const italian = getNotificationLang() === "it";
     await pushRegistry.sendAll({
@@ -803,7 +804,7 @@ export function startServer(config: HostConfig): WebSocketServer {
       chatId,
       type: "chat-reply",
     }).catch(() => { /* best-effort: the transcript is already persisted */ });
-  });
+  }, { onIdle: () => pollWatches() });
   setPushRegistry(pushRegistry);
   // The scheduler writes Actions in a separate process. Polling this local
   // SQLite DB lets the host push them even when no browser/PWA is connected.
@@ -824,9 +825,10 @@ export function startServer(config: HostConfig): WebSocketServer {
     gateway: { ...config.gateway, usageService: "host", usageAction: "watch-agent-turn" },
     policy: { ...config.policy, default: "deny", rules: backgroundRules },
   }, watchSession, () => {});
-  const pollWatches = () => pollAndDeliverWatchEvents({
+  pollWatches = () => pollAndDeliverWatchEvents({
     engine: sharedWatchEngine(),
     push: pushRegistry,
+    isVoiceBusy: () => voiceCalls.isBusy(),
     runAgentTurn: async (chatId, prompt, pending) => {
       const grantedTools = watchAgentGrantTools(pending);
       if (!grantedTools.length) return watchChats.runAutomaticTurn(chatId, prompt);

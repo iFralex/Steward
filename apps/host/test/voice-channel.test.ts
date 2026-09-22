@@ -108,6 +108,18 @@ test("voice approval summarizes an agent watch instead of reading raw JSON", () 
   assert.doesNotMatch(prompt, /mcp__voice__call_start/);
 });
 
+test("voice approval states when a failed call may use a fallback push", () => {
+  const prompt = formatVoiceApprovalRequest({
+    tool: "create_agent_watch",
+    input: {
+      source: "time", instruction: "Chiamami",
+      rules: [{ id: "call", event: "time.reached", voiceFallback: "push",
+        grants: [{ tool: "mcp__voice__call_start" }] }],
+    },
+  }, "it");
+  assert.match(prompt, /notifica push di ripiego/);
+});
+
 test("voice approval propagates an end-to-end media failure", async () => {
   await assert.rejects(
     conductVoiceApproval("Approva?", async () =>
@@ -255,8 +267,10 @@ function fakeBridge(status = '{"ready":true,"phase":"idle"}') {
 test("preflight runs before chat creation and duplicate request ids are idempotent", async () => {
   let emit: ((event: any) => void) | undefined;
   let finishTurn: ((result: any) => void) | undefined;
+  let idleCalls = 0;
   const turn = new Promise<any>((resolve) => { finishTurn = resolve; });
-  const coordinator = new VoiceCallCoordinator(fakeConfig(), undefined, {
+  let coordinator: VoiceCallCoordinator;
+  coordinator = new VoiceCallCoordinator(fakeConfig(), undefined, {
     bridge: async () => fakeBridge(),
     createChat: () => ({ id: "voice-chat" }),
     createRunner: (handler) => {
@@ -267,11 +281,13 @@ test("preflight runs before chat creation and duplicate request ids are idempote
     usage: () => {},
     now: () => 1234,
     sleep: async () => {},
+    onIdle: () => { idleCalls += 1; assert.equal(coordinator.isBusy(), false); },
   });
 
   const first = await coordinator.start(undefined, "request-1");
   assert.equal(first.chatId, "voice-chat");
   assert.equal(first.requestId, "request-1");
+  assert.equal(coordinator.isBusy(), true);
   const duplicate = await coordinator.start(undefined, "request-1");
   assert.equal(duplicate.duplicate, true);
   await assert.rejects(() => coordinator.start(undefined, "request-2"), VoiceBusyError);
@@ -284,6 +300,7 @@ test("preflight runs before chat creation and duplicate request ids are idempote
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(coordinator.status().state, "idle");
   assert.equal(coordinator.status().lastCall?.ok, true);
+  assert.equal(idleCalls, 1);
 });
 
 test("a quick call uses a hidden host control turn instead of a visible user message", async () => {

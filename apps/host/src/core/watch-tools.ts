@@ -96,6 +96,8 @@ function watchParameters(agentWatch: boolean): ToolDefinition["parameters"] {
           }, required: ["kind", "field", "minutes"], additionalProperties: false },
           where: { type: "object", additionalProperties: true, description: "Optional equality filters over event data." },
           once: { type: "boolean", description: "Fire this rule only once." },
+          ...(agentWatch ? { voiceFallback: { type: "string", enum: ["push"],
+            description: "Opt in to a push notification if an authorized voice call actually fails. Omit for call-only requests: busy voice channels stay pending and never cause a fallback push." } } : {}),
           continuation: { type: "object", properties: {
             outcomes: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1, description: "Structured action outcomes that schedule the next attempt, e.g. not_answered, busy, or failed." },
             afterMinutes: { type: "number", exclusiveMinimum: 0, maximum: 1440 },
@@ -172,6 +174,10 @@ function parseRules(value: unknown, allowGrants: boolean): WatchRule[] {
     if (Number(!!event) + Number(!!trigger) !== 1) throw new Error("Each rule needs exactly one of event or trigger");
     if (!allowGrants && row.grants !== undefined) throw new Error("Rule grants require create_agent_watch");
     const grants = allowGrants ? parseGrants(row.grants) : [];
+    if (row.voiceFallback !== undefined && (row.voiceFallback !== "push"
+      || !grants.some((grant) => grant.tool === "mcp__voice__call_start"))) {
+      throw new Error("voiceFallback requires a voice grant and must be 'push'");
+    }
     const continuation = parseContinuation(row.continuation);
     if (continuation && !allowGrants) throw new Error("Continuations require create_agent_watch");
     if (continuation && !grants.length) throw new Error("A continuation requires a rule-scoped grant");
@@ -180,6 +186,7 @@ function parseRules(value: unknown, allowGrants: boolean): WatchRule[] {
       ...(row.where && typeof row.where === "object" && !Array.isArray(row.where) ? { where: row.where as Record<string, unknown> } : {}),
       ...(row.once === true ? { once: true } : {}),
       ...(grants.length ? { grants } : {}),
+      ...(row.voiceFallback === "push" ? { voiceFallback: "push" as const } : {}),
       ...(continuation ? { continuation } : {}),
     };
   });
