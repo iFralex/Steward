@@ -623,6 +623,15 @@ fallback is persisted before dialing: a host crash can therefore cause a push
 on restart but never redial that same event. If the approved rule has a bounded
 continuation and the call returns a matching structured outcome such as
 `not_answered`, a distinct durable time watcher schedules the next attempt.
+While the host remains running, an established call whose incoming RTP actually
+stops (rather than merely having two silent replies) gets one automatic
+replacement call in the same chat after three seconds. This applies to manual
+and watch calls. The replacement dial has its own one-use authorization; other
+watch grants retain their durable limits. Steward asks where the user last
+heard it and does not automatically repeat writes or approvals. A normal
+hangup, unanswered call, ambiguous silence, or host restart does not trigger
+this recovery. This detects a media interruption, not the specific cause on
+the phone; SIP relays can hide a client crash from the host.
 Per-send reports track
 attempted, delivered, failed and pruned subscriptions. Delivery is complete
 when the chat copy exists and either no push endpoint is registered or at least

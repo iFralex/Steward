@@ -476,3 +476,80 @@ test("structured SIP failures reach status, Usage, Audit, and completion callbac
   assert.equal(failed.durationMs, 4_000);
   assert.equal(failed.payload.diagnostic.sipStatus, 480);
 });
+
+test("interrupted media triggers one callback in the same chat without replaying actions", async () => {
+  const chat = chatStore().createChat("Recovery");
+  const prompts: string[] = [];
+  const calls: string[] = [];
+  const usage: any[] = [];
+  const audit: any[] = [];
+  let finished!: () => void;
+  const completion = new Promise<void>((resolve) => { finished = resolve; });
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), (chatId, error) => {
+    calls.push(`${chatId}:${error?.message ?? "ok"}`);
+    finished();
+  }, {
+    bridge: async () => fakeBridge(), createChat: () => chat,
+    createRunner: (emit) => ({
+      runTurn: async () => { throw new Error("hidden prompt expected"); },
+      runAutomaticTurn: async (chatId, prompt) => {
+        assert.equal(chatId, chat.id);
+        prompts.push(prompt);
+        emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+        emit({ type: "tool_result", tool: "mcp__voice__call_start", ok: true, output: "connected" } as any);
+        if (prompts.length === 1) {
+          emit({ type: "tool_result", tool: "mcp__voice__listen", ok: true,
+            output: '[CALL FAILED] {"code":"media_interrupted","message":"RTP stopped","retryable":true}' } as any);
+        }
+        return { ok: true, messageId: "done", text: "done" };
+      },
+      abort: async () => {},
+    }),
+    audit: ((entry: any) => audit.push(entry)) as any,
+    usage: (entry) => usage.push(entry), language: () => "it", sleep: async () => {},
+  });
+  await coordinator.start(undefined, "recover-1");
+  await completion;
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /stessa chat/);
+  assert.match(prompts[1], /Non ripetere un tool con effetti esterni/);
+  assert.deepEqual(calls, [`${chat.id}:ok`]);
+  assert.deepEqual(usage.map((entry) => entry.outcome), ["media_interrupted", "completed"]);
+  assert.equal(audit.filter((entry) => entry.eventType === "voice.recovery_scheduled").length, 1);
+  assert.equal(coordinator.status().lastCall?.ok, true);
+});
+
+test("a failed recovery never calls again", async () => {
+  const chat = chatStore().createChat("Recovery limit");
+  let attempts = 0;
+  let originalDialClaims = 0;
+  const originalGuard = {
+    beforeExecute: async (tool: string) => {
+      if (tool === "mcp__voice__call_start") return { allowed: ++originalDialClaims === 1 };
+      return { allowed: false };
+    },
+  };
+  const coordinator = new VoiceCallCoordinator(fakeConfig(), undefined, {
+    bridge: async () => fakeBridge(), createRunner: (emit, scope) => ({
+      runTurn: async () => { throw new Error("hidden prompt expected"); },
+      runAutomaticTurn: async () => {
+        attempts += 1;
+        assert.equal((await scope!.executionGuard!.beforeExecute("mcp__voice__call_start", {})).allowed, true);
+        assert.equal((await scope!.executionGuard!.beforeExecute("mcp__mail__send_email", {})).allowed, false);
+        emit({ type: "tool_call", tool: "mcp__voice__call_start" } as any);
+        emit({ type: "tool_result", tool: "mcp__voice__call_start", ok: true,
+          output: '[CALL FAILED] {"code":"media_interrupted","message":"RTP stopped","retryable":true}' } as any);
+        return { ok: true, messageId: null, text: "" };
+      },
+      abort: async () => {},
+    }),
+    audit: (() => {}) as any, usage: () => {}, language: () => "en", sleep: async () => {},
+  });
+  const summary = await coordinator.runWatchEvent(chat.id, "Initial watcher event", "watch-recovery", {
+    allowedTools: ["mcp__voice__call_start"], executionGuard: originalGuard,
+  });
+  assert.equal(attempts, 2);
+  assert.equal(originalDialClaims, 1);
+  assert.equal(summary.failureCode, "media_interrupted");
+  assert.equal(summary.ok, false);
+});

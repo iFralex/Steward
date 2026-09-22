@@ -8,6 +8,7 @@ export type VoiceFailureCode =
   | "server_error"
   | "media_error"
   | "media_stalled"
+  | "media_interrupted"
   | "network_error"
   | "unknown";
 
@@ -76,6 +77,7 @@ export function humanVoiceFailure(code: VoiceFailureCode): string {
     case "server_error": return "The SIP provider returned a server error.";
     case "media_error": return "The call connected but audio media could not be established.";
     case "media_stalled": return "The phone stopped returning usable audio although the SIP call still appeared connected.";
+    case "media_interrupted": return "The remote audio stream stopped without a normal call hangup.";
     case "network_error": return "The network prevented the SIP call from completing.";
     default: return "Ringback could not complete the call.";
   }

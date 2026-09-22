@@ -87,11 +87,14 @@ interface VoiceStartOptions {
   prompt?: string;
   allowedTools?: string[];
   executionGuard?: ToolExecutionGuard;
+  watchEvent?: boolean;
+  recoveryAttempt?: number;
 }
 
 const PREFLIGHT_ATTEMPTS = 2;
 const IDEMPOTENCY_TTL_MS = 10 * 60_000;
 const MAX_APPROVAL_EXCHANGES = 2;
+const RECOVERY_DELAY_MS = 3_000;
 
 type VoiceApprovalEvent = Extract<ServerEvent, { type: "approval_request" }>;
 export type VoiceApprovalDecision = "allow" | "deny";
@@ -314,7 +317,7 @@ export class VoiceCallCoordinator {
     requestId: string,
     scope?: { allowedTools?: string[]; executionGuard?: ToolExecutionGuard },
   ): Promise<VoiceCallSummary> {
-    return (await this.begin(undefined, requestId, { chatId, prompt, ...scope })).completion;
+    return (await this.begin(undefined, requestId, { chatId, prompt, ...scope, watchEvent: true })).completion;
   }
 
   private async begin(
@@ -368,10 +371,11 @@ export class VoiceCallCoordinator {
     this.activeChatId = chat.id;
     this.transition("starting", voiceCopy.status.preparing);
     this.audit({
-      actor: options.chatId ? "scheduler" : "user", eventType: "voice.call_requested", risk: "medium",
-      summary: options.chatId ? voiceCopy.audit.watchCallRequested : voiceCopy.audit.callRequested,
+      actor: options.watchEvent ? "scheduler" : "user", eventType: "voice.call_requested", risk: "medium",
+      summary: options.watchEvent ? voiceCopy.audit.watchCallRequested : voiceCopy.audit.callRequested,
       chatId: chat.id, correlationId: requestId,
-      payload: { transport: "ringback", requestId, ...(options.chatId ? { automatic: true } : { openingLine: line }) },
+      payload: { transport: "ringback", requestId, ...(options.watchEvent ? { automatic: true } : { openingLine: line }),
+        ...(options.recoveryAttempt ? { recoveryAttempt: options.recoveryAttempt } : {}) },
     });
 
     const started: VoiceCallStarted = { chatId: chat.id, requestId, transport: "ringback", state: "starting" };
@@ -384,7 +388,7 @@ export class VoiceCallCoordinator {
     const callApprovalSession = this.activeApprovalSession;
     const turnPrompt = options.prompt ?? ringbackCallPrompt(line, language);
     const turn = runner.runAutomaticTurn
-      ? runner.runAutomaticTurn(chat.id, turnPrompt, options.chatId ? "scheduler" : "host")
+      ? runner.runAutomaticTurn(chat.id, turnPrompt, options.watchEvent ? "scheduler" : "host")
       : runner.runTurn(chat.id, turnPrompt);
     void turn.then(async (result) => {
       if (!result.ok) throw new Error(result.error || voiceCopy.status.agentFailed);
@@ -397,7 +401,7 @@ export class VoiceCallCoordinator {
       });
       const summary = this.finish(chat.id, requestId);
       completedSummary = summary;
-      if (!options.chatId) {
+      if (!options.watchEvent) {
         try { await this.onFinished?.(chat.id); } catch { /* completion callback is best-effort */ }
       }
     }).catch(async (cause) => {
@@ -412,11 +416,11 @@ export class VoiceCallCoordinator {
       });
       const summary = this.finish(chat.id, requestId, error);
       completedSummary = summary;
-      if (!options.chatId) {
+      if (!options.watchEvent && !this.shouldRecover(summary, options)) {
         try { await this.onFinished?.(chat.id, error); } catch { /* completion callback is best-effort */ }
       }
     }).finally(async () => {
-      if (scoped) await runner.close?.();
+      try { if (scoped) await runner.close?.(); } catch { /* cleanup is best-effort */ }
       if (scoped && callApprovalSession) callApprovalSession.closed = true;
       clearCallVoiceOverride();
       if (this.activeChatId === chat.id) {
@@ -427,9 +431,46 @@ export class VoiceCallCoordinator {
         this.startedAt = null;
         this.transition("idle", this.lastCall?.ok ? voiceCopy.status.lastCompleted : voiceCopy.status.lastFailed, !this.lastCall?.ok);
       }
-      if (completedSummary) complete(completedSummary);
+      if (!completedSummary) return;
+      if (!this.shouldRecover(completedSummary, options)) {
+        complete(completedSummary);
+        return;
+      }
+      this.audit({
+        actor: "host", eventType: "voice.recovery_scheduled", risk: "medium",
+        summary: voiceCopy.reconnectScheduled, chatId: chat.id, correlationId: requestId,
+        payload: { failedRequestId: requestId, failureCode: completedSummary.failureCode, delayMs: RECOVERY_DELAY_MS },
+      });
+      try {
+        await this.deps.sleep(RECOVERY_DELAY_MS);
+        // A manually started call takes precedence over this one-shot callback.
+        if (this.activeChatId || this.activeRequestId) throw new VoiceBusyError(voiceCopy.status.busy);
+        const recovery = await this.begin(voiceCopy.resumeOpeningLine, undefined, {
+          ...options, chatId: chat.id, recoveryAttempt: 1,
+          executionGuard: options.executionGuard ? recoveryExecutionGuard(options.executionGuard) : undefined,
+          prompt: voiceCopy.resumePrompt(voiceCopy.resumeOpeningLine),
+        });
+        complete(await recovery.completion);
+      } catch (cause) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        this.audit({
+          actor: "host", eventType: "voice.recovery_skipped", risk: "medium", summary: error.message,
+          chatId: chat.id, correlationId: requestId, ok: false,
+          payload: { failedRequestId: requestId, reason: error.message },
+        });
+        if (!options.watchEvent) {
+          try { await this.onFinished?.(chat.id, error); } catch { /* best-effort */ }
+        }
+        complete(completedSummary);
+      }
     });
     return { started, completion };
+  }
+
+  private shouldRecover(summary: VoiceCallSummary, options: VoiceStartOptions): boolean {
+    // Silence, a deliberate hangup, and failed dialing are not evidence of a
+    // dropped media stream. Never redial those or loop a recovery attempt.
+    return summary.failureCode === "media_interrupted" && this.dialStarted && !options.recoveryAttempt;
   }
 
   private async preflight(): Promise<void> {
@@ -686,4 +727,22 @@ export class VoiceCallCoordinator {
       (chatId) => [buildVoiceSettingsTool(session, chatId, this.activeLanguage ?? this.currentLanguage())],
     );
   }
+}
+
+/** A watch grant covers the original call only. The host's global recovery
+ * policy authorizes one replacement dial; every other tool remains subject to
+ * the original durable watch guard. */
+function recoveryExecutionGuard(guard: ToolExecutionGuard): ToolExecutionGuard {
+  let dialClaimed = false;
+  return {
+    async beforeExecute(tool, input) {
+      if (tool !== "mcp__voice__call_start") return guard.beforeExecute(tool, input);
+      if (dialClaimed) return { allowed: false, reason: "The recovery call was already attempted." };
+      dialClaimed = true;
+      return { allowed: true };
+    },
+    async afterExecute(tool, input, error) {
+      if (tool !== "mcp__voice__call_start") await guard.afterExecute?.(tool, input, error);
+    },
+  };
 }

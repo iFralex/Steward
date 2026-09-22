@@ -62,6 +62,9 @@ interface VoiceMessages {
     keywords: Record<VoiceApprovalCommand, readonly string[]>;
   };
   callPrompt: (openingLine: string) => string;
+  resumePrompt: (openingLine: string) => string;
+  resumeOpeningLine: string;
+  reconnectScheduled: string;
 }
 
 const MESSAGES = {
@@ -154,6 +157,16 @@ const MESSAGES = {
       "If call_start returns [NO ANSWER] or [CALL FAILED], do not retry; end the turn with a brief explanation.",
       "Do not answer only in chat: this turn must conduct the conversation by phone.",
     ].join(" "),
+    resumeOpeningLine: "The call was interrupted. I'm calling back so we can continue. What was the last thing you heard?",
+    reconnectScheduled: "The call was interrupted; Steward will call back once.",
+    resumePrompt: (openingLine) => [
+      `Call the user now with mcp__voice__call_start and say exactly ${JSON.stringify(openingLine)}.`,
+      "This is one recovery attempt in the same chat, not a new request.",
+      "Use the recorded conversation and tool results only as context. Do not assume the user heard the last spoken sentence.",
+      "Ask what the user last heard and confirm where to continue. Do not repeat a side-effecting tool call merely because the conversation was interrupted.",
+      "Any interrupted or uncertain approval must be requested again through the host-owned approval protocol; never infer consent.",
+      "Continue naturally with mcp__voice__converse. If this call also fails, do not redial again.",
+    ].join(" "),
   },
   it: {
     defaultOpeningLine: "Ciao, sono Steward. Come posso aiutarti?",
@@ -243,6 +256,16 @@ const MESSAGES = {
       "Considera i ringraziamenti accompagnati da una chiusura come un saluto. Dopo un primo [SILENCE] fai al massimo un breve controllo; dopo il secondo [SILENCE] usa subito call_end.",
       "Se call_start restituisce [NO ANSWER] o [CALL FAILED], non riprovare: concludi il turno spiegando brevemente il problema.",
       "Non rispondere soltanto in chat: lo scopo di questo turno è svolgere la conversazione al telefono.",
+    ].join(" "),
+    resumeOpeningLine: "La chiamata si è interrotta. Ti richiamo per continuare. Qual è l'ultima cosa che hai sentito?",
+    reconnectScheduled: "La chiamata si è interrotta; Steward richiamerà una volta.",
+    resumePrompt: (openingLine) => [
+      `Chiama ora l'utente con mcp__voice__call_start e pronuncia esattamente ${JSON.stringify(openingLine)}.`,
+      "Questo è un solo tentativo di recupero nella stessa chat, non una nuova richiesta.",
+      "Usa la conversazione e i risultati dei tool registrati solo come contesto. Non presumere che l'utente abbia sentito l'ultima frase pronunciata.",
+      "Chiedi qual è l'ultima cosa sentita e conferma da dove continuare. Non ripetere un tool con effetti esterni solo perché la chiamata si è interrotta.",
+      "Ogni approvazione interrotta o incerta va richiesta nuovamente tramite il protocollo dell'host; non presumere il consenso.",
+      "Continua naturalmente con mcp__voice__converse. Se anche questa chiamata fallisce, non richiamare ancora.",
     ].join(" "),
   },
 } satisfies Record<VoiceLang, VoiceMessages>;

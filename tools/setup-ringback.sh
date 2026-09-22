@@ -59,6 +59,9 @@ fi
 if ! grep -q 'def remote_media_stalled' "$RINGBACK_DIR/voice_agent.py"; then
   git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-call-health.patch"
 fi
+if ! grep -q 'liveAudioRx' "$RINGBACK_DIR/voice_agent.py"; then
+  git -C "$RINGBACK_DIR" apply --recount "$STEWARD_ROOT/tools/ringback-steward-reconnect.patch"
+fi
 
 # Ringback compiles a Python extension against Homebrew libraries. Always use
 # the native Apple Silicon toolchain when it is available; /usr/local may still

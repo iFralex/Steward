@@ -1,0 +1,57 @@
+diff --git a/voice_agent.py b/voice_agent.py
+--- a/voice_agent.py
++++ b/voice_agent.py
+@@ -15,6 +15,7 @@ import json
+ import math
+ import os
++import re
+ import signal
+ import struct
+ import subprocess
+@@ -669,10 +670,48 @@ class CallSession:
+         except Exception as exc:
+             health["rtpError"] = str(exc)
++        # getStreamStat() has returned zero live counters on macOS even while
++        # the final PJSIP dump showed thousands of packets. Include the live
++        # audio stream dump, which also reports the age of the last RX packet.
++        try:
++            if self.call is not None:
++                dump = self.call.dump(True, "")
++                audio = re.search(r"#\d+ audio\b[\s\S]*?(?=\n\s*#\d+ (?:audio|text|video)\b|\Z)", dump)
++                if audio:
++                    rx = re.search(r"RX pt=.*?last update:(?:(\d+)h:(\d+)m:([\d.]+)s ago|never)[^\n]*\n\s*total ([\d.]+)([KM]?)pkt", audio.group(0))
++                    if rx:
++                        multiplier = {"": 1, "K": 1000, "M": 1000000}[rx.group(5)]
++                        health["liveAudioRx"] = {
++                            "packets": int(float(rx.group(4)) * multiplier),
++                            "ageSec": (int(rx.group(1)) * 3600 + int(rx.group(2)) * 60 + float(rx.group(3))) if rx.group(1) else None,
++                        }
++        except Exception as exc:
++            health["liveAudioError"] = str(exc)
+         return health
+ 
+     def remote_media_stalled(self) -> bool:
+-        return (self.connected and not self.disconnected
+-                and REMOTE_SILENCE_LIMIT > 0
+-                and self.consecutive_silence >= REMOTE_SILENCE_LIMIT)
++        if (not self.connected or self.disconnected or REMOTE_SILENCE_LIMIT <= 0
++                or self.consecutive_silence < REMOTE_SILENCE_LIMIT):
++            return False
++        rx = self.media_health().get("liveAudioRx", {})
++        # Silence alone can mean the person is thinking. Redial only when the
++        # established audio stream has actually stopped receiving packets.
++        return (rx.get("packets", 0) >= 20 and rx.get("ageSec") is not None
++                and rx["ageSec"] >= 3.0)
+ 
+     def _measure_rms(self, duration: float = 0.6) -> float:
+diff --git a/voice_mcp.py b/voice_mcp.py
+--- a/voice_mcp.py
++++ b/voice_mcp.py
+@@ -171,8 +171,8 @@ def _listen_result(s) -> str:
+ def _media_stalled_result(s) -> str:
+     payload = {
+-        "code": "media_stalled",
+-        "message": "The phone stopped returning usable audio although the SIP call still appeared connected.",
++        "code": "media_interrupted",
++        "message": "The established remote audio stream stopped receiving packets while SIP still reported a connected call.",
+         "retryable": True,
