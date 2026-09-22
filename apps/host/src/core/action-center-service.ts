@@ -115,6 +115,10 @@ export async function pollNewActionNotifications(): Promise<void> {
     } finally {
       store.close();
     }
+  } catch (error) {
+    // Notification polling is best-effort. A temporarily inaccessible SQLite
+    // file (for example while the disk is full) must not terminate the host.
+    console.error("[action-center] notification poll failed:", error);
   } finally {
     actionNotificationPollRunning = false;
   }
