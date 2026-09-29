@@ -30,6 +30,7 @@ import { ActionDetail } from "@/components/action-detail";
 import { UnifiedSidebar } from "@/components/sidebar";
 import { useIsDesktop } from "@/lib/use-is-desktop";
 import { useEdgeSwipeBack } from "@/lib/use-edge-swipe-back";
+import { isInlineCardLanguage, normalizeInlineCardMarkdown, parseInlineCardJson } from "@/lib/inline-cards";
 import type { ActionCenterItem, ChannelFile } from "@steward/protocol";
 
 const HOST_URL = hostWsUrl();
@@ -1067,19 +1068,16 @@ function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) 
         th: ({ children }) => <th className="border-border border px-2 py-1.5 font-semibold">{children}</th>,
         td: ({ children }) => <td className="border-border border px-2 py-1.5 align-top">{children}</td>,
         code: ({ className, children }) => {
-          if (className === "language-card") {
-            try {
-              const obj = JSON.parse(String(children).trim()) as { type?: unknown } & Record<string, unknown>;
-              const { type, ...data } = obj;
-              if (type) return <CardView type={String(type)} data={data} fileApi={fileApi} />;
-            } catch { /* not valid card JSON → render as a normal code block */ }
+          if (isInlineCardLanguage(className)) {
+            const card = parseInlineCardJson(children);
+            if (card) return <CardView type={card.type} data={card.data} fileApi={fileApi} />;
           }
-          return <code className="bg-background/70 rounded px-1 py-0.5 font-mono text-[0.85em]">{children}</code>;
+          return <code className={cn("bg-background/70 rounded px-1 py-0.5 font-mono text-[0.85em]", className)}>{children}</code>;
         },
         pre: ({ children }) => {
           const child = Array.isArray(children) ? children[0] : children;
           const cls = (child as { props?: { className?: string } } | undefined)?.props?.className;
-          if (cls === "language-card") return <>{children}</>; // the card replaces the code block; no <pre> wrapper
+          if (isInlineCardLanguage(cls)) return <>{children}</>; // the card replaces the code block; no <pre> wrapper
           return <pre className="bg-background/70 mb-2 overflow-auto rounded-md p-2 text-xs last:mb-0">{children}</pre>;
         },
         a: ({ children, href }) => (
@@ -1089,7 +1087,7 @@ function MarkdownMessage({ text, fileApi }: { text: string; fileApi: FileApi }) 
         ),
       }}
     >
-      {text}
+      {normalizeInlineCardMarkdown(text)}
     </ReactMarkdown>
   );
 }

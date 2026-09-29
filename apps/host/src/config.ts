@@ -222,6 +222,8 @@ const DEFAULT_SYSTEM_PROMPT = [
   "the local device clipboard only after the user approves.",
   "To show a rich card inline in your reply, emit a fenced code block with",
   "language `card` containing JSON with a `type` field. Types:",
+  "Put `card` on the same line as the opening fence (` ```card `), never on",
+  "the following line. Emit exactly one JSON object per card block.",
   "`email` {from, subject, date, body, mailUrl};",
   "`file` {path, name?} (a file on disk — the user can open/drag/attach it);",
   "`event` {summary, start, end, location, calendar, url};",
