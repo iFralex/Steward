@@ -2,6 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { collectReadToolContext } from "../src/tool-context.ts";
 
+test("calendar planning always seeds a stable-calendar lookup", async () => {
+  const executed: { tool: string; input: Record<string, unknown> }[] = [];
+  const context = await collectReadToolContext({
+    chat: async () => JSON.stringify({ toolCalls: [] }),
+    execute: async (tool, input) => {
+      executed.push({ tool, input });
+      return [{ id: "CAL-WORK", title: "Work", account: "Company" }];
+    },
+    message: { subject: "Meeting" },
+    analyzed: {
+      kind: "calendar-invite",
+      scheduling: { requestedSlots: [{ start: "2026-10-01T10:00:00Z", end: "2026-10-01T11:00:00Z" }] },
+    },
+    maxCalls: 1,
+  });
+
+  assert.deepEqual(executed, [{ tool: "mcp__calendar__list_calendars", input: {} }]);
+  assert.equal(context.observations[0]?.ok, true);
+});
+
 test("mail searches cannot read beyond the planner reference time", async () => {
   let executedInput: Record<string, unknown> | undefined;
   await collectReadToolContext({

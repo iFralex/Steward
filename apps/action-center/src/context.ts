@@ -59,6 +59,7 @@ export interface CalendarBlock {
   start: string;
   end: string;
   calendar: string | null;
+  account: string | null;
 }
 
 export interface CalendarContext {
@@ -75,7 +76,7 @@ export function lookupCalendarContext(slots: { start: string; end: string }[], o
       .filter((s) => Number.isFinite(Date.parse(s.start)) && Number.isFinite(Date.parse(s.end)))
       .map((slot) => {
         const conflicts = db.prepare(
-          `SELECT uid, summary, start, end, calendar
+          `SELECT uid, summary, start, end, calendar, account
            FROM events
            WHERE COALESCE(status, 1) != 3
              AND start < ? AND end > ?
@@ -87,7 +88,7 @@ export function lookupCalendarContext(slots: { start: string; end: string }[], o
     const now = new Date();
     const horizon = new Date(now.getTime() + (opts.horizonDays ?? 14) * 86400_000);
     const nearbyEvents = db.prepare(
-      `SELECT uid, summary, start, end, calendar
+      `SELECT uid, summary, start, end, calendar, account
        FROM events
        WHERE COALESCE(status, 1) != 3 AND start >= ? AND start <= ?
        ORDER BY start ASC

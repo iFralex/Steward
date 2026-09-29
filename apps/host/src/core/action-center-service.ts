@@ -239,6 +239,10 @@ export async function executeActionProposal(args: {
   record({ id: randomUUID(), role: "user", text: `Esegui: ${proposal.label}` });
 
   for (const step of executableSteps(proposal.steps)) {
+    let input = await resolveLegacyCalendarInput(action, step.tool, step.input ?? {}, async () => {
+      const result = await bridge.callTool("mcp__calendar__list_calendars", {});
+      return extractToolOutput(result);
+    });
     const decision = decideTool(args.config.policy, step.tool);
     recordAudit({
       actor: "host",
@@ -249,11 +253,10 @@ export async function executeActionProposal(args: {
       chatId: args.chatId,
       actionId: args.actionId,
       toolName: step.tool,
-      payload: { input: step.input, decision, proposalId: args.proposalId, stepId: step.id },
+      payload: { input, decision, proposalId: args.proposalId, stepId: step.id },
     });
     if (decision === "deny") throw new Error(`Tool denied by policy: ${step.tool}`);
 
-    let input = step.input ?? {};
     if (decision === "gate") {
       const preview = await buildApprovalPreview(step.tool, input, bridge.callTool, {
         sessionId: args.session.id, chatId: args.chatId, actionId: args.actionId,
@@ -341,6 +344,65 @@ export async function executeActionProposal(args: {
 
   record({ id: randomUUID(), role: "assistant", text: `✓ Proposta "${proposal.label}" eseguita.` });
   return markAction(args.actionId, "done");
+}
+
+interface CalendarTarget {
+  id: string;
+  title: string;
+  account: string;
+}
+
+export async function resolveLegacyCalendarInput(
+  action: ActionCenterItem,
+  tool: string,
+  input: Record<string, unknown>,
+  listCalendars: () => Promise<unknown>,
+): Promise<Record<string, unknown>> {
+  if (tool !== "mcp__calendar__create_event"
+    || (typeof input.calendarId === "string" && input.calendarId.trim().length > 0)) return input;
+  const title = typeof input.calendar === "string" ? input.calendar.trim() : "";
+  if (!title) return input;
+  const calendars = calendarTargets(await listCalendars());
+  const titleMatches = calendars.filter((calendar) => calendar.title === title);
+  if (titleMatches.length === 1) return { ...input, calendarId: titleMatches[0].id };
+  if (titleMatches.length > 1) {
+    const accounts = new Set<string>();
+    visitActionValue(action.payload, (obj) => {
+      if (obj.calendar === title && typeof obj.account === "string" && obj.account) accounts.add(obj.account);
+    });
+    const accountMatches = titleMatches.filter((calendar) => accounts.has(calendar.account));
+    if (accounts.size === 1 && accountMatches.length === 1) {
+      return { ...input, calendarId: accountMatches[0].id };
+    }
+    throw new Error(`Calendar title "${title}" is ambiguous; choose the calendar account before executing this action`);
+  }
+  throw new Error(`Calendar "${title}" was not found`);
+}
+
+function calendarTargets(value: unknown): CalendarTarget[] {
+  const out: CalendarTarget[] = [];
+  visitActionValue(value, (obj) => {
+    if (typeof obj.id !== "string" || typeof obj.title !== "string" || typeof obj.account !== "string") return;
+    out.push({ id: obj.id, title: obj.title, account: obj.account });
+  });
+  return [...new Map(out.map((calendar) => [calendar.id, calendar])).values()];
+}
+
+function visitActionValue(value: unknown, visit: (obj: Record<string, unknown>) => void): void {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return;
+    try { visitActionValue(JSON.parse(trimmed), visit); } catch { /* Non-JSON text. */ }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) visitActionValue(item, visit);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const obj = value as Record<string, unknown>;
+  visit(obj);
+  for (const child of Object.values(obj)) visitActionValue(child, visit);
 }
 
 export async function reviseActionProposal(args: {

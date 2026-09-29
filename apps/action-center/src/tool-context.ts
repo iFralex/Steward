@@ -153,8 +153,16 @@ function normalizeToolCalls(value: unknown, maxCalls: number): ReadToolCall[] {
 }
 
 function seedToolCalls(message: Record<string, unknown>, analyzed: Record<string, unknown>, maxCalls: number, referenceTime?: Date): ReadToolCall[] {
-  if (maxCalls <= 0 || !looksLikeAdministrativeCrossThreadCase(message, analyzed)) return [];
+  if (maxCalls <= 0) return [];
   const calls: ReadToolCall[] = [];
+  if (looksLikeCalendarPlanningCase(analyzed)) {
+    calls.push({
+      tool: "mcp__calendar__list_calendars",
+      input: {},
+      reason: "Resolve the destination calendar to a stable calendarId before proposing a calendar write.",
+    });
+  }
+  if (!looksLikeAdministrativeCrossThreadCase(message, analyzed)) return calls.slice(0, maxCalls);
   const threadId = typeof message.threadId === "number" && Number.isFinite(message.threadId) ? message.threadId : null;
   if (threadId != null) {
     calls.push({
@@ -185,6 +193,16 @@ function seedToolCalls(message: Record<string, unknown>, analyzed: Record<string
     });
   }
   return calls.slice(0, maxCalls);
+}
+
+function looksLikeCalendarPlanningCase(analyzed: Record<string, unknown>): boolean {
+  const kind = typeof analyzed.kind === "string" ? analyzed.kind : "";
+  const scheduling = analyzed.scheduling && typeof analyzed.scheduling === "object"
+    ? analyzed.scheduling as Record<string, unknown>
+    : null;
+  return kind === "scheduling-request"
+    || kind === "calendar-invite"
+    || (Array.isArray(scheduling?.requestedSlots) && scheduling.requestedSlots.length > 0);
 }
 
 function looksLikeAdministrativeCrossThreadCase(message: Record<string, unknown>, analyzed: Record<string, unknown>): boolean {

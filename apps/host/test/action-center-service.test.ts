@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { executableSteps, normalizeStep, notifyNewProposals, setPushRegistry, shouldRetryWithRevision } from "../src/core/action-center-service.ts";
+import { executableSteps, normalizeStep, notifyNewProposals, resolveLegacyCalendarInput, setPushRegistry, shouldRetryWithRevision } from "../src/core/action-center-service.ts";
 import { ActionStore } from "../../action-center/src/store.ts";
 import { PushRegistry, type SendFn } from "../src/core/push.ts";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -56,6 +56,46 @@ test("executableSteps returns an empty array for an all-manual proposal", () => 
   ].filter((s): s is NonNullable<typeof s> => !!s);
 
   assert.deepEqual(executableSteps(steps), []);
+});
+
+test("legacy calendar writes resolve duplicate titles from saved account context", async () => {
+  const action = {
+    id: 309,
+    payload: {
+      contextSnapshot: {
+        toolContext: {
+          observations: [{
+            tool: "mcp__calendar__search_events",
+            result: [{ type: "text", text: JSON.stringify({ events: [{ calendar: "Calendario", account: "Polimi" }] }) }],
+          }],
+        },
+      },
+    },
+  } as unknown as ActionCenterItem;
+  const result = await resolveLegacyCalendarInput(
+    action,
+    "mcp__calendar__create_event",
+    { calendar: "Calendario", summary: "Meeting" },
+    async () => [
+      { id: "CAL-POLIMI", title: "Calendario", account: "Polimi" },
+      { id: "CAL-ICLOUD", title: "Calendario", account: "iCloud" },
+    ],
+  );
+
+  assert.equal(result.calendarId, "CAL-POLIMI");
+});
+
+test("legacy calendar writes reject duplicate titles without account context", async () => {
+  const action = { id: 310, payload: {} } as ActionCenterItem;
+  await assert.rejects(() => resolveLegacyCalendarInput(
+    action,
+    "mcp__calendar__create_event",
+    { calendar: "Calendario", summary: "Meeting" },
+    async () => [
+      { id: "CAL-POLIMI", title: "Calendario", account: "Polimi" },
+      { id: "CAL-ICLOUD", title: "Calendario", account: "iCloud" },
+    ],
+  ), /choose the calendar account/);
 });
 
 test("shouldRetryWithRevision is true for an explicit revise decision", () => {

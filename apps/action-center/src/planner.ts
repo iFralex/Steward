@@ -73,7 +73,7 @@ Return ONLY JSON:
 Available write tools:
 - mcp__mail__reply with {messageId, from, body, replyAll}
 - mcp__mail__send_email with {to, cc, subject, body}
-- mcp__calendar__create_event with {calendar, summary, start, end, location, description, url, alarms}
+- mcp__calendar__create_event with {calendarId, calendar, summary, start, end, location, description, url, alarms}
 Available read tools for later chat refinement:
 - mcp__mail__get_thread, mcp__contacts__search_contacts, mcp__llm-wiki__llm_wiki_search, mcp__calendar__search_events
 Rules:
@@ -103,7 +103,8 @@ Rules:
 - If requested slot is available, include an accept+create-calendar option.
 - If requested slot is busy, include a decline/propose-alternative option.
 - Calendar alarms must be numbers: minutes before event start, e.g. [15], not objects.
-- Calendar names must be real calendar names when known; avoid placeholders like "primary".
+- For calendar writes, use the stable calendarId from the mcp__calendar__list_calendars observation. Calendar names must be real names when known; avoid placeholders like "primary".
+- When duplicate calendar titles exist, match both title and account using validated calendar-event context. Do not guess between accounts.
 - Do not propose forwarding/copying notifications to Alessio unless explicitly useful.
 - Use kind:"manual" for a step that requires Alessio to open an external link himself because no automation tool exists for it (e.g. uploading a document to a web portal, clicking a provided connection/registration/confirmation link). Manual steps must omit tool/input/writes and set links instead.
 - A manual step's links[].url must be copied verbatim from a URL that literally appears in the email content below. Never invent, guess, or complete a partial URL. If you are not certain of the exact URL, omit links entirely — the step's label alone still tells Alessio what to do.
@@ -184,7 +185,7 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
     dueAt,
     deadline,
     contextSnapshot,
-    proposedActions: planned?.proposedActions ?? fallbackActions(msg, analyzed, calendar),
+    proposedActions: resolveCalendarTargets(planned?.proposedActions ?? fallbackActions(msg, analyzed, calendar), contextSnapshot),
     needsAction: true,
     relatedActionId: planned?.relatedActionId ?? null,
   };
@@ -503,6 +504,121 @@ function normalizeToolInput(tool: string, input: Record<string, unknown>, analyz
     return out;
   }
   return input;
+}
+
+interface StableCalendarTarget {
+  id: string;
+  title: string;
+  account: string;
+}
+
+function resolveCalendarTargets(actions: ProposedAction[], contextSnapshot: ContextSnapshot): ProposedAction[] {
+  const calendars = stableCalendarsFromContext(contextSnapshot);
+  if (!calendars.length) return actions;
+  const accountEvidence = calendarAccountsFromContext(contextSnapshot);
+  return actions.map((action) => {
+    let unresolvedTitle: string | null = null;
+    const steps = action.steps.map((step) => {
+      if (step.kind === "manual" || step.tool !== "mcp__calendar__create_event") return step;
+      const input = { ...step.input };
+      const calendarId = typeof input.calendarId === "string" ? input.calendarId.trim() : "";
+      if (calendarId) {
+        if (calendars.some((calendar) => calendar.id === calendarId)) return { ...step, input };
+        unresolvedTitle = typeof input.calendar === "string" ? input.calendar : calendarId;
+        return step;
+      }
+      const title = typeof input.calendar === "string" ? input.calendar.trim() : "";
+      const titleMatches = calendars.filter((calendar) => calendar.title === title);
+      let match: StableCalendarTarget | undefined;
+      if (titleMatches.length === 1) {
+        match = titleMatches[0];
+      } else if (titleMatches.length > 1) {
+        const accounts = accountEvidence.get(title) ?? new Set<string>();
+        const accountMatches = titleMatches.filter((calendar) => accounts.has(calendar.account));
+        if (accounts.size === 1 && accountMatches.length === 1) match = accountMatches[0];
+      }
+      if (!match) {
+        unresolvedTitle = title || "selected calendar";
+        return step;
+      }
+      return { ...step, input: { ...input, calendarId: match.id, calendar: match.title } };
+    });
+    if (!unresolvedTitle) return { ...action, steps };
+    return {
+      ...action,
+      confidence: "low",
+      summary: `${action.summary}${action.summary ? " " : ""}Choose the calendar account before executing this proposal.`,
+      steps: [{
+        id: `${action.id}-choose-calendar`,
+        label: `Choose the account for calendar "${unresolvedTitle}" before creating the event`,
+        kind: "manual",
+      }],
+    };
+  });
+}
+
+function stableCalendarsFromContext(contextSnapshot: ContextSnapshot): StableCalendarTarget[] {
+  const observations = toolObservations(contextSnapshot);
+  const out: StableCalendarTarget[] = [];
+  for (const observation of observations) {
+    if (observation.tool !== "mcp__calendar__list_calendars" || observation.ok === false) continue;
+    visitStructuredValue(observation.result, (obj) => {
+      if (typeof obj.id !== "string" || typeof obj.title !== "string" || typeof obj.account !== "string") return;
+      out.push({ id: obj.id, title: obj.title, account: obj.account });
+    });
+  }
+  return [...new Map(out.map((calendar) => [calendar.id, calendar])).values()];
+}
+
+function calendarAccountsFromContext(contextSnapshot: ContextSnapshot): Map<string, Set<string>> {
+  const accounts = new Map<string, Set<string>>();
+  const add = (calendar: unknown, account: unknown) => {
+    if (typeof calendar !== "string" || typeof account !== "string" || !calendar || !account) return;
+    const values = accounts.get(calendar) ?? new Set<string>();
+    values.add(account);
+    accounts.set(calendar, values);
+  };
+  const calendarContext = contextSnapshot.calendar && typeof contextSnapshot.calendar === "object"
+    ? contextSnapshot.calendar as Record<string, unknown>
+    : null;
+  if (Array.isArray(calendarContext?.requestedSlots)) {
+    for (const slot of calendarContext.requestedSlots) {
+      if (!slot || typeof slot !== "object") continue;
+      const conflicts = (slot as Record<string, unknown>).conflicts;
+      visitStructuredValue(conflicts, (obj) => add(obj.calendar, obj.account));
+    }
+  }
+  for (const observation of toolObservations(contextSnapshot)) {
+    if (observation.tool === "mcp__calendar__list_calendars" || observation.ok === false) continue;
+    visitStructuredValue(observation.result, (obj) => add(obj.calendar, obj.account));
+  }
+  return accounts;
+}
+
+function toolObservations(contextSnapshot: ContextSnapshot): Record<string, unknown>[] {
+  const toolContext = contextSnapshot.toolContext && typeof contextSnapshot.toolContext === "object"
+    ? contextSnapshot.toolContext as Record<string, unknown>
+    : null;
+  return Array.isArray(toolContext?.observations)
+    ? toolContext.observations.filter((value): value is Record<string, unknown> => !!value && typeof value === "object")
+    : [];
+}
+
+function visitStructuredValue(value: unknown, visit: (obj: Record<string, unknown>) => void): void {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return;
+    try { visitStructuredValue(JSON.parse(trimmed), visit); } catch { /* Non-JSON tool text. */ }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) visitStructuredValue(item, visit);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const obj = value as Record<string, unknown>;
+  visit(obj);
+  for (const child of Object.values(obj)) visitStructuredValue(child, visit);
 }
 
 function normalizeAlarms(value: unknown): number[] {

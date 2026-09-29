@@ -89,6 +89,123 @@ test("planMailAction stores executable scheduling proposals", async () => {
   assert.ok(planningPayload.currentTime?.local);
 });
 
+test("planner resolves a duplicate calendar title from validated account context", async () => {
+  const card = await planMailAction(msg(), async (system, prompt) => {
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "calendar-invite",
+        priority: "normal",
+        summary: "Create the meeting.",
+        dueDateTime: "2026-06-27T15:00:00.000Z",
+        scheduling: {
+          requestedSlots: [{ start: "2026-06-27T15:00:00.000Z", end: "2026-06-27T15:30:00.000Z" }],
+          meetingTitle: "Call con Marco",
+          meetingLink: null,
+          calendarName: "Calendario",
+        },
+        replyDrafts: {},
+        reasoning: "The related event is on the Polimi account.",
+      });
+    }
+    if (system.startsWith("You decide which read-only tools")) {
+      const parsed = JSON.parse(prompt) as { previousObservations?: { tool?: string }[] };
+      const alreadySearched = parsed.previousObservations?.some((observation) => observation.tool === "mcp__calendar__search_events");
+      return JSON.stringify({ toolCalls: alreadySearched ? [] : [{
+        tool: "mcp__calendar__search_events",
+        input: { start: "2026-06-27T15:00:00.000Z", end: "2026-06-27T15:30:00.000Z" },
+        reason: "Validate the account used by related events.",
+      }] });
+    }
+    return JSON.stringify({
+      title: "Call con Marco",
+      summary: "Create the event.",
+      proposedActions: [{
+        id: "create",
+        label: "Create event",
+        summary: "Create it on Calendario.",
+        confidence: "high",
+        steps: [{
+          id: "event",
+          label: "Create event",
+          tool: "mcp__calendar__create_event",
+          input: {
+            calendar: "Calendario",
+            summary: "Call con Marco",
+            start: "2026-06-27T15:00:00.000Z",
+            end: "2026-06-27T15:30:00.000Z",
+          },
+          writes: true,
+        }],
+      }],
+    });
+  }, {
+    readTool: async (tool) => {
+      if (tool === "mcp__calendar__list_calendars") return { content: [{ type: "text", text: JSON.stringify([
+        { id: "CAL-POLIMI", title: "Calendario", account: "Polimi" },
+        { id: "CAL-ICLOUD", title: "Calendario", account: "iCloud" },
+      ]) }] };
+      if (tool === "mcp__calendar__search_events") return { content: [{ type: "text", text: JSON.stringify({
+        events: [{ uid: "E1", summary: "Existing", calendar: "Calendario", account: "Polimi" }],
+      }) }] };
+      return null;
+    },
+  });
+
+  const step = card?.proposedActions[0]?.steps[0];
+  assert.ok(step && step.kind !== "manual");
+  assert.equal(step.input.calendarId, "CAL-POLIMI");
+  assert.equal(step.input.calendar, "Calendario");
+});
+
+test("planner leaves duplicate calendars non-executable when account context is missing", async () => {
+  const card = await planMailAction(msg(), async (system) => {
+    if (system.includes("Analyze")) {
+      return JSON.stringify({
+        needsAction: true,
+        kind: "calendar-invite",
+        priority: "normal",
+        summary: "Create the meeting.",
+        dueDateTime: "2026-06-27T15:00:00.000Z",
+        scheduling: {
+          requestedSlots: [{ start: "2026-06-27T15:00:00.000Z", end: "2026-06-27T15:30:00.000Z" }],
+          meetingTitle: "Call con Marco",
+          meetingLink: null,
+          calendarName: "Calendario",
+        },
+        replyDrafts: {},
+        reasoning: "No account evidence.",
+      });
+    }
+    if (system.startsWith("You decide which read-only tools")) return JSON.stringify({ toolCalls: [] });
+    return JSON.stringify({
+      title: "Call con Marco",
+      summary: "Create the event.",
+      proposedActions: [{
+        id: "create",
+        label: "Create event",
+        summary: "Create it on Calendario.",
+        confidence: "high",
+        steps: [{
+          id: "event",
+          label: "Create event",
+          tool: "mcp__calendar__create_event",
+          input: { calendar: "Calendario", summary: "Call con Marco", start: "2026-06-27T15:00:00.000Z", end: "2026-06-27T15:30:00.000Z" },
+          writes: true,
+        }],
+      }],
+    });
+  }, {
+    readTool: async (tool) => tool === "mcp__calendar__list_calendars" ? [
+      { id: "CAL-COMPANY", title: "Calendario", account: "Company" },
+      { id: "CAL-ICLOUD", title: "Calendario", account: "iCloud" },
+    ] : null,
+  });
+
+  assert.equal(card?.proposedActions[0]?.steps.length, 1);
+  assert.equal(card?.proposedActions[0]?.steps[0]?.kind, "manual");
+});
+
 test("planMailAction can enrich context through generic read-only tools", async () => {
   const calls: string[] = [];
   const card = await planMailAction(msg(), async (system, userPrompt) => {
@@ -146,7 +263,8 @@ test("planMailAction can enrich context through generic read-only tools", async 
   assert.ok(calls.length >= 3);
   const toolContext = card.contextSnapshot.toolContext as { observations: { ok: boolean; tool: string }[] };
   assert.equal(toolContext.observations[0].ok, true);
-  assert.equal(toolContext.observations[0].tool, "mcp__calendar__search_events");
+  assert.equal(toolContext.observations[0].tool, "mcp__calendar__list_calendars");
+  assert.equal(toolContext.observations.some((observation) => observation.tool === "mcp__calendar__search_events"), true);
   assert.equal(card.deadline.iso, "2026-06-27T15:00:00.000Z");
 });
 
