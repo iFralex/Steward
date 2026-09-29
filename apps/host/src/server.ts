@@ -15,7 +15,7 @@ import type { ClientEvent } from "@steward/protocol";
 import { ChatManager } from "./core/agent-runner.ts";
 import { isRunning } from "./core/running-chats.ts";
 import { auditLog, recordAudit, type AuditActor, type AuditRisk } from "@steward/audit-log";
-import { ActionRevisionRequestedError, executeActionProposal, getActionAutomationSettings, getActionItem, loadActionCenterState, markAction, pollNewActionNotifications, reviseActionProposal, setActionAutomationEnabled, setPushRegistry } from "./core/action-center-service.ts";
+import { ActionRevisionRequestedError, executeActionProposal, getActionAutomationSettings, getActionItem, loadActionCenterState, markAction, pollNewActionNotifications, reviseActionProposal, setActionAutomationSettings, setPushRegistry } from "./core/action-center-service.ts";
 import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageLedger } from "@steward/usage-ledger";
@@ -575,18 +575,30 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
   }
   if (req.method === "POST" && url.startsWith("/settings/actions")) {
     void readRequestBody(req).then((raw) => {
-      const body = raw ? JSON.parse(raw) as { enabled?: unknown } : {};
-      if (typeof body.enabled !== "boolean") {
+      const body = raw ? JSON.parse(raw) as { enabled?: unknown; calendarEnabled?: unknown } : {};
+      const hasEnabled = typeof body.enabled === "boolean";
+      const hasCalendarEnabled = typeof body.calendarEnabled === "boolean";
+      if (!hasEnabled && !hasCalendarEnabled) {
         res.writeHead(400, { "Content-Type": "application/json", ...CORS });
-        res.end(JSON.stringify({ error: "enabled must be a boolean" }));
+        res.end(JSON.stringify({ error: "enabled or calendarEnabled must be a boolean" }));
         return;
       }
-      const settings = setActionAutomationEnabled(body.enabled);
+      if ((body.enabled !== undefined && !hasEnabled) || (body.calendarEnabled !== undefined && !hasCalendarEnabled)) {
+        res.writeHead(400, { "Content-Type": "application/json", ...CORS });
+        res.end(JSON.stringify({ error: "settings values must be booleans" }));
+        return;
+      }
+      const settings = setActionAutomationSettings({
+        ...(hasEnabled ? { enabled: body.enabled as boolean } : {}),
+        ...(hasCalendarEnabled ? { calendarEnabled: body.calendarEnabled as boolean } : {}),
+      });
       recordAudit({
         actor: "user",
         eventType: "settings.actions_automation",
         risk: "low",
-        summary: `${settings.enabled ? "Enabled" : "Disabled"} automatic Actions`,
+        summary: hasCalendarEnabled && !hasEnabled
+          ? `${settings.calendarEnabled ? "Enabled" : "Disabled"} Calendar Actions`
+          : `${settings.enabled ? "Enabled" : "Disabled"} automatic Actions`,
         payload: settings,
       });
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });

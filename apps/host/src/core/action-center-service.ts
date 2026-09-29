@@ -185,10 +185,13 @@ export function getActionAutomationSettings(): ActionAutomationSettings {
   }
 }
 
-export function setActionAutomationEnabled(enabled: boolean): ActionAutomationSettings {
+export function setActionAutomationSettings(patch: { enabled?: boolean; calendarEnabled?: boolean }): ActionAutomationSettings {
   const store = ActionStore.open(actionDbPath());
   try {
-    return store.setAutomationEnabled(enabled);
+    let settings = store.getAutomationSettings();
+    if (typeof patch.enabled === "boolean") settings = store.setAutomationEnabled(patch.enabled);
+    if (typeof patch.calendarEnabled === "boolean") settings = store.setCalendarEnabled(patch.calendarEnabled);
+    return settings;
   } finally {
     store.close();
   }

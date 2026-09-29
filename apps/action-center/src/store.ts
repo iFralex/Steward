@@ -48,6 +48,8 @@ const AUTOMATION_SETTINGS_KEY = "automationSettings";
 
 export interface ActionAutomationSettings {
   enabled: boolean;
+  /** Create Action Center reminders for upcoming Calendar events. */
+  calendarEnabled: boolean;
   /** Unix timestamp: after a re-enable, only newer source items may create Actions. */
   enabledAt: number | null;
   updatedAt: number | null;
@@ -279,6 +281,7 @@ export class ActionStore {
     const saved = this.getMeta<Partial<ActionAutomationSettings>>(AUTOMATION_SETTINGS_KEY);
     return {
       enabled: typeof saved?.enabled === "boolean" ? saved.enabled : true,
+      calendarEnabled: typeof saved?.calendarEnabled === "boolean" ? saved.calendarEnabled : true,
       enabledAt: finiteNumberOrNull(saved?.enabledAt),
       updatedAt: finiteNumberOrNull(saved?.updatedAt),
     };
@@ -289,9 +292,18 @@ export class ActionStore {
     if (current.enabled === enabled) return current;
     const next: ActionAutomationSettings = {
       enabled,
+      calendarEnabled: current.calendarEnabled,
       enabledAt: enabled ? now : null,
       updatedAt: now,
     };
+    this.setMeta(AUTOMATION_SETTINGS_KEY, next);
+    return next;
+  }
+
+  setCalendarEnabled(calendarEnabled: boolean, now = Math.floor(Date.now() / 1000)): ActionAutomationSettings {
+    const current = this.getAutomationSettings();
+    if (current.calendarEnabled === calendarEnabled) return current;
+    const next: ActionAutomationSettings = { ...current, calendarEnabled, updatedAt: now };
     this.setMeta(AUTOMATION_SETTINGS_KEY, next);
     return next;
   }

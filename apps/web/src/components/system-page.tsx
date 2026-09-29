@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Globe, ListChecks, PhoneCall, Power, RefreshCw, Smartphone, Volume2, XCircle } from "lucide-react";
+import { AlertTriangle, AudioLines, CheckCircle2, Globe, ListChecks, Network, PhoneCall, Power, RefreshCw, Smartphone, Volume2, XCircle } from "lucide-react";
 import QRCode from "qrcode";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +62,7 @@ interface SystemStatus {
 
 interface ActionAutomationSettings {
   enabled: boolean;
+  calendarEnabled: boolean;
   enabledAt: number | null;
   updatedAt: number | null;
 }
@@ -237,14 +238,14 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     }
   };
 
-  const setActionsEnabled = async (enabled: boolean) => {
+  const setActionAutomationSettings = async (patch: { enabled?: boolean; calendarEnabled?: boolean }) => {
     setSavingActionAutomation(true);
     setError(null);
     try {
       const res = await authFetch(`${httpBase}/settings/actions`, token, onUnauthorized, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify(patch),
       });
       const body = await res.json() as ActionAutomationSettings | { error?: string };
       if (!res.ok) throw new Error("error" in body && body.error ? body.error : `HTTP ${res.status}`);
@@ -373,7 +374,7 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
       <ActionsAutomationCard
         settings={actionAutomation}
         busy={savingActionAutomation}
-        onToggle={setActionsEnabled}
+        onChange={setActionAutomationSettings}
       />
 
       <Card size="sm">
@@ -385,91 +386,132 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
           <CardDescription>{t("system.voice.description")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge variant={voice?.enabled ? "default" : "outline"}>
-              {voice?.transport ?? "disabled"} · {t(`system.voice.states.${voice?.state ?? "disabled"}`)}
-            </Badge>
+          <section className="bg-muted/35 flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">{t("system.voice.callControl")}</span>
+                <Badge variant={voice?.enabled ? "default" : "outline"}>
+                  {voice?.transport ?? "disabled"} · {t(`system.voice.states.${voice?.state ?? "disabled"}`)}
+                </Badge>
+              </div>
+              {(voiceMessage || voice?.detail) && (
+                <p className="text-muted-foreground text-sm">{voiceMessage ?? voice?.detail}</p>
+              )}
+            </div>
             <Button
-              size="sm"
+              className="shrink-0 sm:self-center"
               disabled={!voice?.enabled || voice.state !== "idle" || voiceBusy}
               onClick={() => void startVoiceCall()}
             >
+              <PhoneCall className="mr-2 size-4" />
               {voiceBusy ? t("system.voice.starting") : t("system.voice.call")}
             </Button>
-            {(voiceMessage || voice?.detail) && (
-              <span className="text-muted-foreground text-sm">{voiceMessage ?? voice?.detail}</span>
-            )}
-          </div>
-          <div className="grid gap-3 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
-            <label className="grid gap-1 text-sm">
-              <span className="font-medium">{t("system.voice.rate")}</span>
-              <input
-                className="border-input bg-background h-9 rounded-md border px-3"
-                type="number" min={100} max={300} step={5} value={voiceRate}
-                onChange={(event) => setVoiceRate(Number(event.target.value))}
-              />
-              <span className="text-muted-foreground text-xs">{t("system.voice.rateHint")}</span>
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="font-medium">{t("system.voice.defaultVoice")}</span>
-              <select
-                className="border-input bg-background h-9 rounded-md border px-3"
-                value={voiceName}
-                onChange={(event) => setVoiceName(event.target.value)}
-              >
-                <option value="auto">{t("system.voice.voiceAuto")}</option>
-                {voiceSettings?.availableVoices.map((systemVoice) => (
-                  <option key={`${systemVoice.locale}:${systemVoice.name}`} value={systemVoice.name}>
-                    {systemVoice.name} · {systemVoice.locale.replace("_", "-")}
-                  </option>
-                ))}
-              </select>
-              <span className="text-muted-foreground text-xs">{t("system.voice.voiceHint")}</span>
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm" variant="outline"
-                disabled={!voiceSettings || voicePreviewBusy || voiceRate < 100 || voiceRate > 300}
-                onClick={() => void previewVoiceSettings()}
-              >
-                <Volume2 className="mr-2 size-4" />
-                {voicePreviewBusy ? t("system.voice.testingVoice") : t("system.voice.testVoice")}
-              </Button>
-              <Button
-                size="sm" disabled={!voiceSettings || voiceSettingsBusy || voiceRate < 100 || voiceRate > 300}
-                onClick={() => void saveVoiceSettings()}
-              >
-                {voiceSettingsBusy ? t("system.voice.saving") : t("system.voice.saveSettings")}
-              </Button>
-            </div>
-            {(voicePreviewUrl || voicePreviewError) && (
-              <div className="sm:col-span-3">
-                {voicePreviewUrl && <audio ref={voicePreviewRef} controls src={voicePreviewUrl} className="h-10 max-w-full" />}
-                {voicePreviewError && <p className="text-destructive text-sm">{voicePreviewError}</p>}
+          </section>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
+            <section className="space-y-4 rounded-lg border p-4">
+              <div className="flex items-start gap-3">
+                <div className="bg-muted flex size-9 shrink-0 items-center justify-center rounded-md">
+                  <AudioLines className="size-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold">{t("system.voice.speechTitle")}</h3>
+                  <p className="text-muted-foreground mt-0.5 text-xs">{t("system.voice.speechDescription")}</p>
+                </div>
               </div>
-            )}
-          </div>
-          <div className="grid gap-2 border-t pt-4 text-sm">
-            <label className="flex items-center gap-2 font-medium">
-              <input type="checkbox" checked={voiceNetwork?.enabled ?? false}
-                disabled={!voiceNetwork || voiceNetworkBusy || (voice?.state !== "idle" && voice?.state !== "disabled")}
-                onChange={(event) => void saveVoiceNetwork(event.target.checked, voiceNetwork?.exitNodeId ?? "")} />
-              {t("system.voice.networkFallback")}
-            </label>
-            <label className="grid max-w-sm gap-1">
-              <span>{t("system.voice.exitNode")}</span>
-              <select className="border-input bg-background h-9 rounded-md border px-3"
-                value={voiceNetwork?.exitNodeId ?? ""}
-                disabled={!voiceNetwork || voiceNetworkBusy || (voice?.state !== "idle" && voice?.state !== "disabled")}
-                onChange={(event) => void saveVoiceNetwork(voiceNetwork?.enabled ?? false, event.target.value)}>
-                <option value="">{t("system.voice.selectExitNode")}</option>
-                {voiceNetwork?.exitNodeId && !voiceNetwork.choices.some((node) => node.id === voiceNetwork.exitNodeId) && (
-                  <option value={voiceNetwork.exitNodeId}>{t("system.voice.savedExitNodeUnavailable")}</option>
-                )}
-                {voiceNetwork?.choices.map((node) => <option key={node.id} value={node.id}>{node.name}{node.online ? "" : ` · ${t("system.voice.offline")}`}</option>)}
-              </select>
-            </label>
-            <p className="text-muted-foreground text-xs">{t("system.voice.networkHint")}</p>
+
+              <div className="grid gap-4 sm:grid-cols-[minmax(0,1.5fr)_minmax(9rem,0.5fr)]">
+                <label className="grid content-start gap-1.5 text-sm">
+                  <span className="font-medium">{t("system.voice.defaultVoice")}</span>
+                  <select
+                    className="border-input bg-background h-9 w-full rounded-md border px-3"
+                    value={voiceName}
+                    onChange={(event) => setVoiceName(event.target.value)}
+                  >
+                    <option value="auto">{t("system.voice.voiceAuto")}</option>
+                    {voiceSettings?.availableVoices.map((systemVoice) => (
+                      <option key={`${systemVoice.locale}:${systemVoice.name}`} value={systemVoice.name}>
+                        {systemVoice.name} · {systemVoice.locale.replace("_", "-")}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-muted-foreground text-xs">{t("system.voice.voiceHint")}</span>
+                </label>
+                <label className="grid content-start gap-1.5 text-sm">
+                  <span className="font-medium">{t("system.voice.rate")}</span>
+                  <input
+                    className="border-input bg-background h-9 w-full rounded-md border px-3 tabular-nums"
+                    type="number" min={100} max={300} step={5} value={voiceRate}
+                    onChange={(event) => setVoiceRate(Number(event.target.value))}
+                  />
+                  <span className="text-muted-foreground text-xs">{t("system.voice.rateHint")}</span>
+                </label>
+              </div>
+
+              {(voicePreviewUrl || voicePreviewError) && (
+                <div className="bg-muted/35 rounded-md border p-3">
+                  {voicePreviewUrl && <audio ref={voicePreviewRef} controls src={voicePreviewUrl} className="h-10 w-full" />}
+                  {voicePreviewError && <p className="text-destructive text-sm">{voicePreviewError}</p>}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+                <Button
+                  size="sm" variant="outline"
+                  disabled={!voiceSettings || voicePreviewBusy || voiceRate < 100 || voiceRate > 300}
+                  onClick={() => void previewVoiceSettings()}
+                >
+                  <Volume2 className="mr-2 size-4" />
+                  {voicePreviewBusy ? t("system.voice.testingVoice") : t("system.voice.testVoice")}
+                </Button>
+                <Button
+                  size="sm" disabled={!voiceSettings || voiceSettingsBusy || voiceRate < 100 || voiceRate > 300}
+                  onClick={() => void saveVoiceSettings()}
+                >
+                  {voiceSettingsBusy ? t("system.voice.saving") : t("system.voice.saveSettings")}
+                </Button>
+              </div>
+            </section>
+
+            <section className="space-y-4 rounded-lg border p-4">
+              <div className="flex items-start gap-3">
+                <div className="bg-muted flex size-9 shrink-0 items-center justify-center rounded-md">
+                  <Network className="size-4" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold">{t("system.voice.networkTitle")}</h3>
+                  <p className="text-muted-foreground mt-0.5 text-xs">{t("system.voice.networkDescription")}</p>
+                </div>
+              </div>
+
+              <label className="hover:bg-muted/35 flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors has-disabled:cursor-not-allowed has-disabled:opacity-60">
+                <input
+                  className="accent-primary mt-0.5 size-4 shrink-0"
+                  type="checkbox"
+                  checked={voiceNetwork?.enabled ?? false}
+                  disabled={!voiceNetwork || voiceNetworkBusy || (voice?.state !== "idle" && voice?.state !== "disabled")}
+                  onChange={(event) => void saveVoiceNetwork(event.target.checked, voiceNetwork?.exitNodeId ?? "")}
+                />
+                <span className="font-medium leading-snug">{t("system.voice.networkFallback")}</span>
+              </label>
+
+              <label className="grid gap-1.5 text-sm">
+                <span className="font-medium">{t("system.voice.exitNode")}</span>
+                <select
+                  className="border-input bg-background h-9 w-full rounded-md border px-3"
+                  value={voiceNetwork?.exitNodeId ?? ""}
+                  disabled={!voiceNetwork || voiceNetworkBusy || (voice?.state !== "idle" && voice?.state !== "disabled")}
+                  onChange={(event) => void saveVoiceNetwork(voiceNetwork?.enabled ?? false, event.target.value)}
+                >
+                  <option value="">{t("system.voice.selectExitNode")}</option>
+                  {voiceNetwork?.exitNodeId && !voiceNetwork.choices.some((node) => node.id === voiceNetwork.exitNodeId) && (
+                    <option value={voiceNetwork.exitNodeId}>{t("system.voice.savedExitNodeUnavailable")}</option>
+                  )}
+                  {voiceNetwork?.choices.map((node) => <option key={node.id} value={node.id}>{node.name}{node.online ? "" : ` · ${t("system.voice.offline")}`}</option>)}
+                </select>
+              </label>
+              <p className="text-muted-foreground text-xs leading-relaxed">{t("system.voice.networkHint")}</p>
+            </section>
           </div>
         </CardContent>
       </Card>
@@ -555,14 +597,15 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
 function ActionsAutomationCard({
   settings,
   busy,
-  onToggle,
+  onChange,
 }: {
   settings: ActionAutomationSettings | null;
   busy: boolean;
-  onToggle: (enabled: boolean) => void | Promise<void>;
+  onChange: (patch: { enabled?: boolean; calendarEnabled?: boolean }) => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const enabled = settings?.enabled ?? true;
+  const calendarEnabled = settings?.calendarEnabled ?? true;
   return (
     <Card size="sm">
       <CardHeader>
@@ -572,22 +615,53 @@ function ActionsAutomationCard({
         </CardTitle>
         <CardDescription>{t("system.actionsAutomation.description")}</CardDescription>
       </CardHeader>
-      <CardContent className="flex items-center justify-between gap-3">
-        <Badge variant={enabled ? "default" : "outline"}>
-          {enabled ? t("system.actionsAutomation.on") : t("system.actionsAutomation.off")}
-        </Badge>
-        <Button
-          size="sm"
-          variant={enabled ? "outline" : "default"}
-          disabled={!settings || busy}
-          onClick={() => void onToggle(!enabled)}
-        >
-          {busy
-            ? t("system.actionsAutomation.saving")
-            : enabled
-              ? t("system.actionsAutomation.disable")
-              : t("system.actionsAutomation.enable")}
-        </Button>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="text-sm font-medium">{t("system.actionsAutomation.allActions")}</div>
+            <div className="text-muted-foreground text-xs">{t("system.actionsAutomation.allActionsDescription")}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <Badge variant={enabled ? "default" : "outline"}>
+              {enabled ? t("system.actionsAutomation.on") : t("system.actionsAutomation.off")}
+            </Badge>
+            <Button
+              size="sm"
+              variant={enabled ? "outline" : "default"}
+              disabled={!settings || busy}
+              onClick={() => void onChange({ enabled: !enabled })}
+            >
+              {busy
+                ? t("system.actionsAutomation.saving")
+                : enabled
+                  ? t("system.actionsAutomation.disable")
+                  : t("system.actionsAutomation.enable")}
+            </Button>
+          </div>
+        </div>
+        <div className="border-t pt-4 flex items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="text-sm font-medium">{t("system.actionsAutomation.calendarActions")}</div>
+            <div className="text-muted-foreground text-xs">{t("system.actionsAutomation.calendarActionsDescription")}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <Badge variant={calendarEnabled ? "default" : "outline"}>
+              {calendarEnabled ? t("system.actionsAutomation.on") : t("system.actionsAutomation.off")}
+            </Badge>
+            <Button
+              size="sm"
+              variant={calendarEnabled ? "outline" : "default"}
+              disabled={!settings || busy}
+              onClick={() => void onChange({ calendarEnabled: !calendarEnabled })}
+            >
+              {busy
+                ? t("system.actionsAutomation.saving")
+                : calendarEnabled
+                  ? t("system.actionsAutomation.disable")
+                  : t("system.actionsAutomation.enable")}
+            </Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

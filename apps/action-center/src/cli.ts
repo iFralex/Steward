@@ -60,12 +60,14 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           await readBridge?.close();
         }
       }
-      if (what === "all" || what === "calendar") {
+      if ((what === "all" || what === "calendar") && automation.calendarEnabled) {
         out.calendar = scanCalendarForActions({
           actions,
           horizonDays: Number(process.env.ACTION_CENTER_CALENDAR_DAYS ?? 3),
           modifiedAfter: automation.enabledAt ?? undefined,
         });
+      } else if (what === "all" || what === "calendar") {
+        out.calendar = { disabled: true };
       }
       actions.setMeta("lastScan", { at: Math.floor(Date.now() / 1000), what, result: out });
       console.log(JSON.stringify(out, null, 2));
