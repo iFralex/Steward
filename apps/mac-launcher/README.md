@@ -67,6 +67,19 @@ safely (`better-sqlite3`, `sqlite-vec`, and their runtime dependencies). In
 bundled mode the launcher starts the model gateway, host, and scheduler from
 `Contents/Resources` instead of running `npm run dev`.
 
+Processes started by the launcher are supervised for their full lifetime. A
+service that exits is restarted with exponential backoff (up to 60 seconds).
+Services with an HTTP health endpoint are also restarted after three consecutive
+failed checks; the scheduler, which has no HTTP endpoint, is monitored by process
+liveness. Intentional app shutdown cancels pending restarts before terminating
+the managed children.
+
+On the first packaged launch, Steward explains why local Mail, Calendar, and
+document tools need Full Disk Access and offers a button that opens System
+Settings directly on **Privacy & Security → Full Disk Access**. macOS requires
+the user to grant this permission explicitly, so the launcher cannot enable it
+itself.
+
 Set `PACKAGE_DEBUG=1 npm run package:mac` to include service sourcemaps in the
 bundle.
 

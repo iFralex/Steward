@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import Darwin
 import QuartzCore
 import WebKit
 
@@ -10,6 +11,11 @@ private let hostURL = URL(string: "http://127.0.0.1:4317")!
 private let webDevURL = URL(string: "http://127.0.0.1:5173")!
 private let llmWikiAPIURL = URL(string: "http://127.0.0.1:19828/api/v1")!
 private let defaultHotKey = "Command+Shift+Space"
+private let serviceHealthCheckInterval: TimeInterval = 15
+private let serviceHealthFailureThreshold = 3
+private let serviceStableRuntime: TimeInterval = 60
+private let serviceMaximumRestartDelay: TimeInterval = 60
+private let fullDiskAccessOnboardingKey = "steward.didShowFullDiskAccessOnboarding.v1"
 
 private enum SplashLanguage: Equatable { case en, it }
 
@@ -149,6 +155,27 @@ private final class SplashView: NSView {
     @objc private func retry() { onRetry?() }
 }
 
+private final class ManagedService {
+    let name: String
+    let command: [String]
+    let directory: URL
+    let healthURL: URL?
+    var process: Process?
+    var logHandle: FileHandle?
+    var launchedAt: Date?
+    var restartAttempt = 0
+    var restartWorkItem: DispatchWorkItem?
+    var consecutiveHealthFailures = 0
+    var healthCheckInFlight = false
+
+    init(name: String, command: [String], directory: URL, healthURL: URL?) {
+        self.name = name
+        self.command = command
+        self.directory = directory
+        self.healthURL = healthURL
+    }
+}
+
 final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var webView: WKWebView?
@@ -157,7 +184,9 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private let splashLanguage = currentSplashLanguage()
     private var statusItem: NSStatusItem?
     private var hotKeyRef: EventHotKeyRef?
-    private var childProcesses: [Process] = []
+    private var managedServices: [String: ManagedService] = [:]
+    private var serviceSupervisorTimer: Timer?
+    private var isTerminating = false
     private let appURL: URL
     private let repoRoot: URL?
     private let explicitURL: Bool
@@ -196,16 +225,27 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         makeStatusItem()
         makeWindow()
         registerGlobalHotKey()
+        startServiceSupervisor()
         showWindow()
+        presentFullDiskAccessOnboardingIfNeeded()
         bootstrap()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
+        serviceSupervisorTimer?.invalidate()
+        serviceSupervisorTimer = nil
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
         }
-        for process in childProcesses where process.isRunning {
-            process.terminate()
+        for service in managedServices.values {
+            service.restartWorkItem?.cancel()
+            service.restartWorkItem = nil
+            service.process?.terminationHandler = nil
+            if service.process?.isRunning == true {
+                service.process?.terminate()
+            }
+            try? service.logHandle?.close()
         }
     }
 
@@ -376,6 +416,49 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func presentFullDiskAccessOnboardingIfNeeded() {
+        guard
+            shouldStartServices,
+            Bundle.main.bundleIdentifier == "com.steward.launcher",
+            !UserDefaults.standard.bool(forKey: fullDiskAccessOnboardingKey)
+        else { return }
+
+        // Record before presenting so a forced quit while the sheet is visible
+        // does not turn this into a prompt loop.
+        UserDefaults.standard.set(true, forKey: fullDiskAccessOnboardingKey)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, let window = self.window else { return }
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            if self.splashLanguage == .it {
+                alert.messageText = "Consenti l’accesso completo al disco"
+                alert.informativeText = "Steward usa questo permesso per cercare in Mail, Calendario e nei documenti locali. macOS non permette alle app di abilitarlo automaticamente. Apri Accesso completo al disco, aggiungi Steward se necessario e attiva l’interruttore; poi riavvia Steward."
+                alert.addButton(withTitle: "Apri Accesso completo al disco")
+                alert.addButton(withTitle: "Non ora")
+            } else {
+                alert.messageText = "Allow Full Disk Access"
+                alert.informativeText = "Steward uses this permission to search Mail, Calendar, and local documents. macOS does not let apps enable it automatically. Open Full Disk Access, add Steward if needed, and turn it on; then restart Steward."
+                alert.addButton(withTitle: "Open Full Disk Access")
+                alert.addButton(withTitle: "Not Now")
+            }
+            alert.beginSheetModal(for: window) { [weak self] response in
+                if response == .alertFirstButtonReturn {
+                    self?.openFullDiskAccessSettings()
+                }
+            }
+        }
+    }
+
+    private func openFullDiskAccessSettings() {
+        // Apple has kept this preference-pane route compatible across the
+        // System Preferences -> System Settings transition in macOS 13.
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+           NSWorkspace.shared.open(url) {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
     private func bootstrap() {
         guard shouldStartServices else {
             load(appURL)
@@ -403,7 +486,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             if !gatewayIsUp {
                 await MainActor.run {
                     loadStatus(.gateway)
-                    startProcess(["npm", "run", "dev", "-w", "@steward/llm-gateway"], in: repoRoot, logName: "llm-gateway")
+                    startProcess(
+                        ["npm", "run", "dev", "-w", "@steward/llm-gateway"],
+                        in: repoRoot,
+                        logName: "llm-gateway",
+                        healthURL: modelGatewayURL.appendingPathComponent("health")
+                    )
                 }
                 _ = await waitUntilReachable(modelGatewayURL.appendingPathComponent("health"), timeoutSeconds: 20)
             }
@@ -412,7 +500,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             if !hostIsUp {
                 await MainActor.run {
                     loadStatus(.host)
-                    startProcess(["npm", "run", "dev", "-w", "@steward/host"], in: repoRoot, logName: "host")
+                    startProcess(
+                        ["npm", "run", "dev", "-w", "@steward/host"],
+                        in: repoRoot,
+                        logName: "host",
+                        healthURL: hostURL.appendingPathComponent("health")
+                    )
                 }
                 _ = await waitUntilReachable(hostURL.appendingPathComponent("health"), timeoutSeconds: 20)
             }
@@ -422,7 +515,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
                 if !webIsUp {
                     await MainActor.run {
                         loadStatus(.web)
-                        startProcess(["npm", "run", "dev", "-w", "@steward/web", "--", "--host", "127.0.0.1"], in: repoRoot, logName: "web")
+                        startProcess(
+                            ["npm", "run", "dev", "-w", "@steward/web", "--", "--host", "127.0.0.1"],
+                            in: repoRoot,
+                            logName: "web",
+                            healthURL: webDevURL
+                        )
                     }
                     _ = await waitUntilReachable(webDevURL, timeoutSeconds: 30)
                 }
@@ -445,7 +543,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             if !gatewayIsUp {
                 await MainActor.run {
                     loadStatus(.gateway)
-                    startProcess([node.path, servicesRoot.appendingPathComponent("llm-gateway/gateway.js").path], in: resourcesRoot, logName: "llm-gateway")
+                    startProcess(
+                        [node.path, servicesRoot.appendingPathComponent("llm-gateway/gateway.js").path],
+                        in: resourcesRoot,
+                        logName: "llm-gateway",
+                        healthURL: modelGatewayURL.appendingPathComponent("health")
+                    )
                 }
                 _ = await waitUntilReachable(modelGatewayURL.appendingPathComponent("health"), timeoutSeconds: 20)
             }
@@ -470,7 +573,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             if !hostIsUp {
                 await MainActor.run {
                     loadStatus(.host)
-                    startProcess([node.path, servicesRoot.appendingPathComponent("host/index.js").path], in: resourcesRoot, logName: "host")
+                    startProcess(
+                        [node.path, servicesRoot.appendingPathComponent("host/index.js").path],
+                        in: resourcesRoot,
+                        logName: "host",
+                        healthURL: hostURL.appendingPathComponent("health")
+                    )
                 }
                 _ = await waitUntilReachable(hostURL.appendingPathComponent("health"), timeoutSeconds: 20)
             }
@@ -490,7 +598,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             NSLog("Bundled LLM Wiki executable not found in \(resourcesRoot.appendingPathComponent("llm-wiki").path)")
             return
         }
-        startProcess([executable.path, "--background"], in: executable.deletingLastPathComponent(), logName: "llm-wiki")
+        startProcess(
+            [executable.path, "--background"],
+            in: executable.deletingLastPathComponent(),
+            logName: "llm-wiki",
+            healthURL: llmWikiAPIURL.appendingPathComponent("health")
+        )
     }
 
     private func installBundledFinderQuickActions(servicesRoot: URL, node: URL) {
@@ -563,7 +676,12 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         if !ollamaIsUp {
             await MainActor.run {
                 loadStatus(.ollama)
-                startProcess(["ollama", "serve"], in: repoRoot ?? URL(fileURLWithPath: NSHomeDirectory()), logName: "ollama")
+                startProcess(
+                    ["ollama", "serve"],
+                    in: repoRoot ?? URL(fileURLWithPath: NSHomeDirectory()),
+                    logName: "ollama",
+                    healthURL: ollamaURL
+                )
             }
             let started = await waitUntilReachable(ollamaURL, timeoutSeconds: 20)
             if !started {
@@ -584,21 +702,136 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         }
     }
 
-    private func startProcess(_ command: [String], in directory: URL, logName: String) {
-        guard let executable = command.first else { return }
+    private func startProcess(_ command: [String], in directory: URL, logName: String, healthURL: URL? = nil) {
+        guard !command.isEmpty else { return }
+        if let existing = managedServices[logName] {
+            guard existing.process?.isRunning != true, existing.restartWorkItem == nil else { return }
+            launch(existing)
+            return
+        }
+
+        let service = ManagedService(name: logName, command: command, directory: directory, healthURL: healthURL)
+        managedServices[logName] = service
+        launch(service)
+    }
+
+    private func launch(_ service: ManagedService) {
+        guard !isTerminating, let executable = service.command.first else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + command.dropFirst()
-        process.currentDirectoryURL = directory
+        process.arguments = [executable] + service.command.dropFirst()
+        process.currentDirectoryURL = service.directory
         process.environment = processEnvironment()
-        let log = logFile(named: logName)
+        let log = logFile(named: service.name)
         process.standardOutput = log
         process.standardError = log
+        process.terminationHandler = { [weak self, weak service] terminatedProcess in
+            DispatchQueue.main.async {
+                self?.serviceDidTerminate(service, process: terminatedProcess)
+            }
+        }
+        service.process = process
+        service.logHandle = log
+        service.launchedAt = Date()
+        service.consecutiveHealthFailures = 0
         do {
             try process.run()
-            childProcesses.append(process)
+            NSLog("Service supervisor started \(service.name) (pid \(process.processIdentifier))")
         } catch {
-            NSLog("Failed to start \(command.joined(separator: " ")): \(error.localizedDescription)")
+            service.process = nil
+            try? service.logHandle?.close()
+            service.logHandle = nil
+            scheduleRestart(service, reason: "failed to start: \(error.localizedDescription)")
+        }
+    }
+
+    private func serviceDidTerminate(_ service: ManagedService?, process: Process) {
+        guard let service, service.process === process else { return }
+        let runtime = service.launchedAt.map { Date().timeIntervalSince($0) } ?? 0
+        service.process = nil
+        service.launchedAt = nil
+        service.healthCheckInFlight = false
+        service.consecutiveHealthFailures = 0
+        try? service.logHandle?.close()
+        service.logHandle = nil
+        guard !isTerminating else { return }
+
+        if runtime >= serviceStableRuntime {
+            service.restartAttempt = 0
+        }
+        scheduleRestart(
+            service,
+            reason: "exited with status \(process.terminationStatus) after \(Int(runtime))s"
+        )
+    }
+
+    private func scheduleRestart(_ service: ManagedService, reason: String) {
+        guard !isTerminating, service.restartWorkItem == nil else { return }
+        service.restartAttempt += 1
+        let exponent = min(service.restartAttempt - 1, 6)
+        let delay = min(pow(2, Double(exponent)), serviceMaximumRestartDelay)
+        NSLog("Service supervisor will restart \(service.name) in \(Int(delay))s (\(reason))")
+
+        let workItem = DispatchWorkItem { [weak self, weak service] in
+            guard let self, let service else { return }
+            service.restartWorkItem = nil
+            self.launch(service)
+        }
+        service.restartWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func startServiceSupervisor() {
+        serviceSupervisorTimer = Timer.scheduledTimer(withTimeInterval: serviceHealthCheckInterval, repeats: true) { [weak self] _ in
+            self?.checkManagedServiceHealth()
+        }
+    }
+
+    private func checkManagedServiceHealth() {
+        guard !isTerminating else { return }
+        for service in managedServices.values {
+            guard
+                let healthURL = service.healthURL,
+                let process = service.process,
+                process.isRunning,
+                !service.healthCheckInFlight,
+                service.launchedAt.map({ Date().timeIntervalSince($0) >= serviceHealthCheckInterval }) == true
+            else { continue }
+
+            service.healthCheckInFlight = true
+            Task {
+                let healthy = await isReachable(healthURL)
+                await MainActor.run { [weak self, weak service] in
+                    self?.recordHealthResult(healthy, for: service, process: process)
+                }
+            }
+        }
+    }
+
+    private func recordHealthResult(_ healthy: Bool, for service: ManagedService?, process: Process) {
+        guard let service, service.process === process, process.isRunning else { return }
+        service.healthCheckInFlight = false
+        if healthy {
+            service.consecutiveHealthFailures = 0
+            return
+        }
+
+        service.consecutiveHealthFailures += 1
+        guard service.consecutiveHealthFailures >= serviceHealthFailureThreshold else { return }
+        service.consecutiveHealthFailures = 0
+        NSLog("Service supervisor found \(service.name) unhealthy; terminating pid \(process.processIdentifier) for restart")
+        process.terminate()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak service, weak process] in
+            guard
+                self?.isTerminating == false,
+                let service,
+                let process,
+                service.process === process,
+                process.isRunning
+            else { return }
+            NSLog("Service supervisor force-stopping unresponsive \(service.name) (pid \(process.processIdentifier))")
+            kill(process.processIdentifier, SIGKILL)
         }
     }
 
