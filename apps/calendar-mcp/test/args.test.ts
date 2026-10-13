@@ -42,6 +42,22 @@ test("calendar date inputs require an explicit timezone", () => {
   assert.throws(() => parseUpdateArgs({ uid: "U1", start: "2026-06-25T10:00:00" }), /explicit timezone/);
 });
 
+test("parseUpdateArgs rejects an update with only an uid", () => {
+  assert.throws(
+    () => parseUpdateArgs({ uid: "U1" }),
+    /requires at least one field to update besides "uid"/,
+  );
+  assert.throws(
+    () => parseUpdateArgs({ uid: "U1", summary: "", description: "" }),
+    /requires at least one field to update besides "uid"/,
+  );
+});
+
+test("parseUpdateArgs treats an empty alarms array as an explicit update", () => {
+  const value = parseUpdateArgs({ uid: "U1", alarms: [] });
+  assert.deepEqual(value.alarms, []);
+});
+
 test("calendar date inputs are normalized to UTC", () => {
   const created = parseCreateArgs({
     calendar: "Casa",

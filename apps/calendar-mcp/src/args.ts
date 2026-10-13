@@ -74,7 +74,7 @@ export function parseCreateArgs(raw: Raw): CreateArgs {
 }
 
 export function parseUpdateArgs(raw: Raw): UpdateArgs {
-  return {
+  const parsed: UpdateArgs = {
     uid: requireString(raw, "uid"),
     summary: optString(raw, "summary"),
     start: validIso(raw, "start", false),
@@ -85,4 +85,18 @@ export function parseUpdateArgs(raw: Raw): UpdateArgs {
     recurrence: optString(raw, "recurrence"),
     alarms: optMinutesArray(raw, "alarms"),
   };
+  const hasEffectiveChange = [
+    parsed.summary,
+    parsed.start,
+    parsed.end,
+    parsed.location,
+    parsed.description,
+    parsed.url,
+    parsed.recurrence,
+  ].some((value) => typeof value === "string" && value.length > 0)
+    || parsed.alarms !== undefined;
+  if (!hasEffectiveChange) {
+    throw new Error('"update_event" requires at least one field to update besides "uid"');
+  }
+  return parsed;
 }
