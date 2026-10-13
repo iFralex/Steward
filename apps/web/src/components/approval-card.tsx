@@ -16,14 +16,15 @@ import { Input } from "@/components/ui/input";
 import { FileChip } from "@/components/file-chip";
 import { DateTimePicker } from "@/components/datetime-picker";
 import { CardView, cardForApproval, type FileApi } from "@/components/cards";
+import {
+  buildEditedApprovalInput,
+  toEditable,
+  type ApprovalField,
+} from "@/lib/approval-input";
 import type { PendingApproval } from "@/lib/host-socket";
 import type { ApprovalDecision } from "@steward/protocol";
 
-type Kind = "text" | "textarea" | "csv" | "bool" | "numbers" | "datetime" | "files";
-/** labelKey indexes approval.fields.* in the translation dictionaries. */
-interface Field { key: string; labelKey: string; kind: Kind }
-
-const FORMS: Record<string, Field[]> = {
+const FORMS: Record<string, ApprovalField[]> = {
   copy_to_clipboard: [
     { key: "label", labelKey: "label", kind: "text" },
     { key: "text", labelKey: "text", kind: "textarea" },
@@ -87,31 +88,6 @@ const bareName = (tool: string): string => {
   const p = tool.split("__");
   return p[0] === "mcp" && p.length >= 3 ? p.slice(2).join("__") : tool;
 };
-const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : v == null ? [] : [v]);
-
-function toEditable(kind: Kind, v: unknown): string | boolean {
-  if (kind === "bool") return v === true;
-  if (kind === "csv") return asArray(v).map(String).join(", ");
-  if (kind === "numbers") return asArray(v).map(String).join(", ");
-  if (kind === "files") return asArray(v).map(String).join("\n");
-  return v == null ? "" : String(v);
-}
-
-function buildEdited(input: Record<string, unknown>, fields: Field[], vals: Record<string, string | boolean>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...input };
-  for (const f of fields) {
-    const raw = vals[f.key];
-    if (f.kind === "bool") { out[f.key] = raw === true; continue; }
-    if (f.kind === "csv") { out[f.key] = String(raw).split(",").map((s) => s.trim()).filter(Boolean); continue; }
-    if (f.kind === "files") { out[f.key] = String(raw).split("\n").map((s) => s.trim()).filter(Boolean); continue; }
-    if (f.kind === "numbers") { out[f.key] = String(raw).split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n)); continue; }
-    const s = String(raw);
-    if (s.trim() === "") delete out[f.key]; // empty text/datetime → omit (use the tool's default)
-    else out[f.key] = s;
-  }
-  return out;
-}
-
 function clipboardText(input: Record<string, unknown>): string {
   return typeof input.text === "string" ? input.text : "";
 }
@@ -236,7 +212,7 @@ export function ApprovalCard({
     } catch (e) { jsonError = e instanceof Error ? e.message : t("approval.invalidJson"); }
   }
 
-  const edited = fields ? buildEdited(input, fields, vals) : (jsonParsed ?? input);
+  const edited = fields ? buildEditedApprovalInput(input, fields, vals) : (jsonParsed ?? input);
   const preview = approval.preview && typeof approval.preview === "object" && !Array.isArray(approval.preview)
     ? approval.preview as Record<string, unknown>
     : {};
