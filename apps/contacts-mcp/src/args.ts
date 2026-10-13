@@ -75,5 +75,14 @@ export function parseCreateArgs(raw: Raw): CreateArgs {
   return a;
 }
 export function parseUpdateArgs(raw: Raw): UpdateArgs {
-  return { personId: requireString(raw, "personId"), ...nameFields(raw) };
+  const personId = requireString(raw, "personId");
+  const fields = nameFields(raw);
+  const hasEffectiveChange = [fields.firstName, fields.lastName, fields.organization, fields.nickname, fields.note]
+    .some((value) => typeof value === "string" && value.length > 0)
+    || (fields.emails?.length ?? 0) > 0
+    || (fields.phones?.length ?? 0) > 0;
+  if (!hasEffectiveChange) {
+    throw new Error('"update_contact" requires at least one non-empty field besides "personId"');
+  }
+  return { personId, ...fields };
 }

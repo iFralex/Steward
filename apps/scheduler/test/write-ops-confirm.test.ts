@@ -5,6 +5,7 @@ import {
   calendarFieldsMatch,
   findMailConfirmation,
   shouldExhaustCalendarConfirmation,
+  shouldExhaustMailConfirmation,
 } from "../src/write-ops-cli.ts";
 
 function mailStoreWith(body: string) {
@@ -78,6 +79,11 @@ test("fallback never fires for a reply (no subject in expected)", () => {
   const store = storeWithRows([{ date: now + 5, subject: "Subj", from: "me@x.com" }]);
   const op = { startedAt: now, expected: { bodySnippet: "text not in mirror", from: "me@x.com" } } as any; // reply: no subject
   assert.equal(findMailConfirmation(store, op), null, "replies must not use the header fallback");
+});
+
+test("mail confirmations are bounded when the mirror never observes the write", () => {
+  assert.equal(shouldExhaustMailConfirmation(11), false);
+  assert.equal(shouldExhaustMailConfirmation(12), true);
 });
 
 test("calendar confirmation checks target, all-day state, alarms and recurrence presence", () => {

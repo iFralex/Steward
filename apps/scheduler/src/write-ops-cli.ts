@@ -18,6 +18,10 @@ const RETRY_AFTER_CONFIRM_ATTEMPTS = Math.max(
   Number(process.env.WRITE_OP_RETRY_AFTER_CONFIRM_ATTEMPTS ?? 3),
 );
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.WRITE_OP_MAX_ATTEMPTS ?? 2));
+const MAX_MAIL_CONFIRM_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.WRITE_OP_MAIL_MAX_CONFIRM_ATTEMPTS ?? 12),
+);
 const MAX_CALENDAR_CONFIRM_ATTEMPTS = Math.max(
   1,
   Number(process.env.WRITE_OP_CALENDAR_MAX_CONFIRM_ATTEMPTS ?? 12),
@@ -201,6 +205,10 @@ export async function reconcileMailWrites(): Promise<{ confirmed: number; pendin
           ops.markRetryExhausted(op.id, message);
           exhausted++;
         }
+      } else if (shouldExhaustMailConfirmation(afterThisAttempt)) {
+        const detail = op.lastError ? ` Last error: ${op.lastError}` : "";
+        ops.markRetryExhausted(op.id, `Mail write could not be confirmed.${detail}`);
+        exhausted++;
       } else {
         pending++;
       }
@@ -210,6 +218,10 @@ export async function reconcileMailWrites(): Promise<{ confirmed: number; pendin
     ops.close();
   }
   return { confirmed, pending, retried, exhausted };
+}
+
+export function shouldExhaustMailConfirmation(confirmAttempts: number): boolean {
+  return confirmAttempts >= MAX_MAIL_CONFIRM_ATTEMPTS;
 }
 
 function shouldPrepareRetry(op: WriteOpRow, confirmAttempts: number): boolean {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseSearchArgs, parseResolveArgs, parseCreateArgs } from "../src/args.ts";
+import { parseSearchArgs, parseResolveArgs, parseCreateArgs, parseUpdateArgs } from "../src/args.ts";
 
 test("parseSearchArgs requires query and paginates with a capped limit", () => {
   assert.throws(() => parseSearchArgs({}), /query/);
@@ -27,4 +27,22 @@ test("parseCreateArgs requires a name or organization", () => {
 
 test("parseCreateArgs rejects malformed emails", () => {
   assert.throws(() => parseCreateArgs({ firstName: "A", emails: [{ label: "Home" }] }), /emails/);
+});
+
+test("parseUpdateArgs rejects updates without an effective change", () => {
+  assert.throws(() => parseUpdateArgs({ personId: "P1" }), /at least one non-empty field/);
+  assert.throws(
+    () => parseUpdateArgs({ personId: "P1", firstName: "", emails: [], phones: [] }),
+    /at least one non-empty field/,
+  );
+  assert.deepEqual(parseUpdateArgs({ personId: "P1", note: "Call next week" }), {
+    personId: "P1",
+    firstName: undefined,
+    lastName: undefined,
+    organization: undefined,
+    nickname: undefined,
+    note: "Call next week",
+    emails: undefined,
+    phones: undefined,
+  });
 });
