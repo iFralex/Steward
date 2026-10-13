@@ -76,7 +76,7 @@ Steward is a monorepo of local services:
 - `apps/web` is the browser/PWA client.
 - `apps/host` serves the web app, owns sessions, runs the agent, gates tools, stores chat history, exposes usage/system routes, and bridges UI events over WebSocket.
 - `apps/llm-gateway` exposes one OpenAI-compatible endpoint with model capability tiers.
-- MCP servers expose Mail, Calendar, Contacts, Shell, Trains, LLM Wiki and Action Center tools.
+- MCP servers expose Mail, Calendar, Contacts, Documents, Shell, Trains, LLM Wiki and Action Center tools.
 - `apps/scheduler` runs periodic background jobs.
 - local SQLite stores mirror mail, calendar/contact indexes, action items, write-operation journals, chats and usage.
 - `apps/mac-launcher` packages all of this as a menu-bar macOS app.
@@ -233,6 +233,8 @@ It supports:
 - gated write commands.
 
 The read-only command runner accepts familiar shell-like syntax including pipes, but it does not spawn a real shell. It parses the command itself, uses allow-listed binaries with explicit argv, and rejects dangerous constructs such as command substitution and redirection. Sensitive paths are blocked by shared path policy.
+
+`apps/documents-mcp` reads attached or discovered PDF, Markdown, text/data, HTML, RTF, DOCX, PPTX and ODT files. Reads are cursor-paginated with hard output limits. Targeted questions use bounded lexical and semantic search, with ranking fusion and in-memory extraction/vector caching, so the agent does not need to load a whole long document into context.
 
 ### Mobile Access
 
@@ -1821,6 +1823,7 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 | [apps/action-center](apps/action-center/) | Scans recent mail into actionable items with LLM-prepared proposals. Exposes bounded CLI/MCP list and detail surfaces, filter-aware counts, and persists status in SQLite. |
 | [apps/calendar-mcp](apps/calendar-mcp/) | Calendar connector. Reads Calendar data, builds hybrid search index and performs approved event writes through AppleScript/write-ops. |
 | [apps/contacts-mcp](apps/contacts-mcp/) | Contacts connector. Reads AddressBook data, deduplicates, labels, indexes and resolves recipients. |
+| [apps/documents-mcp](apps/documents-mcp/) | Read-only document connector. Extracts common text/PDF/Office formats and provides bounded cursor reads plus hybrid lexical/semantic search. |
 | [apps/shell-mcp](apps/shell-mcp/) | Safe shell/files connector. Finds files, runs constrained read-only commands, and gates write commands. |
 | [apps/train-mcp](apps/train-mcp/) | Read-only live Italian train connector. Resolves dictated station names, finds the next direct service and refreshes route, delay and platform state through an opaque `trainRef`. |
 | [apps/scheduler](apps/scheduler/) | Background daemon. Runs periodic CLI jobs with no-overlap scheduling, timeouts and isolated errors. |
@@ -2212,6 +2215,7 @@ Useful workspace names include:
 - `@steward/action-center`
 - `@steward/calendar-mcp`
 - `@steward/contacts-mcp`
+- `@steward/documents-mcp`
 - `@steward/shell-mcp`
 - `@steward/train-mcp`
 - `@steward/watch-engine`

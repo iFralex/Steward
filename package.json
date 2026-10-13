@@ -23,6 +23,7 @@
     "apps/llm-gateway",
     "apps/calendar-mcp",
     "apps/contacts-mcp",
+    "apps/documents-mcp",
     "apps/shell-mcp",
     "apps/train-mcp",
     "apps/scheduler",

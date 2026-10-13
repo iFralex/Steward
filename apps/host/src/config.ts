@@ -211,6 +211,11 @@ const DEFAULT_SYSTEM_PROMPT = [
   "reply `attachments`. mcp__shell__run_command runs a read-only command line in",
   "normal shell syntax WITH pipes (safe, no real shell) — e.g. newest file:",
   "\"ls -t ~/Downloads | head -1\". run_write_command mutates files (needs approval).",
+  "To inspect an attached or found PDF, Markdown, text, Office, or data file,",
+  "use mcp__documents__document_info/read/search. For targeted questions, call",
+  "document_search first and read only the returned cursor. For broad reading,",
+  "start with document_info, then follow document_read nextCursor only while the",
+  "remaining content is materially needed. Never request maximum output by default.",
   "Sensitive actions (sending email, creating events, writing files) require",
   "the user's approval — propose them via the appropriate tool and the host",
   "will ask the user to confirm. Never claim a sensitive action is done.",
@@ -254,6 +259,8 @@ export function loadConfig(): HostConfig {
     process.env.ACTION_CENTER_MCP_ENTRY ?? fileURLToPath(new URL("../../action-center/src/index.ts", import.meta.url));
   const shellMcpEntry =
     process.env.SHELL_MCP_ENTRY ?? fileURLToPath(new URL("../../shell-mcp/src/index.ts", import.meta.url));
+  const documentsMcpEntry =
+    process.env.DOCUMENTS_MCP_ENTRY ?? fileURLToPath(new URL("../../documents-mcp/src/index.ts", import.meta.url));
   const trainMcpEntry =
     process.env.TRAIN_MCP_ENTRY ?? fileURLToPath(new URL("../../train-mcp/src/index.ts", import.meta.url));
   const voice = loadVoiceChannelConfig();
@@ -272,6 +279,7 @@ export function loadConfig(): HostConfig {
     contacts: { command: node, args: nodeArgs(contactsMcpEntry) },
     "action-center": { command: node, args: nodeArgs(actionCenterMcpEntry) },
     shell: { command: node, args: nodeArgs(shellMcpEntry) },
+    documents: { command: node, args: nodeArgs(documentsMcpEntry) },
     trains: { command: node, args: nodeArgs(trainMcpEntry) },
   };
   // Keep the MCP id transport-neutral. A future StreamCore adapter can expose

@@ -18,6 +18,9 @@ test("default policy is default-deny (gate) and allows read-only tools", () => {
   assert.equal(decideTool(defaultPolicy, "mcp__llm-wiki__llm_wiki_search"), "allow");
   assert.equal(decideTool(defaultPolicy, "mcp__mail__read_message"), "allow");
   assert.equal(decideTool(defaultPolicy, "mcp__llm-wiki__llm_wiki_read_file"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__documents__document_info"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__documents__document_read"), "allow");
+  assert.equal(decideTool(defaultPolicy, "mcp__documents__document_search"), "allow");
   // Side-effecting / unknown → gated (requires confirmation).
   assert.equal(decideTool(defaultPolicy, "Bash"), "gate");
   assert.equal(decideTool(defaultPolicy, "Write"), "gate");
