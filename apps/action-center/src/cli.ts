@@ -46,6 +46,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
             seedIfEmpty: process.env.ACTION_CENTER_NO_SEED !== "1",
             threadId: process.env.ACTION_CENTER_THREAD_ID ? Number(process.env.ACTION_CENTER_THREAD_ID) : undefined,
             ingestedAfter: automation.enabledAt ?? undefined,
+            textLanguage: automation.textLanguage,
             readTool: bridgeForReadTools
               ? (tool, input) => {
                   if (!isAllowedReadTool(tool)) throw new Error(`read tool not allowed: ${tool}`);
@@ -65,6 +66,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
           actions,
           horizonDays: Number(process.env.ACTION_CENTER_CALENDAR_DAYS ?? 3),
           modifiedAfter: automation.enabledAt ?? undefined,
+          textLanguage: automation.textLanguage,
         });
       } else if (what === "all" || what === "calendar") {
         out.calendar = { disabled: true };

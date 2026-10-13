@@ -20,8 +20,11 @@ test("scanCalendarForActions creates reminders for upcoming events", () => {
     start: "2026-06-27T10:00:00.000Z",
     end: "2026-06-27T11:00:00.000Z",
     allDay: false,
+    calendarId: "CAL-WORK",
     calendar: "Work",
     account: "iCloud",
+    alarms: [],
+    hasRecurrence: false,
     status: 1,
     url: null,
     lastModified: 1,
@@ -34,11 +37,14 @@ test("scanCalendarForActions creates reminders for upcoming events", () => {
     calendarDbPath: calPath,
     now: new Date("2026-06-26T10:00:00.000Z"),
     horizonDays: 3,
+    textLanguage: "it",
   });
   assert.equal(res.created, 1);
   const item = actions.list()[0];
   assert.equal(item.kind, "event-reminder");
   assert.equal(item.priority, "high");
+  assert.equal(item.title, "In arrivo: Colloquio");
+  assert.match(item.summary, /presso Meet/);
   assert.equal(item.payload.uid, "u1");
   actions.close();
 });
@@ -57,8 +63,11 @@ test("scanCalendarForActions ignores events not modified after a re-enable cutof
       start: "2026-06-27T10:00:00.000Z",
       end: "2026-06-27T11:00:00.000Z",
       allDay: false,
+      calendarId: "CAL-WORK",
       calendar: "Work",
       account: "iCloud",
+      alarms: [],
+      hasRecurrence: false,
       status: 1,
       url: null,
       lastModified: unixToCoreData(lastModified),

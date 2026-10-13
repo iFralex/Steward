@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { recordAudit } from "@steward/audit-log";
-import type { ActionItem, ActionKind, ActionStatus, Flow, FlowMatch, UpsertAction, UpsertFlow } from "./types.ts";
+import type { ActionItem, ActionKind, ActionStatus, ActionTextLanguage, Flow, FlowMatch, UpsertAction, UpsertFlow } from "./types.ts";
+import { normalizeActionTextLanguage } from "./action-language.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS actions (
@@ -50,6 +51,8 @@ export interface ActionAutomationSettings {
   enabled: boolean;
   /** Create Action Center reminders for upcoming Calendar events. */
   calendarEnabled: boolean;
+  /** Language for user-facing Action card text; default lets the planner follow context. */
+  textLanguage: ActionTextLanguage;
   /** Unix timestamp: after a re-enable, only newer source items may create Actions. */
   enabledAt: number | null;
   updatedAt: number | null;
@@ -282,6 +285,7 @@ export class ActionStore {
     return {
       enabled: typeof saved?.enabled === "boolean" ? saved.enabled : true,
       calendarEnabled: typeof saved?.calendarEnabled === "boolean" ? saved.calendarEnabled : true,
+      textLanguage: normalizeActionTextLanguage(saved?.textLanguage),
       enabledAt: finiteNumberOrNull(saved?.enabledAt),
       updatedAt: finiteNumberOrNull(saved?.updatedAt),
     };
@@ -293,6 +297,7 @@ export class ActionStore {
     const next: ActionAutomationSettings = {
       enabled,
       calendarEnabled: current.calendarEnabled,
+      textLanguage: current.textLanguage,
       enabledAt: enabled ? now : null,
       updatedAt: now,
     };
@@ -304,6 +309,14 @@ export class ActionStore {
     const current = this.getAutomationSettings();
     if (current.calendarEnabled === calendarEnabled) return current;
     const next: ActionAutomationSettings = { ...current, calendarEnabled, updatedAt: now };
+    this.setMeta(AUTOMATION_SETTINGS_KEY, next);
+    return next;
+  }
+
+  setTextLanguage(textLanguage: ActionTextLanguage, now = Math.floor(Date.now() / 1000)): ActionAutomationSettings {
+    const current = this.getAutomationSettings();
+    if (current.textLanguage === textLanguage) return current;
+    const next: ActionAutomationSettings = { ...current, textLanguage, updatedAt: now };
     this.setMeta(AUTOMATION_SETTINGS_KEY, next);
     return next;
   }

@@ -10,6 +10,7 @@ export type ActionKind =
   | "admin-task";
 export type ActionStatus = "new" | "read" | "done" | "dismissed";
 export type ActionPriority = "low" | "normal" | "high";
+export type ActionTextLanguage = "default" | "en" | "it";
 
 export interface ProposedToolStep {
   id: string;

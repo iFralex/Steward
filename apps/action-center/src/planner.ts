@@ -1,10 +1,11 @@
 import { cleanBody } from "../../mail-promoter/src/clean-body.ts";
 import type { Chat } from "./llm.ts";
 import { jsonFromLlm } from "./llm.ts";
-import type { ActionKind, ActionPriority, ContextSnapshot, FlowMatch, ProposedAction, ProposedManualStep, ProposedToolStep, RelatedActionCandidate } from "./types.ts";
+import type { ActionKind, ActionPriority, ActionTextLanguage, ContextSnapshot, FlowMatch, ProposedAction, ProposedManualStep, ProposedToolStep, RelatedActionCandidate } from "./types.ts";
 import { lookupCalendarContext, lookupContactContext, lookupWikiContext, type CalendarContext } from "./context.ts";
 import { collectReadToolContext, isAllowedReadTool, type ReadToolExecutor } from "./tool-context.ts";
 import { flowQuery } from "./flows.ts";
+import { actionTextLanguagePrompt } from "./action-language.ts";
 
 export interface PlanningMessage {
   messageId: string;
@@ -113,10 +114,11 @@ Rules:
 - The host will guard all write tools, so output concrete executable inputs.
 - Preserve uncertainty in summaries, but keep tool inputs usable.`;
 
-export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[]; readTool?: ReadToolExecutor; relatedOpenActions?: RelatedActionCandidate[]; flowSearch?: (query: string, limit: number) => Promise<FlowMatch[]>; now?: Date } = {}): Promise<PlannedActionCard | null> {
+export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { userAddrs?: string[]; readTool?: ReadToolExecutor; relatedOpenActions?: RelatedActionCandidate[]; flowSearch?: (query: string, limit: number) => Promise<FlowMatch[]>; now?: Date; textLanguage?: ActionTextLanguage } = {}): Promise<PlannedActionCard | null> {
   const now = opts.now ?? new Date();
+  const textLanguage = opts.textLanguage ?? "default";
   const flows = opts.flowSearch ? await opts.flowSearch(flowQuery(msg, {}), 2).catch(() => []) : [];
-  const analyzed = await analyzeMail(msg, chat, opts.userAddrs ?? [], now, flows);
+  const analyzed = await analyzeMail(msg, chat, opts.userAddrs ?? [], now, flows, textLanguage);
   if (!analyzed?.needsAction) return null;
 
   const slots = analyzed.scheduling?.requestedSlots ?? [];
@@ -174,18 +176,22 @@ export async function planMailAction(msg: PlanningMessage, chat: Chat, opts: { u
     reasoning: analyzed.reasoning,
   };
 
-  const planned = await planActions(msg, analyzed, contextSnapshot, calendar, opts.relatedOpenActions ?? [], chat, now);
+  const planned = await planActions(msg, analyzed, contextSnapshot, calendar, opts.relatedOpenActions ?? [], chat, now, textLanguage);
   if (planned) contextSnapshot.flows = flows.filter((flow) => planned.appliedFlowIds.includes(flow.id));
 
   return {
     kind: analyzed.kind,
     priority: analyzed.priority,
-    title: planned?.title ?? defaultTitle(analyzed.kind, msg.subject),
+    title: planned?.title ?? defaultTitle(analyzed.kind, msg.subject, textLanguage),
     summary: planned?.summary ?? analyzed.summary,
     dueAt,
     deadline,
     contextSnapshot,
-    proposedActions: resolveCalendarTargets(planned?.proposedActions ?? fallbackActions(msg, analyzed, calendar), contextSnapshot),
+    proposedActions: resolveCalendarTargets(
+      planned?.proposedActions ?? fallbackActions(msg, analyzed, calendar, textLanguage),
+      contextSnapshot,
+      textLanguage,
+    ),
     needsAction: true,
     relatedActionId: planned?.relatedActionId ?? null,
   };
@@ -269,9 +275,17 @@ function uniqueFacts(facts: Record<string, unknown>[]): Record<string, unknown>[
   return out.slice(0, 5);
 }
 
-async function analyzeMail(msg: PlanningMessage, chat: Chat, userAddrs: string[], now: Date, flows: FlowMatch[]): Promise<AnalyzedMail | null> {
+async function analyzeMail(
+  msg: PlanningMessage,
+  chat: Chat,
+  userAddrs: string[],
+  now: Date,
+  flows: FlowMatch[],
+  textLanguage: ActionTextLanguage,
+): Promise<AnalyzedMail | null> {
   const body = cleanBody(msg.bodyText).slice(0, 9000);
-  const out = await chat(ANALYZE_SYSTEM, [
+  const languagePrompt = actionTextLanguagePrompt(textLanguage);
+  const out = await chat(languagePrompt ? `${ANALYZE_SYSTEM}\n${languagePrompt}` : ANALYZE_SYSTEM, [
     `Today: ${now.toISOString()}`,
     userAddrs.length ? `Alessio addresses: ${userAddrs.join(", ")}` : "",
     `From: ${msg.fromName} <${msg.fromAddr}>`,
@@ -285,7 +299,7 @@ async function analyzeMail(msg: PlanningMessage, chat: Chat, userAddrs: string[]
   ].filter(Boolean).join("\n"));
   const parsed = jsonFromLlm<Record<string, unknown>>(out);
   if (!parsed || typeof parsed.needsAction !== "boolean") return null;
-  return normalizeAnalyzed(parsed);
+  return normalizeAnalyzed(parsed, textLanguage);
 }
 
 async function planActions(
@@ -296,8 +310,10 @@ async function planActions(
   relatedOpenActions: RelatedActionCandidate[],
   chat: Chat,
   now: Date,
+  textLanguage: ActionTextLanguage,
 ): Promise<{ title: string; summary: string; proposedActions: ProposedAction[]; relatedActionId: number | null; appliedFlowIds: number[] } | null> {
-  const out = await chat(PLAN_SYSTEM, JSON.stringify({ message: {
+  const languagePrompt = actionTextLanguagePrompt(textLanguage);
+  const out = await chat(languagePrompt ? `${PLAN_SYSTEM}\n${languagePrompt}` : PLAN_SYSTEM, JSON.stringify({ message: {
     messageId: msg.messageId,
     subject: msg.subject,
     from: msg.fromName ? `${msg.fromName} <${msg.fromAddr}>` : msg.fromAddr,
@@ -305,10 +321,10 @@ async function planActions(
   }, currentTime: currentTimeContext(now), analyzed, contextSnapshot, calendar, relatedOpenActions }, null, 2));
   const parsed = jsonFromLlm<Record<string, unknown>>(out);
   if (!parsed) return null;
-  const proposedActions = normalizeProposedActions(parsed.proposedActions, analyzed, msg.bodyText);
+  const proposedActions = normalizeProposedActions(parsed.proposedActions, analyzed, msg.bodyText, textLanguage);
   if (!proposedActions.length) return null;
   return {
-    title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : defaultTitle(analyzed.kind, msg.subject),
+    title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : defaultTitle(analyzed.kind, msg.subject, textLanguage),
     summary: typeof parsed.summary === "string" && parsed.summary.trim() ? parsed.summary.trim() : analyzed.summary,
     proposedActions,
     relatedActionId: normalizeRelatedActionId(parsed.relatedActionId, relatedOpenActions),
@@ -357,7 +373,7 @@ interface AnalyzedMail {
   reasoning: string;
 }
 
-function normalizeAnalyzed(p: Record<string, unknown>): AnalyzedMail {
+function normalizeAnalyzed(p: Record<string, unknown>, textLanguage: ActionTextLanguage): AnalyzedMail {
   const kind = ["reply-needed", "scheduling-request", "calendar-invite", "deadline", "document-action", "follow-up", "admin-task"].includes(String(p.kind))
     ? p.kind as ActionKind
     : "reply-needed";
@@ -377,7 +393,9 @@ function normalizeAnalyzed(p: Record<string, unknown>): AnalyzedMail {
     needsAction: p.needsAction === true,
     kind,
     priority,
-    summary: typeof p.summary === "string" && p.summary.trim() ? p.summary.trim() : "Action required",
+    summary: typeof p.summary === "string" && p.summary.trim()
+      ? p.summary.trim()
+      : textLanguage === "it" ? "Azione richiesta" : "Action required",
     dueDateTime: typeof p.dueDateTime === "string" && Number.isFinite(Date.parse(p.dueDateTime)) ? p.dueDateTime : null,
     scheduling: scheduling ? {
       requestedSlots,
@@ -395,20 +413,25 @@ function normalizeAnalyzed(p: Record<string, unknown>): AnalyzedMail {
   };
 }
 
-function normalizeProposedActions(value: unknown, analyzed: AnalyzedMail | undefined, rawBodyText: string): ProposedAction[] {
+function normalizeProposedActions(
+  value: unknown,
+  analyzed: AnalyzedMail | undefined,
+  rawBodyText: string,
+  textLanguage: ActionTextLanguage,
+): ProposedAction[] {
   if (!Array.isArray(value)) return [];
   return value.map((a, index) => {
     if (!a || typeof a !== "object") return null;
     const obj = a as Record<string, unknown>;
     const steps = Array.isArray(obj.steps)
       ? obj.steps
-          .map((s, sIndex) => normalizeProposedStep(s, sIndex, analyzed, rawBodyText))
+          .map((s, sIndex) => normalizeProposedStep(s, sIndex, analyzed, rawBodyText, textLanguage))
           .filter((s): s is ProposedToolStep | ProposedManualStep => !!s)
       : [];
     if (!steps.length) return null;
     return {
       id: typeof obj.id === "string" ? obj.id : `action-${index + 1}`,
-      label: typeof obj.label === "string" ? obj.label : `Option ${index + 1}`,
+      label: typeof obj.label === "string" ? obj.label : textLanguage === "it" ? `Opzione ${index + 1}` : `Option ${index + 1}`,
       summary: typeof obj.summary === "string" ? obj.summary : "",
       confidence: obj.confidence === "low" || obj.confidence === "medium" ? obj.confidence : "high",
       steps,
@@ -421,6 +444,7 @@ function normalizeProposedStep(
   index: number,
   analyzed: AnalyzedMail | undefined,
   rawBodyText: string,
+  textLanguage: ActionTextLanguage,
 ): ProposedToolStep | ProposedManualStep | null {
   if (!raw || typeof raw !== "object") return null;
   const step = raw as Record<string, unknown>;
@@ -428,7 +452,7 @@ function normalizeProposedStep(
     const normalizedLinks = normalizeManualLinks(step.links, rawBodyText);
     return {
       id: typeof step.id === "string" ? step.id : `step-${index + 1}`,
-      label: typeof step.label === "string" ? step.label : "Manual step",
+      label: typeof step.label === "string" ? step.label : textLanguage === "it" ? "Passaggio manuale" : "Manual step",
       kind: "manual",
       links: normalizedLinks.length > 0 ? normalizedLinks : inferSinglePlainWebLink(step.label, rawBodyText),
     };
@@ -512,7 +536,11 @@ interface StableCalendarTarget {
   account: string;
 }
 
-function resolveCalendarTargets(actions: ProposedAction[], contextSnapshot: ContextSnapshot): ProposedAction[] {
+function resolveCalendarTargets(
+  actions: ProposedAction[],
+  contextSnapshot: ContextSnapshot,
+  textLanguage: ActionTextLanguage,
+): ProposedAction[] {
   const calendars = stableCalendarsFromContext(contextSnapshot);
   if (!calendars.length) return actions;
   const accountEvidence = calendarAccountsFromContext(contextSnapshot);
@@ -538,7 +566,7 @@ function resolveCalendarTargets(actions: ProposedAction[], contextSnapshot: Cont
         if (accounts.size === 1 && accountMatches.length === 1) match = accountMatches[0];
       }
       if (!match) {
-        unresolvedTitle = title || "selected calendar";
+        unresolvedTitle = title || (textLanguage === "it" ? "calendario selezionato" : "selected calendar");
         return step;
       }
       return { ...step, input: { ...input, calendarId: match.id, calendar: match.title } };
@@ -547,10 +575,14 @@ function resolveCalendarTargets(actions: ProposedAction[], contextSnapshot: Cont
     return {
       ...action,
       confidence: "low",
-      summary: `${action.summary}${action.summary ? " " : ""}Choose the calendar account before executing this proposal.`,
+      summary: `${action.summary}${action.summary ? " " : ""}${textLanguage === "it"
+        ? "Scegli l’account del calendario prima di eseguire questa proposta."
+        : "Choose the calendar account before executing this proposal."}`,
       steps: [{
         id: `${action.id}-choose-calendar`,
-        label: `Choose the account for calendar "${unresolvedTitle}" before creating the event`,
+        label: textLanguage === "it"
+          ? `Scegli l’account per il calendario "${unresolvedTitle}" prima di creare l’evento`
+          : `Choose the account for calendar "${unresolvedTitle}" before creating the event`,
         kind: "manual",
       }],
     };
@@ -639,19 +671,25 @@ function normalizeAlarms(value: unknown): number[] {
     .map((n) => Math.round(n));
 }
 
-function fallbackActions(msg: PlanningMessage, analyzed: AnalyzedMail, calendar: CalendarContext): ProposedAction[] {
+function fallbackActions(
+  msg: PlanningMessage,
+  analyzed: AnalyzedMail,
+  calendar: CalendarContext,
+  textLanguage: ActionTextLanguage,
+): ProposedAction[] {
   const actions: ProposedAction[] = [];
+  const italian = textLanguage === "it";
   const slot = analyzed.scheduling?.requestedSlots[0];
   const available = calendar.requestedSlots[0]?.available;
   if (analyzed.kind === "scheduling-request" && slot && available && analyzed.replyDrafts.accept) {
     actions.push({
       id: "accept-and-create-event",
-      label: "Accept and create calendar event",
-      summary: "Reply that Alessio is available and create the calendar event.",
+      label: italian ? "Accetta e crea l’evento nel calendario" : "Accept and create calendar event",
+      summary: italian ? "Rispondi che Alessio è disponibile e crea l’evento nel calendario." : "Reply that Alessio is available and create the calendar event.",
       confidence: "medium",
       steps: [
-        { id: "reply", label: "Send acceptance reply", tool: "mcp__mail__reply", input: { messageId: msg.messageId, body: analyzed.replyDrafts.accept, replyAll: true }, writes: true },
-        { id: "calendar", label: "Create calendar event", tool: "mcp__calendar__create_event", input: {
+        { id: "reply", label: italian ? "Invia la risposta di accettazione" : "Send acceptance reply", tool: "mcp__mail__reply", input: { messageId: msg.messageId, body: analyzed.replyDrafts.accept, replyAll: true }, writes: true },
+        { id: "calendar", label: italian ? "Crea l’evento nel calendario" : "Create calendar event", tool: "mcp__calendar__create_event", input: {
           calendar: analyzed.scheduling?.calendarName ?? "Calendar",
           summary: analyzed.scheduling?.meetingTitle ?? msg.subject,
           start: slot.start,
@@ -668,10 +706,12 @@ function fallbackActions(msg: PlanningMessage, analyzed: AnalyzedMail, calendar:
   if (body) {
     actions.push({
       id: "reply-only",
-      label: available === false ? "Decline or propose another time" : "Reply only",
-      summary: "Send a reply without creating a calendar event.",
+      label: available === false
+        ? italian ? "Rifiuta o proponi un altro orario" : "Decline or propose another time"
+        : italian ? "Rispondi soltanto" : "Reply only",
+      summary: italian ? "Invia una risposta senza creare un evento nel calendario." : "Send a reply without creating a calendar event.",
       confidence: "medium",
-      steps: [{ id: "reply", label: "Send reply", tool: "mcp__mail__reply", input: { messageId: msg.messageId, body, replyAll: true }, writes: true }],
+      steps: [{ id: "reply", label: italian ? "Invia la risposta" : "Send reply", tool: "mcp__mail__reply", input: { messageId: msg.messageId, body, replyAll: true }, writes: true }],
     });
   }
   return actions;
@@ -684,7 +724,10 @@ function firstSlotStart(slots?: { start: string; end: string }[]): number | null
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
-function defaultTitle(kind: ActionKind, subject: string): string {
+function defaultTitle(kind: ActionKind, subject: string, textLanguage: ActionTextLanguage): string {
+  if (textLanguage === "it") {
+    return kind === "scheduling-request" ? `Pianificazione: ${subject || "(senza oggetto)"}` : `Azione: ${subject || "(senza oggetto)"}`;
+  }
   return kind === "scheduling-request" ? `Scheduling: ${subject || "(no subject)"}` : `Action: ${subject || "(no subject)"}`;
 }
 

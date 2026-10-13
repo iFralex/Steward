@@ -1,7 +1,8 @@
 import type { Chat } from "./llm.ts";
 import { jsonFromLlm } from "./llm.ts";
-import type { ActionItem } from "./types.ts";
+import type { ActionItem, ActionTextLanguage } from "./types.ts";
 import type { RelatedActionCandidate } from "./types.ts";
+import { actionTextLanguagePrompt } from "./action-language.ts";
 
 const MAX_CANDIDATES = 5;
 const MAX_CONTINUATION_CANDIDATES = 1;
@@ -170,6 +171,7 @@ export async function checkIfMessageResolvesAction(
   action: Pick<ActionItem, "title" | "summary">,
   msg: { subject: string; fromName: string; fromAddr: string; bodyText: string },
   chat: Chat,
+  textLanguage: ActionTextLanguage = "default",
 ): Promise<ResolutionCheck> {
   const prompt = [
     `Open task: ${action.title}`,
@@ -180,7 +182,8 @@ export async function checkIfMessageResolvesAction(
     `Subject: ${msg.subject}`,
     msg.bodyText.slice(0, 2000),
   ].join("\n");
-  const raw = await chat(RESOLUTION_SYSTEM, prompt);
+  const languagePrompt = actionTextLanguagePrompt(textLanguage);
+  const raw = await chat(languagePrompt ? `${RESOLUTION_SYSTEM}\n${languagePrompt}` : RESOLUTION_SYSTEM, prompt);
   const parsed = jsonFromLlm<{ resolves?: unknown; updatedSummary?: unknown }>(raw);
   if (!parsed || typeof parsed.resolves !== "boolean" || !parsed.resolves) return { resolves: false };
   return typeof parsed.updatedSummary === "string" && parsed.updatedSummary.trim()

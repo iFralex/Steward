@@ -23,6 +23,8 @@ import { notificationCopy } from "./notification-copy.ts";
 import { recordAudit } from "@steward/audit-log";
 import { usageLedger } from "@steward/usage-ledger";
 import { buildApprovalPreview } from "./approval-preview.ts";
+import type { ActionTextLanguage } from "../../../action-center/src/types.ts";
+import { actionTextLanguagePrompt } from "../../../action-center/src/action-language.ts";
 
 /**
  * Push registry for the action-center → phone hook (mobile-access M2/M3), set
@@ -185,12 +187,13 @@ export function getActionAutomationSettings(): ActionAutomationSettings {
   }
 }
 
-export function setActionAutomationSettings(patch: { enabled?: boolean; calendarEnabled?: boolean }): ActionAutomationSettings {
+export function setActionAutomationSettings(patch: { enabled?: boolean; calendarEnabled?: boolean; textLanguage?: ActionTextLanguage }): ActionAutomationSettings {
   const store = ActionStore.open(actionDbPath());
   try {
     let settings = store.getAutomationSettings();
     if (typeof patch.enabled === "boolean") settings = store.setAutomationEnabled(patch.enabled);
     if (typeof patch.calendarEnabled === "boolean") settings = store.setCalendarEnabled(patch.calendarEnabled);
+    if (patch.textLanguage) settings = store.setTextLanguage(patch.textLanguage);
     return settings;
   } finally {
     store.close();
@@ -426,7 +429,9 @@ export async function reviseActionProposal(args: {
     apiKey: args.config.gateway.apiKey,
     usageAction: "revision",
   });
-  const raw = await chat(REVISE_PROPOSAL_SYSTEM, JSON.stringify({
+  const textLanguage = getActionAutomationSettings().textLanguage;
+  const languagePrompt = actionTextLanguagePrompt(textLanguage);
+  const raw = await chat(languagePrompt ? `${REVISE_PROPOSAL_SYSTEM}\n${languagePrompt}` : REVISE_PROPOSAL_SYSTEM, JSON.stringify({
     userInstruction: instruction,
     action: {
       id: action.id,

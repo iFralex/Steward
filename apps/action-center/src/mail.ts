@@ -5,6 +5,7 @@ import { planMailAction } from "./planner.ts";
 import type { ReadToolExecutor } from "./tool-context.ts";
 import { checkIfMessageResolvesAction, findResolvableOpenActions, selectContinuationCandidates } from "./cross-thread-resolution.ts";
 import { embedFlowText } from "./flows.ts";
+import type { ActionTextLanguage } from "./types.ts";
 
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|mailer|newsletter|bounce|postmaster)\b/i;
 const LOW_VALUE_SURVEY = /\b(survey|questionario|soddisfazione|feedback|post[-\s]?result survey)\b/i;
@@ -36,6 +37,8 @@ export async function scanMailForActions(deps: {
   threadId?: number;
   /** Ignore mail mirrored at or before this Unix timestamp (used after re-enabling Actions). */
   ingestedAfter?: number;
+  /** Language for Action display text only; executable content keeps source language. */
+  textLanguage?: ActionTextLanguage;
 }): Promise<MailScanResult> {
   const now = deps.now ?? Math.floor(Date.now() / 1000);
   const since = now - (deps.recentDays ?? 14) * 86400;
@@ -116,6 +119,7 @@ export async function scanMailForActions(deps: {
         relatedOpenActions,
         flowSearch: async (query, limit) => deps.actions.searchFlows(query, await embedFlowText(query), limit),
         now: new Date(now * 1000),
+        textLanguage: deps.textLanguage,
       });
     } catch (err) {
       recordDeferred(result, err instanceof Error ? err.message : String(err));
@@ -142,6 +146,7 @@ export async function scanMailForActions(deps: {
             openAction,
             { subject: msg.subject, fromName: msg.fromName, fromAddr: msg.fromAddr, bodyText: msg.bodyText },
             deps.chat,
+            deps.textLanguage,
           );
           if (check.resolves && check.updatedSummary) deps.actions.updateSummary(openAction.id, check.updatedSummary);
         }

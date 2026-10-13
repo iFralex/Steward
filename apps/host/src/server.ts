@@ -575,28 +575,34 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
   }
   if (req.method === "POST" && url.startsWith("/settings/actions")) {
     void readRequestBody(req).then((raw) => {
-      const body = raw ? JSON.parse(raw) as { enabled?: unknown; calendarEnabled?: unknown } : {};
+      const body = raw ? JSON.parse(raw) as { enabled?: unknown; calendarEnabled?: unknown; textLanguage?: unknown } : {};
       const hasEnabled = typeof body.enabled === "boolean";
       const hasCalendarEnabled = typeof body.calendarEnabled === "boolean";
-      if (!hasEnabled && !hasCalendarEnabled) {
+      const hasTextLanguage = body.textLanguage === "default" || body.textLanguage === "en" || body.textLanguage === "it";
+      if (!hasEnabled && !hasCalendarEnabled && !hasTextLanguage) {
         res.writeHead(400, { "Content-Type": "application/json", ...CORS });
-        res.end(JSON.stringify({ error: "enabled or calendarEnabled must be a boolean" }));
+        res.end(JSON.stringify({ error: "enabled/calendarEnabled must be boolean or textLanguage must be default/en/it" }));
         return;
       }
-      if ((body.enabled !== undefined && !hasEnabled) || (body.calendarEnabled !== undefined && !hasCalendarEnabled)) {
+      if ((body.enabled !== undefined && !hasEnabled)
+        || (body.calendarEnabled !== undefined && !hasCalendarEnabled)
+        || (body.textLanguage !== undefined && !hasTextLanguage)) {
         res.writeHead(400, { "Content-Type": "application/json", ...CORS });
-        res.end(JSON.stringify({ error: "settings values must be booleans" }));
+        res.end(JSON.stringify({ error: "invalid Action settings value" }));
         return;
       }
       const settings = setActionAutomationSettings({
         ...(hasEnabled ? { enabled: body.enabled as boolean } : {}),
         ...(hasCalendarEnabled ? { calendarEnabled: body.calendarEnabled as boolean } : {}),
+        ...(hasTextLanguage ? { textLanguage: body.textLanguage as "default" | "en" | "it" } : {}),
       });
       recordAudit({
         actor: "user",
         eventType: "settings.actions_automation",
         risk: "low",
-        summary: hasCalendarEnabled && !hasEnabled
+        summary: hasTextLanguage && !hasEnabled && !hasCalendarEnabled
+          ? `Set Action text language to ${settings.textLanguage}`
+          : hasCalendarEnabled && !hasEnabled
           ? `${settings.calendarEnabled ? "Enabled" : "Disabled"} Calendar Actions`
           : `${settings.enabled ? "Enabled" : "Disabled"} automatic Actions`,
         payload: settings,

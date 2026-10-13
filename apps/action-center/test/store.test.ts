@@ -22,12 +22,13 @@ test("flows are versioned, searchable, disableable and deletable", () => {
 
 test("Action automation defaults on and records a fresh cutoff when re-enabled", () => {
   const s = ActionStore.open(":memory:");
-  assert.deepEqual(s.getAutomationSettings(), { enabled: true, calendarEnabled: true, enabledAt: null, updatedAt: null });
-  assert.deepEqual(s.setCalendarEnabled(false, 50), { enabled: true, calendarEnabled: false, enabledAt: null, updatedAt: 50 });
-  assert.deepEqual(s.setAutomationEnabled(false, 100), { enabled: false, calendarEnabled: false, enabledAt: null, updatedAt: 100 });
-  assert.deepEqual(s.setAutomationEnabled(true, 200), { enabled: true, calendarEnabled: false, enabledAt: 200, updatedAt: 200 });
-  assert.deepEqual(s.setAutomationEnabled(true, 300), { enabled: true, calendarEnabled: false, enabledAt: 200, updatedAt: 200 });
-  assert.deepEqual(s.setCalendarEnabled(true, 400), { enabled: true, calendarEnabled: true, enabledAt: 200, updatedAt: 400 });
+  assert.deepEqual(s.getAutomationSettings(), { enabled: true, calendarEnabled: true, textLanguage: "default", enabledAt: null, updatedAt: null });
+  assert.deepEqual(s.setTextLanguage("it", 25), { enabled: true, calendarEnabled: true, textLanguage: "it", enabledAt: null, updatedAt: 25 });
+  assert.deepEqual(s.setCalendarEnabled(false, 50), { enabled: true, calendarEnabled: false, textLanguage: "it", enabledAt: null, updatedAt: 50 });
+  assert.deepEqual(s.setAutomationEnabled(false, 100), { enabled: false, calendarEnabled: false, textLanguage: "it", enabledAt: null, updatedAt: 100 });
+  assert.deepEqual(s.setAutomationEnabled(true, 200), { enabled: true, calendarEnabled: false, textLanguage: "it", enabledAt: 200, updatedAt: 200 });
+  assert.deepEqual(s.setAutomationEnabled(true, 300), { enabled: true, calendarEnabled: false, textLanguage: "it", enabledAt: 200, updatedAt: 200 });
+  assert.deepEqual(s.setCalendarEnabled(true, 400), { enabled: true, calendarEnabled: true, textLanguage: "it", enabledAt: 200, updatedAt: 400 });
   s.close();
 });
 

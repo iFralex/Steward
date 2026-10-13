@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { indexDbPath } from "../../calendar-mcp/src/paths.ts";
 import { unixToCoreData } from "../../calendar-mcp/src/coredata.ts";
 import type { ActionStore } from "./store.ts";
+import type { ActionTextLanguage } from "./types.ts";
 
 export interface CalendarScanResult { considered: number; created: number; updated: number }
 
@@ -13,6 +14,7 @@ export function scanCalendarForActions(deps: {
   horizonDays?: number;
   /** Ignore events last modified at or before this Unix timestamp. */
   modifiedAfter?: number;
+  textLanguage?: ActionTextLanguage;
 }): CalendarScanResult {
   const path = deps.calendarDbPath ?? indexDbPath();
   if (!existsSync(path)) return { considered: 0, created: 0, updated: 0 };
@@ -40,8 +42,8 @@ export function scanCalendarForActions(deps: {
         sourceKind: "calendar",
         kind: "event-reminder",
         priority: start - now.getTime() <= 24 * 3600_000 ? "high" : "normal",
-        title: `Upcoming: ${ev.summary ?? "(untitled event)"}`,
-        summary: summarizeEvent(ev),
+        title: calendarActionTitle(ev.summary, deps.textLanguage ?? "default"),
+        summary: summarizeEvent(ev, deps.textLanguage ?? "default"),
         dueAt: Number.isFinite(start) ? Math.floor(start / 1000) : null,
         payload: {
           uid: ev.uid,
@@ -64,8 +66,18 @@ export function scanCalendarForActions(deps: {
   }
 }
 
-function summarizeEvent(ev: { summary: string | null; start: string; end: string; location: string | null }): string {
-  const when = new Date(ev.start).toLocaleString("it-IT", { dateStyle: "medium", timeStyle: "short" });
-  const where = ev.location ? ` at ${ev.location}` : "";
-  return `${ev.summary ?? "Event"} — ${when}${where}.`;
+function calendarActionTitle(summary: string | null, language: ActionTextLanguage): string {
+  if (language === "it") return `In arrivo: ${summary ?? "(evento senza titolo)"}`;
+  return `Upcoming: ${summary ?? "(untitled event)"}`;
+}
+
+function summarizeEvent(
+  ev: { summary: string | null; start: string; end: string; location: string | null },
+  language: ActionTextLanguage,
+): string {
+  const locale = language === "en" ? "en-GB" : "it-IT";
+  const when = new Date(ev.start).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+  const fallback = language === "it" ? "Evento" : "Event";
+  const where = ev.location ? language === "it" ? ` presso ${ev.location}` : ` at ${ev.location}` : "";
+  return `${ev.summary ?? fallback} — ${when}${where}.`;
 }

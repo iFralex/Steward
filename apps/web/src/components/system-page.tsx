@@ -63,6 +63,7 @@ interface SystemStatus {
 interface ActionAutomationSettings {
   enabled: boolean;
   calendarEnabled: boolean;
+  textLanguage: "default" | "en" | "it";
   enabledAt: number | null;
   updatedAt: number | null;
 }
@@ -238,7 +239,7 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     }
   };
 
-  const setActionAutomationSettings = async (patch: { enabled?: boolean; calendarEnabled?: boolean }) => {
+  const setActionAutomationSettings = async (patch: { enabled?: boolean; calendarEnabled?: boolean; textLanguage?: ActionAutomationSettings["textLanguage"] }) => {
     setSavingActionAutomation(true);
     setError(null);
     try {
@@ -601,11 +602,12 @@ function ActionsAutomationCard({
 }: {
   settings: ActionAutomationSettings | null;
   busy: boolean;
-  onChange: (patch: { enabled?: boolean; calendarEnabled?: boolean }) => void | Promise<void>;
+  onChange: (patch: { enabled?: boolean; calendarEnabled?: boolean; textLanguage?: ActionAutomationSettings["textLanguage"] }) => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const enabled = settings?.enabled ?? true;
   const calendarEnabled = settings?.calendarEnabled ?? true;
+  const textLanguage = settings?.textLanguage ?? "default";
   return (
     <Card size="sm">
       <CardHeader>
@@ -662,6 +664,20 @@ function ActionsAutomationCard({
             </Button>
           </div>
         </div>
+        <label className="border-t pt-4 grid gap-1.5 text-sm">
+          <span className="font-medium">{t("system.actionsAutomation.textLanguage")}</span>
+          <span className="text-muted-foreground text-xs">{t("system.actionsAutomation.textLanguageDescription")}</span>
+          <select
+            className="border-input bg-background mt-1 h-9 w-full rounded-md border px-3 sm:max-w-xs"
+            value={textLanguage}
+            disabled={!settings || busy}
+            onChange={(event) => void onChange({ textLanguage: event.target.value as ActionAutomationSettings["textLanguage"] })}
+          >
+            <option value="default">{t("system.actionsAutomation.languageDefault")}</option>
+            <option value="en">{t("system.actionsAutomation.languageEnglish")}</option>
+            <option value="it">{t("system.actionsAutomation.languageItalian")}</option>
+          </select>
+        </label>
       </CardContent>
     </Card>
   );
