@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import CoreServices
 import Darwin
 import QuartzCore
 import WebKit
@@ -227,7 +228,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         registerGlobalHotKey()
         startServiceSupervisor()
         showWindow()
-        presentFullDiskAccessOnboardingIfNeeded()
+        presentInitialPermissionOnboardingIfNeeded()
         bootstrap()
     }
 
@@ -416,35 +417,70 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func presentFullDiskAccessOnboardingIfNeeded() {
+    private func presentInitialPermissionOnboardingIfNeeded() {
         guard
             shouldStartServices,
-            Bundle.main.bundleIdentifier == "com.steward.launcher",
-            !UserDefaults.standard.bool(forKey: fullDiskAccessOnboardingKey)
+            Bundle.main.bundleIdentifier == "com.steward.launcher"
+        else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self else { return }
+            self.requestCalendarAutomationPermission()
+            self.presentFullDiskAccessOnboardingIfNeeded()
+        }
+    }
+
+    /// Ask for the same Calendar Automation grant used by create/update/delete
+    /// tools while the user is present during onboarding. Wildcards request the
+    /// app-level grant without sending an event or modifying calendar data.
+    private func requestCalendarAutomationPermission() {
+        var target = AEAddressDesc()
+        let calendarBundleID = "com.apple.iCal"
+        let createStatus = calendarBundleID.withCString { pointer in
+            AECreateDesc(
+                DescType(typeApplicationBundleID),
+                pointer,
+                calendarBundleID.utf8.count,
+                &target
+            )
+        }
+        guard createStatus == noErr else {
+            NSLog("Could not create Calendar automation target: OSStatus %d", createStatus)
+            return
+        }
+        defer { AEDisposeDesc(&target) }
+
+        let status = AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, true)
+        if status != noErr {
+            NSLog("Calendar automation permission was not granted: OSStatus %d", status)
+        }
+    }
+
+    private func presentFullDiskAccessOnboardingIfNeeded() {
+        guard
+            !UserDefaults.standard.bool(forKey: fullDiskAccessOnboardingKey),
+            let window
         else { return }
 
         // Record before presenting so a forced quit while the sheet is visible
         // does not turn this into a prompt loop.
         UserDefaults.standard.set(true, forKey: fullDiskAccessOnboardingKey)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            guard let self, let window = self.window else { return }
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            if self.splashLanguage == .it {
-                alert.messageText = "Consenti l’accesso completo al disco"
-                alert.informativeText = "Steward usa questo permesso per cercare in Mail, Calendario e nei documenti locali. macOS non permette alle app di abilitarlo automaticamente. Apri Accesso completo al disco, aggiungi Steward se necessario e attiva l’interruttore; poi riavvia Steward."
-                alert.addButton(withTitle: "Apri Accesso completo al disco")
-                alert.addButton(withTitle: "Non ora")
-            } else {
-                alert.messageText = "Allow Full Disk Access"
-                alert.informativeText = "Steward uses this permission to search Mail, Calendar, and local documents. macOS does not let apps enable it automatically. Open Full Disk Access, add Steward if needed, and turn it on; then restart Steward."
-                alert.addButton(withTitle: "Open Full Disk Access")
-                alert.addButton(withTitle: "Not Now")
-            }
-            alert.beginSheetModal(for: window) { [weak self] response in
-                if response == .alertFirstButtonReturn {
-                    self?.openFullDiskAccessSettings()
-                }
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        if splashLanguage == .it {
+            alert.messageText = "Consenti l’accesso completo al disco"
+            alert.informativeText = "Steward usa questo permesso per cercare in Mail, Calendario e nei documenti locali. macOS non permette alle app di abilitarlo automaticamente. Apri Accesso completo al disco, aggiungi Steward se necessario e attiva l’interruttore; poi riavvia Steward."
+            alert.addButton(withTitle: "Apri Accesso completo al disco")
+            alert.addButton(withTitle: "Non ora")
+        } else {
+            alert.messageText = "Allow Full Disk Access"
+            alert.informativeText = "Steward uses this permission to search Mail, Calendar, and local documents. macOS does not let apps enable it automatically. Open Full Disk Access, add Steward if needed, and turn it on; then restart Steward."
+            alert.addButton(withTitle: "Open Full Disk Access")
+            alert.addButton(withTitle: "Not Now")
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertFirstButtonReturn {
+                self?.openFullDiskAccessSettings()
             }
         }
     }

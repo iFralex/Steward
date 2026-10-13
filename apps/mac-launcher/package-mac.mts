@@ -265,6 +265,7 @@ writeFileSync(
   <key>CFBundleExecutable</key><string>StewardLauncher</string>
   <key>CFBundleIconFile</key><string>Steward</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSAppleEventsUsageDescription</key><string>Steward uses Calendar automation to create, update, and delete events that you approve.</string>
 </dict>
 </plist>
 `,

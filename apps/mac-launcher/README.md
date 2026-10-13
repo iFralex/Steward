@@ -78,7 +78,10 @@ On the first packaged launch, Steward explains why local Mail, Calendar, and
 document tools need Full Disk Access and offers a button that opens System
 Settings directly on **Privacy & Security → Full Disk Access**. macOS requires
 the user to grant this permission explicitly, so the launcher cannot enable it
-itself.
+itself. The launcher also proactively asks for Calendar Automation access. This
+uses macOS's permission preflight and does not create or modify an event; it
+prevents the first approved background calendar write from being blocked by an
+unattended system prompt.
 
 Set `PACKAGE_DEBUG=1 npm run package:mac` to include service sourcemaps in the
 bundle.
