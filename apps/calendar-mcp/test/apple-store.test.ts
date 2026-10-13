@@ -14,6 +14,8 @@ function seed(): string {
     CREATE TABLE CalendarItem(ROWID INTEGER PRIMARY KEY, summary TEXT, description TEXT,
       location_id INTEGER, start_date REAL, end_date REAL, all_day INTEGER, calendar_id INTEGER,
       status INTEGER, url TEXT, last_modified REAL, has_recurrences INTEGER, entity_type INTEGER, UUID TEXT);
+    CREATE TABLE Alarm(ROWID INTEGER PRIMARY KEY, trigger_interval INTEGER, type INTEGER,
+      default_alarm INTEGER, calendaritem_owner_id INTEGER);
   `);
   db.prepare("INSERT INTO Store(ROWID,name,type) VALUES (1,'iCloud',2)").run();
   db.prepare("INSERT INTO Calendar(ROWID,store_id,title,type,UUID) VALUES (10,1,'Casa',0,'CAL-10')").run();
@@ -22,6 +24,7 @@ function seed(): string {
   const end = unixToCoreData(Math.floor(Date.parse("2026-06-25T11:00:00Z") / 1000));
   db.prepare(`INSERT INTO CalendarItem(ROWID,summary,description,location_id,start_date,end_date,all_day,calendar_id,status,url,last_modified,has_recurrences,entity_type,UUID)
     VALUES (100,'Dentist','checkup',5,?,?,0,10,1,'https://x','0',0,2,'UID-100')`).run(start, end);
+  db.prepare("INSERT INTO Alarm VALUES (1,-900,0,0,100), (2,0,0,1,100), (3,-300,1,0,100)").run();
   db.close();
   return path;
 }
@@ -33,7 +36,10 @@ test("eventsInRange returns joined fields within the window", () => {
   assert.equal(evs[0].summary, "Dentist");
   assert.equal(evs[0].location, "Rome");
   assert.equal(evs[0].account, "iCloud");
+  assert.equal(evs[0].calendarId, "CAL-10");
   assert.equal(evs[0].calendar, "Casa");
+  assert.deepEqual(evs[0].alarms, [15]);
+  assert.equal(evs[0].hasRecurrence, false);
   assert.equal(evs[0].start, "2026-06-25T10:00:00.000Z");
   s.close();
 });

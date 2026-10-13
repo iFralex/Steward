@@ -5,7 +5,20 @@ import type { CalEvent, CalendarInfo } from "./types.ts";
 const SELECT = `
   SELECT ci.UUID AS uid, ci.summary AS summary, ci.description AS description,
          l.title AS location, ci.start_date AS start_cd, ci.end_date AS end_cd,
-         ci.all_day AS all_day, c.title AS calendar, s.name AS account,
+         ci.all_day AS all_day, c.UUID AS calendar_uuid, c.title AS calendar, s.name AS account,
+         ci.has_recurrences AS has_recurrences,
+         COALESCE((
+           SELECT json_group_array(minutes_before)
+           FROM (
+             SELECT CAST(-a.trigger_interval / 60 AS INTEGER) AS minutes_before
+             FROM Alarm a
+             WHERE a.calendaritem_owner_id = ci.ROWID
+               AND a.type = 0
+               AND COALESCE(a.default_alarm, 0) = 0
+               AND a.trigger_interval IS NOT NULL
+             ORDER BY a.ROWID
+           )
+         ), '[]') AS alarms_json,
          ci.status AS status, ci.url AS url, ci.last_modified AS last_modified
   FROM CalendarItem ci
   JOIN Calendar c ON c.ROWID = ci.calendar_id
@@ -14,6 +27,11 @@ const SELECT = `
   WHERE ci.entity_type = 2`;
 
 function toEvent(r: Record<string, unknown>): CalEvent {
+  let alarms: number[] = [];
+  try {
+    const parsed = JSON.parse(String(r.alarms_json ?? "[]"));
+    if (Array.isArray(parsed)) alarms = parsed.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  } catch { /* malformed Calendar data is treated as no explicit alarms */ }
   return {
     uid: String(r.uid ?? ""),
     summary: String(r.summary ?? ""),
@@ -22,8 +40,11 @@ function toEvent(r: Record<string, unknown>): CalEvent {
     start: coreDataToISO(Number(r.start_cd)),
     end: coreDataToISO(Number(r.end_cd ?? r.start_cd)),
     allDay: Number(r.all_day) === 1,
+    calendarId: String(r.calendar_uuid ?? ""),
     calendar: String(r.calendar ?? ""),
     account: String(r.account ?? ""),
+    alarms,
+    hasRecurrence: Number(r.has_recurrences) === 1,
     status: Number(r.status ?? 0),
     url: (r.url as string) ?? null,
     lastModified: Number(r.last_modified ?? 0),

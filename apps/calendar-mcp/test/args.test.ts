@@ -26,7 +26,7 @@ test("parseCreateArgs rejects end before start", () => {
 });
 
 test("parseCreateArgs accepts a valid alarms array and rejects bad ones", () => {
-  const ok = parseCreateArgs({ calendar: "Casa", summary: "x", start: "2026-06-25T10:00:00Z", end: "2026-06-25T11:00:00Z", alarms: [15, 1440] });
+  const ok = parseCreateArgs({ calendar: "Casa", summary: "x", start: "2026-06-25T10:00:00Z", end: "2026-06-25T11:00:00Z", alarms: [14.6, 1440] });
   assert.deepEqual(ok.alarms, [15, 1440]);
   const base = { calendar: "Casa", summary: "x", start: "2026-06-25T10:00:00Z", end: "2026-06-25T11:00:00Z" };
   assert.throws(() => parseCreateArgs({ ...base, alarms: [-5] }), /non-negative/);

@@ -18,6 +18,10 @@ const RETRY_AFTER_CONFIRM_ATTEMPTS = Math.max(
   Number(process.env.WRITE_OP_RETRY_AFTER_CONFIRM_ATTEMPTS ?? 3),
 );
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.WRITE_OP_MAX_ATTEMPTS ?? 2));
+const MAX_CALENDAR_CONFIRM_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.WRITE_OP_CALENDAR_MAX_CONFIRM_ATTEMPTS ?? 12),
+);
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
@@ -90,6 +94,9 @@ export async function reconcileCalendarWrites(): Promise<{ confirmed: number; pe
       if (ok) {
         ops.markConfirmed(op.id, { uid: op.result?.uid ?? op.input.uid ?? op.expected.uid });
         confirmed++;
+      } else if (shouldExhaustCalendarConfirmation(op)) {
+        const detail = op.lastError ? ` Last error: ${op.lastError}` : "";
+        ops.markRetryExhausted(op.id, `Calendar write could not be confirmed.${detail}`);
       } else {
         ops.incrementConfirmAttempt(op.id);
         pending++;
@@ -102,7 +109,17 @@ export async function reconcileCalendarWrites(): Promise<{ confirmed: number; pe
   return { confirmed, pending };
 }
 
-function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): boolean {
+export function shouldExhaustCalendarConfirmation(op: WriteOpRow): boolean {
+  const uid = typeof op.result?.uid === "string" && op.result.uid
+    ? op.result.uid
+    : typeof op.input.uid === "string" && op.input.uid
+      ? op.input.uid
+      : "";
+  if (op.status === "failed" && op.kind === "calendar.create" && !uid) return true;
+  return op.confirmAttempts + 1 >= MAX_CALENDAR_CONFIRM_ATTEMPTS;
+}
+
+export function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): boolean {
   const uid = typeof op.result?.uid === "string"
     ? op.result.uid
     : typeof op.input.uid === "string"
@@ -127,10 +144,21 @@ function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): boolean {
   return false;
 }
 
-function calendarFieldsMatch(ev: Record<string, unknown>, expected: Record<string, unknown>): boolean {
+export function calendarFieldsMatch(ev: Record<string, unknown>, expected: Record<string, unknown>): boolean {
   for (const key of ["calendar", "summary", "start", "end", "location", "description", "url"] as const) {
     if (expected[key] == null) continue;
     if (String(ev[key] ?? "") !== String(expected[key])) return false;
+  }
+  if (expected.calendarId != null && String(ev.calendarId ?? "") !== String(expected.calendarId)) return false;
+  if (expected.allDay != null && Boolean(ev.allDay) !== Boolean(expected.allDay)) return false;
+  if (expected.alarms != null) {
+    if (!Array.isArray(expected.alarms) || !Array.isArray(ev.alarms)) return false;
+    const normalized = (value: unknown[]) => value.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    if (JSON.stringify(normalized(ev.alarms)) !== JSON.stringify(normalized(expected.alarms))) return false;
+  }
+  if (expected.recurrence != null) {
+    const expectedPresence = typeof expected.recurrence === "string" && expected.recurrence.trim().length > 0;
+    if (Boolean(ev.hasRecurrence) !== expectedPresence) return false;
   }
   return true;
 }

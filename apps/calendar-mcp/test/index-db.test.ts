@@ -5,12 +5,14 @@ import type { CalEvent } from "../src/types.ts";
 
 function ev(uid: string, summary: string): CalEvent {
   return { uid, summary, description: null, location: null, start: "2026-06-25T10:00:00.000Z",
-    end: "2026-06-25T11:00:00.000Z", allDay: false, calendar: "Casa", account: "iCloud", status: 1, url: null, lastModified: 1 };
+    end: "2026-06-25T11:00:00.000Z", allDay: false, calendarId: "CAL-1", calendar: "Casa", account: "iCloud",
+    alarms: [], hasRecurrence: false, status: 1, url: null, lastModified: 1 };
 }
 
 function evf(uid: string, summary: string, account: string, start: string): CalEvent {
   return { uid, summary, description: null, location: null, start, end: start,
-    allDay: false, calendar: "Casa", account, status: 1, url: null, lastModified: 1 };
+    allDay: false, calendarId: `CAL-${account}`, calendar: "Casa", account,
+    alarms: [], hasRecurrence: false, status: 1, url: null, lastModified: 1 };
 }
 
 test("allowedUids returns null for an empty filter and a set for an account filter", () => {
@@ -44,6 +46,20 @@ test("upsert + FTS finds by summary token", () => {
   db.upsertEvent(ev("U1", "Dentist appointment"), "h1");
   db.upsertEvent(ev("U2", "Team standup"), "h2");
   assert.deepEqual(db.ftsSearch("dentist", 10), ["U1"]);
+  db.close();
+});
+
+test("getEvent round-trips write-confirmation metadata", () => {
+  const db = IndexDb.open(":memory:");
+  const input: CalEvent = {
+    ...ev("U1", "Recurring lesson"),
+    allDay: true,
+    calendarId: "CAL-WORK",
+    alarms: [10, 60],
+    hasRecurrence: true,
+  };
+  db.upsertEvent(input, "h1");
+  assert.deepEqual(db.getEvent("U1"), input);
   db.close();
 });
 

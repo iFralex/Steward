@@ -19,12 +19,20 @@ export class IndexDb {
       CREATE TABLE IF NOT EXISTS embed_state(uid TEXT PRIMARY KEY, source_hash TEXT, dim INTEGER, model TEXT, embedded_at INTEGER);
       CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT);
     `);
+    this.ensureEventColumn("calendar_id", "TEXT NOT NULL DEFAULT ''");
+    this.ensureEventColumn("alarms_json", "TEXT NOT NULL DEFAULT '[]'");
+    this.ensureEventColumn("has_recurrence", "INTEGER NOT NULL DEFAULT 0");
     this.vectors = new VectorStore(this.raw, {
       table: "vec_events",
       getState: (k) => this.getState(k),
       setState: (k, v) => this.setState(k, v),
       onDimReset: () => this.raw.exec("DELETE FROM embed_state"),
     });
+  }
+
+  private ensureEventColumn(name: string, definition: string): void {
+    const columns = new Set((this.raw.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((column) => column.name));
+    if (!columns.has(name)) this.raw.exec(`ALTER TABLE events ADD COLUMN ${name} ${definition}`);
   }
 
   static open(path: string): IndexDb { return new IndexDb(new Database(path)); }
@@ -38,12 +46,21 @@ export class IndexDb {
 
   upsertEvent(e: CalEvent, sourceHash: string): number {
     const info = this.raw.prepare(`
-      INSERT INTO events(uid,summary,description,location,start,end,all_day,calendar,account,status,url,last_modified,source_hash)
-      VALUES (@uid,@summary,@description,@location,@start,@end,@all_day,@calendar,@account,@status,@url,@last_modified,@source_hash)
+      INSERT INTO events(uid,summary,description,location,start,end,all_day,calendar_id,calendar,account,alarms_json,has_recurrence,status,url,last_modified,source_hash)
+      VALUES (@uid,@summary,@description,@location,@start,@end,@all_day,@calendar_id,@calendar,@account,@alarms_json,@has_recurrence,@status,@url,@last_modified,@source_hash)
       ON CONFLICT(uid) DO UPDATE SET summary=excluded.summary, description=excluded.description, location=excluded.location,
-        start=excluded.start, end=excluded.end, all_day=excluded.all_day, calendar=excluded.calendar, account=excluded.account,
+        start=excluded.start, end=excluded.end, all_day=excluded.all_day, calendar_id=excluded.calendar_id,
+        calendar=excluded.calendar, account=excluded.account, alarms_json=excluded.alarms_json, has_recurrence=excluded.has_recurrence,
         status=excluded.status, url=excluded.url, last_modified=excluded.last_modified, source_hash=excluded.source_hash`)
-      .run({ ...e, all_day: e.allDay ? 1 : 0, last_modified: e.lastModified, source_hash: sourceHash });
+      .run({
+        ...e,
+        all_day: e.allDay ? 1 : 0,
+        calendar_id: e.calendarId,
+        alarms_json: JSON.stringify(e.alarms),
+        has_recurrence: e.hasRecurrence ? 1 : 0,
+        last_modified: e.lastModified,
+        source_hash: sourceHash,
+      });
     void info;
     const rowid = (this.raw.prepare("SELECT rowid FROM events WHERE uid=?").get(e.uid) as { rowid: number }).rowid;
     // keep the standalone FTS row at the same rowid in sync
@@ -121,7 +138,8 @@ export class IndexDb {
     const row = this.raw.prepare("SELECT * FROM events WHERE uid=?").get(uid) as
       | {
           uid: string; summary: string; description: string | null; location: string | null;
-          start: string; end: string; all_day: number; calendar: string; account: string;
+          start: string; end: string; all_day: number; calendar_id: string; calendar: string; account: string;
+          alarms_json: string; has_recurrence: number;
           status: number; url: string | null; last_modified: number;
         }
       | undefined;
@@ -134,8 +152,11 @@ export class IndexDb {
       start: row.start,
       end: row.end,
       allDay: !!row.all_day,
+      calendarId: row.calendar_id,
       calendar: row.calendar,
       account: row.account,
+      alarms: JSON.parse(row.alarms_json) as number[],
+      hasRecurrence: !!row.has_recurrence,
       status: row.status,
       url: row.url,
       lastModified: row.last_modified,

@@ -27,7 +27,7 @@ function optMinutesArray(raw: Raw, field: string): number[] | undefined {
   if (!Array.isArray(v) || !v.every((x) => typeof x === "number" && Number.isFinite(x) && x >= 0)) {
     throw new Error(`"${field}" must be an array of non-negative numbers (minutes before the event)`);
   }
-  return v as number[];
+  return (v as number[]).map((minutes) => Math.round(minutes));
 }
 
 function validIso(raw: Raw, field: string, required: boolean): string | undefined {

@@ -6,8 +6,13 @@ export interface CalEvent {
   start: string; // ISO
   end: string;   // ISO
   allDay: boolean;
+  calendarId: string;
   calendar: string;
   account: string;
+  /** Explicit per-event display alarms, in minutes before the event. */
+  alarms: number[];
+  /** Whether Calendar stores one or more recurrence rules for this event. */
+  hasRecurrence: boolean;
   status: number;
   url: string | null;
   lastModified: number; // core data seconds

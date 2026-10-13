@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { findMailConfirmation } from "../src/write-ops-cli.ts";
+import {
+  calendarFieldsMatch,
+  findMailConfirmation,
+  shouldExhaustCalendarConfirmation,
+} from "../src/write-ops-cli.ts";
 
 function mailStoreWith(body: string) {
   const db = new Database(":memory:");
@@ -74,4 +78,42 @@ test("fallback never fires for a reply (no subject in expected)", () => {
   const store = storeWithRows([{ date: now + 5, subject: "Subj", from: "me@x.com" }]);
   const op = { startedAt: now, expected: { bodySnippet: "text not in mirror", from: "me@x.com" } } as any; // reply: no subject
   assert.equal(findMailConfirmation(store, op), null, "replies must not use the header fallback");
+});
+
+test("calendar confirmation checks target, all-day state, alarms and recurrence presence", () => {
+  const actual = {
+    calendarId: "CAL-1",
+    calendar: "Work",
+    summary: "Demo",
+    start: "2026-10-14T09:30:00.000Z",
+    end: "2026-10-14T10:00:00.000Z",
+    allDay: false,
+    alarms: [60, 10],
+    hasRecurrence: true,
+  };
+  const expected = {
+    calendarId: "CAL-1",
+    summary: "Demo",
+    start: "2026-10-14T09:30:00.000Z",
+    end: "2026-10-14T10:00:00.000Z",
+    allDay: false,
+    alarms: [10, 60],
+    recurrence: "FREQ=WEEKLY",
+  };
+  assert.equal(calendarFieldsMatch(actual, expected), true);
+  assert.equal(calendarFieldsMatch({ ...actual, calendarId: "CAL-2" }, expected), false);
+  assert.equal(calendarFieldsMatch({ ...actual, allDay: true }, expected), false);
+  assert.equal(calendarFieldsMatch({ ...actual, alarms: [10] }, expected), false);
+  assert.equal(calendarFieldsMatch({ ...actual, hasRecurrence: false }, expected), false);
+});
+
+test("failed creates without a returned uid are terminal and confirmations are bounded", () => {
+  const base = {
+    id: "op", kind: "calendar.create", status: "failed", attempts: 1, confirmAttempts: 0,
+    startedAt: 1, updatedAt: 1, scriptFinishedAt: 1, confirmedAt: null, scheduledFor: null,
+    lastError: "deterministic failure", result: null, input: {}, expected: {},
+  } as any;
+  assert.equal(shouldExhaustCalendarConfirmation(base), true);
+  assert.equal(shouldExhaustCalendarConfirmation({ ...base, kind: "calendar.update", input: { uid: "U1" }, confirmAttempts: 10 }), false);
+  assert.equal(shouldExhaustCalendarConfirmation({ ...base, kind: "calendar.update", input: { uid: "U1" }, confirmAttempts: 11 }), true);
 });

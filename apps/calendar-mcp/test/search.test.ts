@@ -6,7 +6,8 @@ import type { CalEvent } from "../src/types.ts";
 
 function ev(uid: string, summary: string): CalEvent {
   return { uid, summary, description: null, location: null, start: "2026-06-25T10:00:00.000Z",
-    end: "2026-06-25T11:00:00.000Z", allDay: false, calendar: "Casa", account: "iCloud", status: 1, url: null, lastModified: 1 };
+    end: "2026-06-25T11:00:00.000Z", allDay: false, calendarId: "CAL-1", calendar: "Casa", account: "iCloud",
+    alarms: [], hasRecurrence: false, status: 1, url: null, lastModified: 1 };
 }
 
 test("hybrid falls back to FTS-only when no embedder", async () => {
@@ -20,7 +21,8 @@ test("hybrid falls back to FTS-only when no embedder", async () => {
 
 function eva(uid: string, summary: string, account: string): CalEvent {
   return { uid, summary, description: null, location: null, start: "2026-06-25T10:00:00.000Z",
-    end: "2026-06-25T11:00:00.000Z", allDay: false, calendar: "Casa", account, status: 1, url: null, lastModified: 1 };
+    end: "2026-06-25T11:00:00.000Z", allDay: false, calendarId: `CAL-${account}`, calendar: "Casa", account,
+    alarms: [], hasRecurrence: false, status: 1, url: null, lastModified: 1 };
 }
 
 test("hybrid applies account filter BEFORE the limit (no under-return)", async () => {
