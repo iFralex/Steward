@@ -92,9 +92,12 @@ export function ActionDetail({
                               {[group.countLabel, group.dateLabel].filter(Boolean).join(" · ")}
                             </div>
                           </div>
-                          <Button className="shrink-0" size="sm" variant="outline" onClick={() => { window.location.href = group.url; }}>
+                          <a
+                            className={cn(buttonVariants({ size: "sm", variant: "outline" }), "shrink-0")}
+                            href={group.url}
+                          >
                             {group.kind === "Main thread" ? t("actionDetail.relatedMail.openRepresentative") : t("actionDetail.relatedMail.openInMail")}
-                          </Button>
+                          </a>
                         </div>
                         {group.description && <p className="text-muted-foreground text-xs leading-relaxed">{group.description}</p>}
                         {group.snippet && (

@@ -1081,15 +1081,15 @@ extension LauncherDelegate: WKNavigationDelegate {
         loadStatus(.loadFailed(error.localizedDescription))
     }
 
-    // Links without target="_blank" (including message:// links on mail cards)
-    // arrive here. Never hand arbitrary schemes to Launch Services.
+    // External navigations (including programmatic message:// navigations from
+    // older cached web clients) arrive here. Never hand arbitrary schemes to
+    // Launch Services.
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard navigationAction.navigationType == .linkActivated,
-              let url = navigationAction.request.url,
+        guard let url = navigationAction.request.url,
               !isInternalAppURL(url) else {
             decisionHandler(.allow)
             return
