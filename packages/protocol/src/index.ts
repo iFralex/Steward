@@ -30,7 +30,10 @@ export interface PersistedMessage {
   id: string;
   role: "user" | "assistant" | "tool";
   text: string;
+  /** Effective input sent to the tool after approval edits and preflight normalization. */
   toolInput?: unknown;
+  /** Original model-requested input, retained for auditability. */
+  toolRequestedInput?: unknown;
   toolCallId?: string;
   toolStatus?: "running" | "ok" | "error";
   toolOutput?: unknown;
@@ -168,6 +171,8 @@ export type ServerEvent =
       ok: boolean;
       output: unknown;
       durationMs: number;
+      requestedInput?: unknown;
+      effectiveInput?: unknown;
       error?: string;
       /** On-disk files the tool produced/referenced (e.g. a saved attachment). */
       files?: ChannelFile[];

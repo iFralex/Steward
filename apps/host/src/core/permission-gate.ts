@@ -45,6 +45,12 @@ export interface ToolExecutionGuard {
   afterExecute?(tool: string, input: Record<string, unknown>, error?: string): Promise<void>;
 }
 
+export type EffectiveInputObserver = (
+  toolCallId: string,
+  tool: string,
+  input: Record<string, unknown>,
+) => void;
+
 export interface PreflightToolDefinition extends ToolDefinition {
   /** Pure validation/normalization performed before an approval is requested. */
   preflightInput?: (input: Record<string, unknown>) => Record<string, unknown>;
@@ -57,6 +63,7 @@ export function gateToolDefinition(
   getSession: () => FollowUpSink,
   getAuditContext?: () => ToolAuditContext,
   executionGuard?: ToolExecutionGuard,
+  onEffectiveInput?: EffectiveInputObserver,
 ): ToolDefinition {
   return {
     ...def,
@@ -97,7 +104,7 @@ export function gateToolDefinition(
         return blocked(`Tool ${def.name} is disabled by policy.`);
       }
       if (decision === "allow") {
-        return executeGuarded(def, id, prepared, signal, onUpdate, ctx, executionGuard);
+        return executeGuarded(def, id, prepared, signal, onUpdate, ctx, executionGuard, onEffectiveInput);
       }
       // gate → ask the user
       const outcome = await requestApproval({ tool: def.name, input: prepared });
@@ -147,7 +154,7 @@ export function gateToolDefinition(
       if (outcome.note?.trim()) {
         await getSession().followUp(`User note: ${outcome.note.trim()}`);
       }
-      return executeGuarded(def, id, args, signal, onUpdate, ctx, executionGuard);
+      return executeGuarded(def, id, args, signal, onUpdate, ctx, executionGuard, onEffectiveInput);
     },
   };
 }
@@ -160,12 +167,14 @@ async function executeGuarded(
   onUpdate: unknown,
   ctx: unknown,
   guard?: ToolExecutionGuard,
+  onEffectiveInput?: EffectiveInputObserver,
 ) {
   const input = toRecord(params);
   if (guard) {
     const authorization = await guard.beforeExecute(def.name, input);
     if (!authorization.allowed) return blocked(authorization.reason ?? `Tool ${def.name} is outside the approved watch grant.`);
   }
+  onEffectiveInput?.(id, def.name, input);
   try {
     const output = await def.execute(id, params as never, signal as never, onUpdate as never, ctx as never);
     await guard?.afterExecute?.(def.name, input);

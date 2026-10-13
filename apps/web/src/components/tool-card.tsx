@@ -118,7 +118,10 @@ export function ToolCard({ m, fileApi }: { m: ChatMessage; fileApi: FileApi }) {
           </AccordionTrigger>
           <AccordionContent className="px-2 pb-2">
             <div className="space-y-2">
-              <Section title={t("toolCard.input")}><JsonBlock value={m.toolInput} /></Section>
+              {m.toolRequestedInput !== undefined && JSON.stringify(m.toolRequestedInput) !== JSON.stringify(m.toolInput) && (
+                <Section title={t("toolCard.requestedInput")}><JsonBlock value={m.toolRequestedInput} /></Section>
+              )}
+              <Section title={t("toolCard.effectiveInput")}><JsonBlock value={m.toolInput} /></Section>
               {!running && (
                 <Section title={error ? t("toolCard.error") : t("toolCard.output")}>
                   {error ? (

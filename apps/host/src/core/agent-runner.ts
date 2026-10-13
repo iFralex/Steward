@@ -161,6 +161,7 @@ interface ChatRuntime {
   /** toolCallId → start time (for durations) and input (for the transcript). */
   starts: Map<string, number>;
   toolInputs: Map<string, unknown>;
+  effectiveToolInputs: Map<string, unknown>;
   turnAssistantMessages: Array<{ id: string; text: string }>;
 }
 
@@ -223,6 +224,10 @@ export class ChatManager {
     // followUp sink (so an allow-note lands on the chat that asked, not
     // whichever chat happens to be running).
     let piSession: AgentSession;
+    const effectiveToolInputs = new Map<string, unknown>();
+    const observeEffectiveInput = (toolCallId: string, _tool: string, input: Record<string, unknown>) => {
+      effectiveToolInputs.set(toolCallId, input);
+    };
     const tools = [
       ...b.bridge.tools.map((def) =>
         gateToolDefinition(
@@ -236,6 +241,7 @@ export class ChatManager {
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
           () => ({ sessionId: this.session.id, chatId }),
           this.executionGuard,
+          observeEffectiveInput,
         ),
       ),
       gateToolDefinition(
@@ -245,6 +251,7 @@ export class ChatManager {
         () => ({ followUp: (t: string) => piSession.followUp(t) }),
         () => ({ sessionId: this.session.id, chatId }),
         this.executionGuard,
+        observeEffectiveInput,
       ),
       ...buildWatchTools(chatId).map((def) =>
         gateToolDefinition(
@@ -253,6 +260,7 @@ export class ChatManager {
           () => ({ followUp: (t: string) => piSession.followUp(t) }),
           () => ({ sessionId: this.session.id, chatId }),
           this.executionGuard,
+          observeEffectiveInput,
         ),
       ),
       buildAskUserTool((q) => this.session.askQuestion(q, chatId)),
@@ -267,7 +275,7 @@ export class ChatManager {
     const runtime: ChatRuntime = {
       chatId, session: piSession, unsub: () => {},
       lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+      assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs, turnAssistantMessages: [],
     };
     runtime.unsub = piSession.subscribe((e: any) => this.onPiEvent(runtime, e));
     this.chats.set(chatId, runtime);
@@ -311,8 +319,13 @@ export class ChatManager {
     }
     if (e.type === "tool_execution_end") {
       const startedAt = e.toolCallId ? runtime.starts.get(e.toolCallId) : undefined;
-      const input = e.toolCallId ? runtime.toolInputs.get(e.toolCallId) : undefined;
-      if (e.toolCallId) { runtime.starts.delete(e.toolCallId); runtime.toolInputs.delete(e.toolCallId); }
+      const requestedInput = e.toolCallId ? runtime.toolInputs.get(e.toolCallId) : undefined;
+      const effectiveInput = e.toolCallId ? runtime.effectiveToolInputs.get(e.toolCallId) ?? requestedInput : requestedInput;
+      if (e.toolCallId) {
+        runtime.starts.delete(e.toolCallId);
+        runtime.toolInputs.delete(e.toolCallId);
+        runtime.effectiveToolInputs.delete(e.toolCallId);
+      }
       const durationMs = startedAt != null ? Date.now() - startedAt : 0;
       const output = extractToolOutput(e.result);
       const voiceFailure = e.toolName?.startsWith("mcp__voice__") ? parseRingbackFailure(output) : null;
@@ -334,17 +347,19 @@ export class ChatManager {
         toolCallId: e.toolCallId ?? "",
         ok,
         durationMs,
-        payload: { input, output, error, ...(voiceFailure ? { voiceFailure } : {}) },
+        payload: { input: effectiveInput, requestedInput, effectiveInput, output, error, ...(voiceFailure ? { voiceFailure } : {}) },
         sourceRefs: files.map((file) => ({ type: "file", path: file.path, id: file.token, label: file.name })),
       });
       try {
         store.addMessage(runtime.chatId, toolMessage({
-          tool: e.toolName, input, toolCallId: e.toolCallId ?? "", ok, output, durationMs, error, files,
+          tool: e.toolName, input: effectiveInput, requestedInput,
+          toolCallId: e.toolCallId ?? "", ok, output, durationMs, error, files,
         }));
       } catch { /* transcript optional */ }
       this.emit({
         type: "tool_result", sessionId: this.session.id, chatId: runtime.chatId, toolCallId: e.toolCallId ?? "", tool: e.toolName,
-        ok, output, durationMs, ...(files.length ? { files } : {}), ...(error ? { error } : {}),
+        ok, output, durationMs, requestedInput, effectiveInput,
+        ...(files.length ? { files } : {}), ...(error ? { error } : {}),
       });
     }
   }

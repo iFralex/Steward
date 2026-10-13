@@ -393,6 +393,8 @@
     "eventUpdated": "evento aggiornato",
     "eventDeleted": "evento eliminato",
     "input": "Input",
+    "requestedInput": "Input richiesto",
+    "effectiveInput": "Input eseguito",
     "output": "Output",
     "statusRunning": "in corso",
     "statusError": "errore",

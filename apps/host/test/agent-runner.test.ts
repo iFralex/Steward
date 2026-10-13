@@ -105,7 +105,7 @@ test("runTurn returns the persisted assistant message instead of requiring trans
     },
     unsub: () => {}, lastCostUsd: 0,
     lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs: new Map(), turnAssistantMessages: [],
   };
   (cm as any).ensureChat = async () => runtime;
 
@@ -136,7 +136,7 @@ test("runAutomaticTurn continues the session without exposing its control prompt
     },
     unsub: () => {}, lastCostUsd: 0,
     lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs: new Map(), turnAssistantMessages: [],
   };
   (cm as any).ensureChat = async () => runtime;
 
@@ -164,7 +164,7 @@ test("a completed turn invalidates another channel's stale session for the same 
     },
     unsub: () => {}, lastCostUsd: 0,
     lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs: new Map(), turnAssistantMessages: [],
   };
   let disposed = false;
   const peerRuntime = {
@@ -201,7 +201,7 @@ test("runTurn resolves with a structured failure when the agent errors", async (
     },
     unsub: () => {}, lastCostUsd: 0,
     lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs: new Map(), turnAssistantMessages: [],
   };
   (cm as any).ensureChat = async () => runtime;
 
@@ -234,7 +234,7 @@ test("doRunTurn marks the chat running for the shared running-chats registry whi
     },
     unsub: () => {}, lastCostUsd: 0,
     lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs: new Map(), turnAssistantMessages: [],
   };
   (cm as any).ensureChat = async () => runtime;
   assert.equal(isRunning(chat.id), false, "must not be running before the turn starts");
@@ -263,12 +263,13 @@ test("onPiEvent persists assistant text interleaved between tool calls, not merg
   const runtime = {
     chatId: chat.id, session: {} as any, unsub: () => {},
     lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), turnAssistantMessages: [],
+    assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs: new Map(), turnAssistantMessages: [],
   };
   const onPiEvent = (cm as unknown as { onPiEvent: (r: typeof runtime, e: unknown) => void }).onPiEvent.bind(cm);
 
   onPiEvent(runtime, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "text1" } });
-  onPiEvent(runtime, { type: "tool_execution_start", toolCallId: "t1", toolName: "toolA", args: {} });
+  onPiEvent(runtime, { type: "tool_execution_start", toolCallId: "t1", toolName: "toolA", args: { draft: true } });
+  runtime.effectiveToolInputs.set("t1", { approved: true });
   onPiEvent(runtime, { type: "tool_execution_end", toolCallId: "t1", toolName: "toolA", result: "ok", isError: false });
   onPiEvent(runtime, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "text2" } });
   onPiEvent(runtime, { type: "tool_execution_start", toolCallId: "t2", toolName: "toolB", args: {} });
@@ -278,4 +279,6 @@ test("onPiEvent persists assistant text interleaved between tool calls, not merg
   assert.deepEqual(messages.map((m) => m.role), ["assistant", "tool", "assistant", "tool"]);
   assert.equal(messages[0].text, "text1");
   assert.equal(messages[2].text, "text2");
+  assert.deepEqual(messages[1].toolRequestedInput, { draft: true });
+  assert.deepEqual(messages[1].toolInput, { approved: true });
 });

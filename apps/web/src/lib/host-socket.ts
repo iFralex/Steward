@@ -24,6 +24,8 @@ export interface ChatMessage {
   text: string;
   /** For role "tool": the tool's input payload. */
   toolInput?: unknown;
+  /** For role "tool": the original input before approval edits. */
+  toolRequestedInput?: unknown;
   /** For role "tool": correlates the call with its result. */
   toolCallId?: string;
   /** For role "tool": lifecycle of the invocation. */
@@ -228,7 +230,16 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
             updateChat(msg.chatId ?? null, (prev) =>
               prev.map((m) =>
                 m.role === "tool" && m.toolCallId === msg.toolCallId
-                  ? { ...m, toolStatus: msg.ok ? "ok" : "error", toolOutput: msg.output, toolDurationMs: msg.durationMs, toolError: msg.error, toolFiles: msg.files }
+                  ? {
+                    ...m,
+                    toolInput: msg.effectiveInput ?? m.toolInput,
+                    toolRequestedInput: msg.requestedInput ?? m.toolInput,
+                    toolStatus: msg.ok ? "ok" : "error",
+                    toolOutput: msg.output,
+                    toolDurationMs: msg.durationMs,
+                    toolError: msg.error,
+                    toolFiles: msg.files,
+                  }
                   : m,
               ),
             );

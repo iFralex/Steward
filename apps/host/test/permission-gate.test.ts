@@ -54,11 +54,18 @@ test("gated tool asks model to revise on user revise", async () => {
 test("gated tool runs on approval; note delivered as follow-up; edited args used", async () => {
   const calls: any[] = [];
   const followUps: string[] = [];
+  const effectiveInputs: unknown[] = [];
   const approve: RequestApproval = async () => ({ decision: "allow", note: "ok cc boss", editedInput: { a: 2 } });
-  const t = gateToolDefinition(fakeTool("send", calls), policy, approve, () => ({ followUp: async (x) => { followUps.push(x); } }));
+  const t = gateToolDefinition(
+    fakeTool("send", calls), policy, approve,
+    () => ({ followUp: async (x) => { followUps.push(x); } }),
+    undefined, undefined,
+    (_id, _tool, input) => effectiveInputs.push(input),
+  );
   const res: any = await t.execute("1", { a: 1 }, undefined, undefined, {} as any);
   assert.equal(res.content[0].text, "RAN");
   assert.deepEqual(calls, [{ a: 2 }]);
+  assert.deepEqual(effectiveInputs, [{ a: 2 }]);
   assert.deepEqual(followUps, ["User note: ok cc boss"]);
 });
 

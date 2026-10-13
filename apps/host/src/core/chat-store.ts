@@ -19,6 +19,7 @@ import { migrateLegacyPath } from "./migrate.ts";
 export function toolMessage(a: {
   tool: string;
   input: unknown;
+  requestedInput?: unknown;
   toolCallId: string;
   ok: boolean;
   output: unknown;
@@ -28,7 +29,8 @@ export function toolMessage(a: {
 }): PersistedMessage {
   return {
     id: randomUUID(), role: "tool", text: a.tool,
-    toolInput: a.input, toolCallId: a.toolCallId, toolStatus: a.ok ? "ok" : "error",
+    toolInput: a.input, toolRequestedInput: a.requestedInput,
+    toolCallId: a.toolCallId, toolStatus: a.ok ? "ok" : "error",
     toolOutput: a.output, toolDurationMs: a.durationMs,
     ...(a.error ? { toolError: a.error } : {}),
     ...(a.files && a.files.length ? { toolFiles: a.files } : {}),
