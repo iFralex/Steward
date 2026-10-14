@@ -52,6 +52,7 @@ export function parseSearchArgs(raw: Raw): { query?: string; start: string; end:
   const now = Date.now();
   const start = validIso(raw, "start", false) ?? new Date(now - 30 * 86400_000).toISOString();
   const end = validIso(raw, "end", false) ?? new Date(now + 90 * 86400_000).toISOString();
+  if (Date.parse(end) <= Date.parse(start)) throw new Error("Search end must be after start");
   const limitRaw = raw.limit;
   const limit = typeof limitRaw === "number" && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 20) : 10;
   const offsetRaw = raw.offset;
@@ -91,6 +92,7 @@ export function parseUpdateArgs(raw: Raw): UpdateArgs {
     url: optString(raw, "url"),
     recurrence: optString(raw, "recurrence"),
     scope: optScope(raw),
+    occurrenceStart: validIso(raw, "occurrenceStart", false),
     alarms: optMinutesArray(raw, "alarms"),
   };
   const hasEffectiveChange = [
@@ -102,13 +104,14 @@ export function parseUpdateArgs(raw: Raw): UpdateArgs {
     parsed.url,
     parsed.recurrence,
   ].some((value) => typeof value === "string" && value.length > 0)
-    || parsed.alarms !== undefined;
+    || parsed.alarms !== undefined || parsed.recurrence !== undefined;
   if (!hasEffectiveChange) {
     throw new Error('"update_event" requires at least one field to update besides "uid"');
   }
   return parsed;
 }
 
-export function parseDeleteArgs(raw: Raw): { uid: string; scope: "thisEvent" | "futureEvents" } {
-  return { uid: requireString(raw, "uid"), scope: optScope(raw) ?? "thisEvent" };
+export function parseDeleteArgs(raw: Raw): { uid: string; occurrenceStart?: string; scope: "thisEvent" | "futureEvents" } {
+  const occurrenceStart = validIso(raw, "occurrenceStart", false);
+  return { uid: requireString(raw, "uid"), ...(occurrenceStart ? { occurrenceStart } : {}), scope: optScope(raw) ?? "thisEvent" };
 }

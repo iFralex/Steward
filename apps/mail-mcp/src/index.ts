@@ -182,6 +182,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
+      name: "list_write_operations",
+      description: "List bounded Mail/Calendar writes needing manual verification. Never resend an uncertain mail automatically; inspect Sent and obtain explicit approval for a new send.",
+      inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false },
+    },
+    {
+      name: "read_write_operation",
+      description: "Read journal evidence for one Mail/Calendar operationId. Its inputs are sensitive operational data; returned state is not permission to resend.",
+      inputSchema: { type: "object", properties: { operationId: { type: "string" } }, required: ["operationId"], additionalProperties: false },
+    },
+    {
       name: "cancel_scheduled",
       description: "Cancel a scheduled send/reply before it fires. Pass the operationId from the scheduled receipt or list_scheduled.",
       inputSchema: {
@@ -263,6 +273,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           subject: o.input.subject ?? null,
           bodySnippet: o.expected.bodySnippet ?? null,
         })));
+      case "list_write_operations":
+        return text(writeOps.listForReview(typeof args.limit === 'number' ? args.limit : 20).map(op => ({
+          operationId: op.id, kind: op.kind, status: op.status, startedAt: op.startedAt,
+          attemptedAt: op.attemptedAt, error: op.lastError,
+        })));
+      case "read_write_operation":
+        return text(writeOps.get(String(args.operationId ?? '')));
       case "cancel_scheduled":
         return text({ cancelled: writeOps.cancelScheduled(String((args as { operationId?: unknown }).operationId ?? "")) });
       case "get_thread": {

@@ -20,7 +20,7 @@ function fixture() {
   writeFileSync(join(bundle, "Contents/Info.plist"), "<plist></plist>\n");
   const config = join(dir, "config.env");
   writeFileSync(config, `HOST_PORT=59999\nWATCH_DB=${join(dir, "missing-watch.db")}\nCHATS_DIR=${join(dir, "missing-chats")}\nAUDIT_DIR=${join(dir, "missing-audit")}\nUSAGE_DIR=${join(dir, "missing-usage")}\nACTION_CENTER_DIR=${join(dir, "missing-actions")}\nCUSTOM_VALUE=keep-me\n`);
-  const env = { ...process.env, STEWARD_DEPLOY_ROOT: join(dir, "deploy"), STEWARD_APP_PATH: join(dir, "installed", "Steward.app"), STEWARD_CONFIG_FILE: config, STEWARD_VOICE_NETWORK_SETTINGS_FILE: join(dir, "voice-network.json") };
+  const env = { ...process.env, STEWARD_BACKUP_HOME: join(dir, "home"), STEWARD_DEPLOY_ROOT: join(dir, "deploy"), STEWARD_APP_PATH: join(dir, "installed", "Steward.app"), STEWARD_CONFIG_FILE: config, STEWARD_VOICE_NETWORK_SETTINGS_FILE: join(dir, "voice-network.json") };
   const call = (...args) => spawnSync(process.execPath, [script, ...args], { env, encoding: "utf8" });
   return { dir, bundle, config, env, call };
 }

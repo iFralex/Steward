@@ -44,6 +44,7 @@ const entries: Record<string, string> = {
   "mcp/action-center.js": "apps/action-center/src/index.ts",
   "mcp/shell.js": "apps/shell-mcp/src/index.ts",
   "mcp/documents.js": "apps/documents-mcp/src/index.ts",
+  "mcp/documents-worker.js": "apps/documents-mcp/src/extraction-worker.ts",
   "mcp/trains.js": "apps/train-mcp/src/index.ts",
   "cli/mail-mirror.js": "apps/mail-mirror/src/cli.ts",
   "cli/mail-promoter.js": "apps/mail-promoter/src/cli.ts",

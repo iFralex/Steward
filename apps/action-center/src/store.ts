@@ -51,6 +51,7 @@ export interface ActionAutomationSettings {
   enabled: boolean;
   /** Create Action Center reminders for upcoming Calendar events. */
   calendarEnabled: boolean;
+  calendarEnabledAt?: number | null;
   /** Language for user-facing Action card text; default lets the planner follow context. */
   textLanguage: ActionTextLanguage;
   /** Unix timestamp: after a re-enable, only newer source items may create Actions. */
@@ -285,6 +286,7 @@ export class ActionStore {
     return {
       enabled: typeof saved?.enabled === "boolean" ? saved.enabled : true,
       calendarEnabled: typeof saved?.calendarEnabled === "boolean" ? saved.calendarEnabled : true,
+      ...(saved?.calendarEnabledAt == null ? {} : { calendarEnabledAt: finiteNumberOrNull(saved.calendarEnabledAt) }),
       textLanguage: normalizeActionTextLanguage(saved?.textLanguage),
       enabledAt: finiteNumberOrNull(saved?.enabledAt),
       updatedAt: finiteNumberOrNull(saved?.updatedAt),
@@ -297,6 +299,7 @@ export class ActionStore {
     const next: ActionAutomationSettings = {
       enabled,
       calendarEnabled: current.calendarEnabled,
+      ...(current.calendarEnabledAt == null ? {} : { calendarEnabledAt: current.calendarEnabledAt }),
       textLanguage: current.textLanguage,
       enabledAt: enabled ? now : null,
       updatedAt: now,
@@ -308,7 +311,7 @@ export class ActionStore {
   setCalendarEnabled(calendarEnabled: boolean, now = Math.floor(Date.now() / 1000)): ActionAutomationSettings {
     const current = this.getAutomationSettings();
     if (current.calendarEnabled === calendarEnabled) return current;
-    const next: ActionAutomationSettings = { ...current, calendarEnabled, updatedAt: now };
+    const next: ActionAutomationSettings = { ...current, calendarEnabled, ...(calendarEnabled ? { calendarEnabledAt: now } : {}), updatedAt: now };
     this.setMeta(AUTOMATION_SETTINGS_KEY, next);
     return next;
   }

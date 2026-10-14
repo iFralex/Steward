@@ -62,3 +62,9 @@ test("listCalendars returns a stable identifier with title and account", () => {
   assert.deepEqual(s.listCalendars(), [{ id: "CAL-10", title: "Casa", account: "iCloud", type: 0 }]);
   s.close();
 });
+
+test('range search includes an event already in progress at the window start',()=>{
+  const store=AppleStore.openReadonly(seed());
+  const events=store.eventsInRange({startISO:'2026-06-25T10:30:00Z',endISO:'2026-06-25T10:45:00Z'});
+  assert.equal(events.length,1); assert.equal(events[0].uid,'UID-100');store.close();
+});

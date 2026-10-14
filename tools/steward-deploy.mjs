@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** Native macOS installer/updater. Releases are immutable; user data stays outside them. */
+import { backupData } from "./steward-backup.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, mkdirSync, cpSync, renameSync, symlinkSync, unlinkSync, writeFileSync, realpathSync, rmdirSync } from "node:fs";
@@ -143,28 +144,12 @@ function smoke() {
   rollback();
   throw new Error("New host failed to start within 60 seconds; app and voice configuration were rolled back.");
 }
-function snapshotData(id) {
+async function snapshotData(id) {
   const backupDir = join(root, "backups", id);
-  mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-  const values = configValues();
-  const dbs = [
-    ["chats", join(values.CHATS_DIR || join(home, "Library/Application Support/steward-chats"), "chats.db")],
-    ["audit", join(values.AUDIT_DIR || join(home, "Library/Application Support/steward-audit"), "audit.db")],
-    ["usage", join(values.USAGE_DIR || join(home, "Library/Application Support/steward-usage"), "usage.db")],
-    ["watches", values.WATCH_DB || join(support, "watches.db")],
-    ["actions", values.ACTION_CENTER_DB || join(values.ACTION_CENTER_DIR || join(home, "Library/Application Support/action-center"), "actions.db")],
-  ];
-  const recorded = [];
-  for (const [name, source] of dbs) {
-    if (!existsSync(source)) continue;
-    const dest = join(backupDir, `${name}.db`);
-    run("/usr/bin/sqlite3", [source, `.backup '${dest.replaceAll("'", "''")}'`]);
-    recorded.push({ name, source, backup: dest, sha256: sha256(dest) });
-  }
-  if (existsSync(configFile)) cpSync(configFile, join(backupDir, "config.env"));
-  atomicWrite(join(backupDir, "manifest.json"), JSON.stringify({ createdAt: new Date().toISOString(), databases: recorded }, null, 2) + "\n");
-  console.log(`Pre-update data snapshot: ${backupDir}`);
+  await backupData({ destination: backupDir, configFile });
+  console.log(`Pre-update operational snapshot: ${backupDir}`);
 }
+
 function swapLink(target) {
   mkdirSync(dirname(appLink), { recursive: true });
   const temp = `${appLink}.${randomUUID()}.tmp`;
@@ -218,10 +203,10 @@ function assertRelease(id) {
   if (meta.voice && !existsSync(join(dir, "ringback", "steward-run-voice-mcp.sh"))) throw new Error("Ringback missing from release");
   return { dir, meta };
 }
-function cutover(id) {
+async function cutover(id) {
   const { dir, meta } = assertRelease(id);
   checkQuiet();
-  snapshotData(id);
+  await snapshotData(id);
   const state = readJson(stateFile) ?? {};
   if (state.current === id) return;
   let previousApp = linkTarget();
@@ -294,18 +279,18 @@ function verify() {
   }
   console.log(`Verified release ${state.current}`);
 }
-function withLock(fn) {
+async function withLock(fn) {
   mkdirSync(root, { recursive: true });
   try { mkdirSync(lockDir); } catch { throw new Error("Another deployment is running (or a stale lock exists). Inspect .deploy.lock before retrying."); }
-  try { fn(); } finally { rmdirSync(lockDir); }
+  try { await fn(); } finally { rmdirSync(lockDir); }
 }
 
 try {
   switch (command) {
     case "doctor": if (!doctor()) process.exitCode = 1; break;
-    case "install": case "update": withLock(() => { const id = stage(); if (!options.has("--stage-only")) { cutover(id); verify(); smoke(); } }); break;
-    case "activate": withLock(() => { const id = process.argv[3]; if (!id) throw new Error("Usage: activate RELEASE_ID"); cutover(id); verify(); smoke(); }); break;
-    case "rollback": withLock(() => { rollback(); verify(); }); break;
+    case "install": case "update": await withLock(async () => { const id = stage(); if (!options.has("--stage-only")) { await cutover(id); verify(); smoke(); } }); break;
+    case "activate": await withLock(async () => { const id = process.argv[3]; if (!id) throw new Error("Usage: activate RELEASE_ID"); await cutover(id); verify(); smoke(); }); break;
+    case "rollback": await withLock(() => { rollback(); verify(); }); break;
     case "verify": verify(); break;
     default: throw new Error("Usage: steward-deploy.mjs doctor|install|update|activate RELEASE_ID|rollback|verify [--stage-only] [--no-voice] [--sip-user=NAME] [--bundle=PATH]");
   }

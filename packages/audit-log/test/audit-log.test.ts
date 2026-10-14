@@ -63,3 +63,13 @@ test("the raw unredacted payload never touches disk, even for a fresh field name
   };
   assert.equal(row.payload_json, row.redacted_payload_json);
 });
+
+test('summary, source refs and body snippets all redact credentials before persistence', () => {
+  const audit=new AuditLog(new Database(':memory:'));
+  audit.record({actor:'host',eventType:'test',summary:'password=super-secret',
+    payload:{body:'token https://example.test/?token=private-token password=body-secret'},
+    sourceRefs:[{type:'file',url:'https://user:pass@example.test/?api_key=link-secret',label:'authorization=hidden-value'}]});
+  const row=audit.raw.prepare('SELECT summary,payload_json,source_refs_json FROM audit_events').get() as any;
+  const serialized=JSON.stringify(row);
+  for(const secret of ['super-secret','private-token','body-secret','link-secret','hidden-value','user:pass']) assert.equal(serialized.includes(secret),false,secret);
+});

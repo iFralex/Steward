@@ -1,5 +1,5 @@
 import { embedText } from "@steward/search";
-import { usageHeaders } from "@steward/protocol";
+import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 export function flowEmbeddingText(flow: { name: string; when: string }): string {
   return `${flow.name}\nWhen this flow applies: ${flow.when}`;
@@ -11,7 +11,7 @@ export async function embedFlowText(text: string, usageAction = "flow-retrieval"
   return embedText(text, {
     endpoint,
     model: process.env.ACTION_FLOW_EMBED_MODEL ?? process.env.MAIL_EMBED_MODEL ?? "local-embed",
-    apiKey: process.env.ACTION_FLOW_EMBED_API_KEY ?? process.env.MAIL_EMBED_API_KEY,
+    apiKey: gatewayCredential(endpoint, process.env.ACTION_FLOW_EMBED_API_KEY ?? process.env.MAIL_EMBED_API_KEY, process.env.GATEWAY_API_KEY, Number(process.env.GATEWAY_PORT ?? 4000)),
     extraHeaders: usageHeaders("action-center", usageAction),
   });
 }

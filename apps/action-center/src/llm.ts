@@ -1,5 +1,5 @@
 import { extractJson } from "../../llm-gateway/src/extract-json.ts";
-import { usageHeaders } from "@steward/protocol";
+import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 export type Chat = (system: string, user: string) => Promise<string>;
 
@@ -9,7 +9,7 @@ export function gatewayChat(
 ): Chat {
   const endpoint = cfg.endpoint ?? process.env.ACTION_CENTER_LLM_ENDPOINT ?? "http://127.0.0.1:4000/v1/chat/completions";
   const model = cfg.model ?? process.env.ACTION_CENTER_LLM_MODEL ?? "tier-5";
-  const apiKey = cfg.apiKey ?? process.env.ACTION_CENTER_LLM_API_KEY;
+  const apiKey = gatewayCredential(endpoint, cfg.apiKey ?? process.env.ACTION_CENTER_LLM_API_KEY, process.env.GATEWAY_API_KEY, Number(process.env.GATEWAY_PORT ?? 4000));
   return async (system, user) => {
     const res = await fetchImpl(endpoint, {
       method: "POST",

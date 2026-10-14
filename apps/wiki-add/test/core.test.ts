@@ -93,3 +93,28 @@ test("applyPlans avoids collisions across different origins with the same name",
   assert.ok(existsSync(join(sources, "report.pdf")));
   assert.ok(existsSync(join(sources, "report (2).pdf")));
 });
+
+test('chosen destination relocates a tracked source without clobbering unrelated files', () => {
+  const project=mkdtempSync(join(tmpdir(),'wiki-move-')), sources=join(project,'raw/sources');
+  mkdirSync(sources,{recursive:true});const src=join(project,'origin.md');writeFileSync(src,'one');
+  applyPlans([{src,targetRel:'old.md'}],sources,project);
+  writeFileSync(join(sources,'chosen.md'),'unrelated');writeFileSync(src,'two');
+  const moved=applyPlans([{src,targetRel:'chosen.md',destinationChosen:true}],sources,project);
+  assert.equal(moved.updated[0].targetRel,'chosen (2).md');
+  assert.equal(existsSync(join(sources,'old.md')),false);
+  assert.equal(readFileSync(join(sources,'chosen.md'),'utf8'),'unrelated');
+  assert.equal(readFileSync(join(sources,'chosen (2).md'),'utf8'),'two');
+});
+
+
+test('relocating one deduplicated origin preserves the snapshot still tracked by another', () => {
+  const {dir,project,sources}=fixture();
+  const one=join(dir,'one.md'),two=join(dir,'two.md');
+  writeFileSync(one,'shared');writeFileSync(two,'shared');
+  applyPlans([{src:one,targetRel:'shared.md'},{src:two,targetRel:'shared.md'}],sources,project);
+  writeFileSync(one,'changed');
+  const moved=applyPlans([{src:one,targetRel:'moved.md',destinationChosen:true}],sources,project);
+  assert.equal(moved.updated.length,1);
+  assert.equal(readFileSync(join(sources,'shared.md'),'utf8'),'shared');
+  assert.equal(readFileSync(join(sources,'moved.md'),'utf8'),'changed');
+});

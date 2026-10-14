@@ -11,8 +11,9 @@ import { loadEmbedConfig } from "./embed-config.ts";
 import { embedText } from "@steward/search";
 import { createEvent, updateEvent, deleteEvent } from "./applescript.ts";
 import {
-  createEventKit, deleteEventKit, eventKitBridgeAvailable, eventKitCanRepresent, updateEventKit,
+  createEventKit, deleteEventKit, eventKitBridgeAvailable, eventKitCanRepresent, updateEventKit, searchEventKit, readEventKit,
 } from "./eventkit-client.ts";
+import { filterEventText, requireCompatibleScope, validateEventUpdate } from "./write-validation.ts";
 import { parseSearchArgs, parseCreateArgs, parseDeleteArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { applePath, indexDbPath } from "./paths.ts";
 import { WriteOpsStore } from "@steward/write-ops";
@@ -50,10 +51,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     { name: "list_calendars", description: "List calendars with stable id, title and account. Use calendarId for writes, especially when titles repeat.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "search_events", description: `Search a compact page of events (hybrid keyword+semantic). All filters are optional and ANDed. Defaults to 10 events; follow page.nextOffset only when more are materially needed. Use read_event for a full description. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: {
-      query: { type: "string" }, start: { type: "string", description: `Inclusive range start. ${instantDescription}` }, end: { type: "string", description: `Inclusive range end. ${instantDescription}` },
+      query: { type: "string" }, start: { type: "string", description: `Inclusive range start. ${instantDescription}` }, end: { type: "string", description: `Exclusive range end. ${instantDescription}` },
       account: { type: "string" }, calendar: { type: "string" }, limit: { type: "number", description: "Page size; defaults to 10 and is capped at 20." },
       offset: { type: "number", description: "Rank offset from page.nextOffset." } }, additionalProperties: false } },
-    { name: "read_event", description: `Read one event by uid. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
+    { name: "read_event", description: `Read one event by uid. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: { uid: { type: "string" }, occurrenceStart: { type: "string", description: "Exact recurring occurrence start from search_events." } }, required: ["uid"], additionalProperties: false } },
     { name: "create_event", description: "Create a calendar event. Prefer the stable calendarId from list_calendars; a duplicate calendar title without calendarId is rejected.", inputSchema: { type: "object", properties: {
       calendarId: { type: "string" }, calendar: { type: "string", description: "Legacy title selector; accepted only when unique." }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
       allDay: { type: "boolean", description: "Marks an all-day event. Pass start/end at local midnight with an explicit offset so the civil dates remain unambiguous." }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string", description: "RFC 5545 RRULE. EventKit natively supports DAILY/WEEKLY/MONTHLY/YEARLY plus INTERVAL, COUNT/UNTIL, BYDAY, BYMONTHDAY, BYMONTH, BYWEEKNO, BYYEARDAY and BYSETPOS." },
@@ -62,11 +63,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     { name: "update_event", description: "Update fields of an event by uid.", inputSchema: { type: "object", properties: {
       uid: { type: "string" }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
       location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string", description: "RFC 5545 RRULE; fields outside EventKit's native subset use the compatibility fallback." },
+      occurrenceStart: { type: "string", description: "Exact occurrence start returned by search_events; required for recurring changes." },
       scope: { type: "string", enum: ["thisEvent", "futureEvents"], description: "For a recurring event, update only this occurrence or this and all future occurrences." },
       alarms: { type: "array", items: { type: "number" }, description: "replaces the event's alerts; minutes before start; [] clears all" } },
       required: ["uid"], additionalProperties: false } },
     { name: "delete_event", description: "Delete an event by uid.", inputSchema: { type: "object", properties: {
-      uid: { type: "string" }, scope: { type: "string", enum: ["thisEvent", "futureEvents"], description: "For a recurring event, delete only this occurrence or this and all future occurrences." },
+      uid: { type: "string" }, occurrenceStart: { type: "string", description: "Exact occurrence start for recurring deletion." }, scope: { type: "string", enum: ["thisEvent", "futureEvents"], description: "For a recurring event, delete only this occurrence or this and all future occurrences." },
     }, required: ["uid"], additionalProperties: false } },
   ],
 }));
@@ -98,6 +100,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const liveStore = requireStore();
         const a = parseSearchArgs(raw);
         let uids: string[];
+        const dateExplicit = typeof raw.start === "string" || typeof raw.end === "string";
+        if (eventKitBridgeAvailable() && (dateExplicit || !a.query)) {
+          const events = filterEventText(await searchEventKit(a), a.query);
+          return ok(buildEventSearchPage(events.slice(a.offset, a.offset + a.limit + 1).map(eventForTool), a.limit, a.offset));
+        }
         if (a.query && index) {
           // Keyword/semantic search applies the date window only when the caller
           // gave one explicitly — defaulting it would silently hurt recall.
@@ -108,7 +115,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             ...(dateExplicit ? { startISO: a.start, endISO: a.end } : {}),
           });
         } else {
-          uids = liveStore.eventsInRange({ startISO: a.start, endISO: a.end, account: a.account, calendar: a.calendar }).map((e) => e.uid);
+          if (liveStore.allForIndex().some(e => e.hasRecurrence && (!a.account || e.account === a.account) && (!a.calendar || e.calendar === a.calendar))) {
+            throw new Error('Complete recurring availability requires the EventKit bridge. Start Steward launcher; no incomplete availability result was returned.');
+          }
+          uids = filterEventText(liveStore.eventsInRange({ startISO: a.start, endISO: a.end, account: a.account, calendar: a.calendar }), a.query).map(e => e.uid);
         }
         // Both paths already applied the account/calendar/date filters; just resolve live detail.
         const events = uids.slice(a.offset, a.offset + a.limit + 1)
@@ -117,7 +127,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       case "read_event": {
         const requestedUid = requireString(raw, "uid");
-        const event = requireStore().getEvent(index?.resolveUid(requestedUid) ?? requestedUid);
+        const uid = index?.resolveUid(requestedUid) ?? requestedUid;
+        const event = eventKitBridgeAvailable() ? await readEventKit(uid, parseDeleteArgs(raw).occurrenceStart) : requireStore().getEvent(uid);
         return ok(event ? eventForTool(event) : null);
       }
       case "create_event": {
@@ -163,13 +174,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "update_event": {
         const args = parseUpdateArgs(raw);
         args.uid = index?.resolveUid(args.uid) ?? args.uid;
+        const useEventKit = eventKitBridgeAvailable() && eventKitCanRepresent(args.recurrence);
+        const current = eventKitBridgeAvailable() ? await readEventKit(args.uid, args.occurrenceStart) ?? undefined : requireStore().getEvent(args.uid);
+        validateEventUpdate(args, current);
+        requireCompatibleScope(args, useEventKit, current?.hasRecurrence ?? false);
+        if (current?.hasRecurrence && !args.occurrenceStart) throw new Error('Recurring updates require occurrenceStart from search_events');
         const operationId = writeOps.start({
           kind: "calendar.update",
           input: args as unknown as Record<string, unknown>,
           expected: args as unknown as Record<string, unknown>,
         });
         try {
-          if (eventKitBridgeAvailable() && eventKitCanRepresent(args.recurrence)) await updateEventKit(args);
+          if (useEventKit) await updateEventKit(args);
           else await updateEvent(args);
           writeOps.scriptReturned(operationId, { uid: args.uid });
           return ok({ ok: true, operationId });
@@ -183,13 +199,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const requestedUid = parsed.uid;
         const uid = index?.resolveUid(requestedUid) ?? requestedUid;
         const scope = parsed.scope;
+        const target = eventKitBridgeAvailable() ? await readEventKit(uid, parsed.occurrenceStart) : requireStore().getEvent(uid);
+        if (!target) throw new Error('Calendar event not found; nothing was deleted');
+        requireCompatibleScope(parsed, eventKitBridgeAvailable(), target.hasRecurrence);
+        if (target.hasRecurrence && !parsed.occurrenceStart) throw new Error('Recurring deletion requires occurrenceStart from search_events');
         const operationId = writeOps.start({
           kind: "calendar.delete",
-          input: { uid },
-          expected: { uid },
+          input: { uid, scope, occurrenceStart: parsed.occurrenceStart },
+          expected: { uid, scope, occurrenceStart: parsed.occurrenceStart, targetExisted: true },
         });
         try {
-          if (eventKitBridgeAvailable()) await deleteEventKit(uid, scope);
+          if (eventKitBridgeAvailable()) await deleteEventKit(uid, scope, parsed.occurrenceStart);
           else if (scope === "thisEvent") await deleteEvent(uid);
           else throw new Error('Deleting "this and future" occurrences requires the Steward EventKit bridge');
           // Always hand deletion to reconciliation. EventKit commits locally,

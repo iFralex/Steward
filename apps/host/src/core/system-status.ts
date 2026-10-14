@@ -74,7 +74,7 @@ const LLM_WIKI_URL = "http://127.0.0.1:19828/api/v1/health";
 const discoveredTools = new Map<string, string[]>();
 const bundledToolNames: Record<string, string[]> = {
   "llm-wiki": ["llm_wiki_status", "llm_wiki_projects", "llm_wiki_files", "llm_wiki_read_file", "llm_wiki_reviews", "llm_wiki_search", "llm_wiki_graph", "llm_wiki_rescan_sources", "llm_wiki_add_source", "llm_wiki_create_folder", "llm_wiki_show_window", "llm_wiki_hide_window"],
-  mail: ["list_mailboxes", "search_messages", "read_message", "save_attachment", "send_email", "reply", "list_scheduled", "cancel_scheduled", "get_thread"],
+  mail: ["list_mailboxes", "search_messages", "read_message", "save_attachment", "send_email", "reply", "list_scheduled", "list_write_operations", "read_write_operation", "cancel_scheduled", "get_thread"],
   calendar: ["list_calendars", "search_events", "read_event", "create_event", "update_event", "delete_event"],
   contacts: ["search_contacts", "read_contact", "resolve_recipient", "create_contact", "update_contact"],
   "action-center": ["list_actions", "read_action", "mark_action", "list_flows", "search_flows", "create_flow", "update_flow", "set_flow_enabled", "delete_flow"],

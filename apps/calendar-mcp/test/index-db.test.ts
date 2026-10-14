@@ -59,7 +59,7 @@ test("getEvent round-trips write-confirmation metadata", () => {
     hasRecurrence: true,
   };
   db.upsertEvent(input, "h1");
-  assert.deepEqual(db.getEvent("U1"), input);
+  assert.deepEqual(db.getEvent("U1"), { ...input, refId: db.refIdForUid("U1") });
   db.close();
 });
 

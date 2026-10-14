@@ -28,7 +28,7 @@ test("Action automation defaults on and records a fresh cutoff when re-enabled",
   assert.deepEqual(s.setAutomationEnabled(false, 100), { enabled: false, calendarEnabled: false, textLanguage: "it", enabledAt: null, updatedAt: 100 });
   assert.deepEqual(s.setAutomationEnabled(true, 200), { enabled: true, calendarEnabled: false, textLanguage: "it", enabledAt: 200, updatedAt: 200 });
   assert.deepEqual(s.setAutomationEnabled(true, 300), { enabled: true, calendarEnabled: false, textLanguage: "it", enabledAt: 200, updatedAt: 200 });
-  assert.deepEqual(s.setCalendarEnabled(true, 400), { enabled: true, calendarEnabled: true, textLanguage: "it", enabledAt: 200, updatedAt: 400 });
+  assert.deepEqual(s.setCalendarEnabled(true, 400), { enabled: true, calendarEnabled: true, textLanguage: "it", enabledAt: 200, calendarEnabledAt: 400, updatedAt: 400 });
   s.close();
 });
 

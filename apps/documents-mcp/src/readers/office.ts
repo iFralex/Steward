@@ -1,3 +1,4 @@
+import { validateArchiveBudget } from "../archive-budget.ts";
 import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
 import mammoth from "mammoth";
@@ -5,12 +6,16 @@ import type { DocumentPage } from "../types.ts";
 import { decodeXmlEntities } from "./text.ts";
 
 export async function readDocx(path: string): Promise<{ pages: DocumentPage[]; warnings: string[] }> {
-  const result = await mammoth.extractRawText({ buffer: await readFile(path) });
+  const buffer = await readFile(path);
+  validateArchiveBudget(buffer);
+  const result = await mammoth.extractRawText({ buffer });
   return { pages: [{ number: 1, text: result.value.replace(/\r\n?/g, "\n").trim() }], warnings: result.messages.map((m) => m.message) };
 }
 
 export async function readPptx(path: string): Promise<{ pages: DocumentPage[]; warnings: string[] }> {
-  const zip = await JSZip.loadAsync(await readFile(path));
+  const buffer = await readFile(path);
+  validateArchiveBudget(buffer);
+  const zip = await JSZip.loadAsync(buffer);
   const slideNames = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
     .sort((a, b) => slideNumber(a) - slideNumber(b));
   const pages: DocumentPage[] = [];
@@ -23,7 +28,9 @@ export async function readPptx(path: string): Promise<{ pages: DocumentPage[]; w
 }
 
 export async function readOdt(path: string): Promise<{ pages: DocumentPage[]; warnings: string[] }> {
-  const zip = await JSZip.loadAsync(await readFile(path));
+  const buffer = await readFile(path);
+  validateArchiveBudget(buffer);
+  const zip = await JSZip.loadAsync(buffer);
   const file = zip.file("content.xml");
   if (!file) throw new Error("invalid ODT: content.xml missing");
   const xml = await file.async("string");

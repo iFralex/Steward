@@ -235,3 +235,15 @@ export function usageHeaders(service: string, action: string, sessionId?: string
     ...(sessionId ? { [USAGE_SESSION_HEADER]: sessionId } : {}),
   };
 }
+
+/** Supply a shared configured gateway key only to its exact loopback endpoint. */
+export function gatewayCredential(endpoint: string, explicit?: string, shared?: string, port = 4000): string | undefined {
+  if (explicit !== undefined) return explicit;
+  if (!shared) return undefined;
+  try {
+    const url = new URL(endpoint);
+    return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+      && Number(url.port || (url.protocol === 'https:' ? 443 : 80)) === port
+      && url.pathname.startsWith('/v1/') ? shared : undefined;
+  } catch { return undefined; }
+}

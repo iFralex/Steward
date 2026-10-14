@@ -63,6 +63,17 @@ export class IndexDb {
     return generation;
   }
 
+  transaction<T>(work: () => T): T { return this.raw.transaction(work).immediate(); }
+
+  finishSyncGeneration(generation: number, startedAt: number): void {
+    this.setState('completed_sync_generation', String(generation));
+    this.setState('completed_sync_started_at', String(startedAt));
+  }
+
+  refIdForUid(uid: string): string | undefined {
+    return (this.raw.prepare('SELECT ref_id FROM event_uid_aliases WHERE uid=?').get(uid) as {ref_id:string} | undefined)?.ref_id;
+  }
+
   upsertEvent(e: CalEvent, sourceHash: string, generation = 0): number {
     const identity = this.resolveIdentity(e, generation);
     if (identity.previousUid && identity.previousUid !== e.uid) {
@@ -172,8 +183,8 @@ export class IndexDb {
     const params: unknown[] = [];
     if (f?.account) { clauses.push("e.account = ?"); params.push(f.account); }
     if (f?.calendar) { clauses.push("e.calendar = ?"); params.push(f.calendar); }
-    if (f?.startISO) { clauses.push("e.start >= ?"); params.push(f.startISO); }
-    if (f?.endISO) { clauses.push("e.start <= ?"); params.push(f.endISO); }
+    if (f?.startISO) { clauses.push("e.end > ?"); params.push(f.startISO); }
+    if (f?.endISO) { clauses.push("e.start < ?"); params.push(f.endISO); }
     return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", params };
   }
 
@@ -211,6 +222,7 @@ export class IndexDb {
     if (!row) return null;
     return {
       uid: row.uid,
+      refId: this.refIdForUid(row.uid),
       ...(row.external_id == null ? {} : { externalId: row.external_id }),
       summary: row.summary,
       description: row.description,

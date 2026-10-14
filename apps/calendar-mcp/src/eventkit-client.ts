@@ -1,12 +1,13 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { CalEvent } from "./types.ts";
 import { parseEventKitRecurrence } from "./rrule.ts";
 import type { CreateArgs, UpdateArgs } from "./applescript.ts";
 
 interface BridgeResponse {
   ok: boolean;
-  result?: { uid?: string };
+  result?: { uid?: string; event?: CalEvent | null; events?: CalEvent[] };
   error?: string;
   outcomeUnknown?: boolean;
 }
@@ -20,7 +21,7 @@ export function eventKitCanRepresent(recurrence: string | undefined): boolean {
   try { parseEventKitRecurrence(recurrence); return true; } catch { return false; }
 }
 
-async function callBridge(method: string, params: Record<string, unknown>, timeoutMs = 30_000): Promise<{ uid?: string }> {
+async function callBridge(method: string, params: Record<string, unknown>, timeoutMs = 30_000): Promise<NonNullable<BridgeResponse["result"]>> {
   const root = process.env.STEWARD_CALENDAR_BRIDGE_DIR;
   if (!root) throw new Error("Steward Calendar EventKit bridge is not available");
   const requests = join(root, "requests");
@@ -31,7 +32,7 @@ async function callBridge(method: string, params: Record<string, unknown>, timeo
   const temporary = join(requests, `.${id}.tmp`);
   const requestPath = join(requests, `${id}.json`);
   const responsePath = join(responses, `${id}.json`);
-  await writeFile(temporary, JSON.stringify({ id, method, params }), { mode: 0o600, flag: "wx" });
+  await writeFile(temporary, JSON.stringify({ id, method, params, expiresAtMs: Date.now() + timeoutMs }), { mode: 0o600, flag: "wx" });
   await rename(temporary, requestPath);
 
   const deadline = Date.now() + timeoutMs;
@@ -49,14 +50,20 @@ async function callBridge(method: string, params: Record<string, unknown>, timeo
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Calendar EventKit bridge timed out after ${timeoutMs}ms; outcome unknown`);
+  try {
+    await unlink(requestPath);
+    throw new Error('Calendar request expired before processing; no write was executed');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  throw new Error(`Calendar EventKit bridge timed out after ${timeoutMs}ms; outcome unknown; do not repeat without verification`);
 }
 
 function eventKitParams(args: CreateArgs | UpdateArgs): Record<string, unknown> {
   const { recurrence, ...params } = args;
   return {
     ...params,
-    ...(recurrence ? { recurrenceSpec: parseEventKitRecurrence(recurrence) } : {}),
+    ...(recurrence ? { recurrenceSpec: parseEventKitRecurrence(recurrence) } : recurrence === "" ? { clearRecurrence: true } : {}),
   };
 }
 
@@ -70,10 +77,18 @@ export async function updateEventKit(args: UpdateArgs & { scope?: "thisEvent" | 
   await callBridge("update", eventKitParams(args));
 }
 
-export async function deleteEventKit(uid: string, scope: "thisEvent" | "futureEvents" = "thisEvent"): Promise<void> {
-  await callBridge("delete", { uid, scope });
+export async function deleteEventKit(uid: string, scope: "thisEvent" | "futureEvents" = "thisEvent", occurrenceStart?: string): Promise<void> {
+  await callBridge("delete", { uid, scope, ...(occurrenceStart ? { occurrenceStart } : {}) });
 }
 
 export async function pingEventKitBridge(timeoutMs = 3_000): Promise<boolean> {
   try { await callBridge("ping", {}, timeoutMs); return true; } catch { return false; }
+}
+
+export async function searchEventKit(params: { start: string; end: string; account?: string; calendar?: string }): Promise<CalEvent[]> {
+  return (await callBridge('search', params)).events ?? [];
+}
+
+export async function readEventKit(uid: string, occurrenceStart?: string): Promise<CalEvent | null> {
+  return (await callBridge('read', { uid, ...(occurrenceStart ? { occurrenceStart } : {}) })).event ?? null;
 }

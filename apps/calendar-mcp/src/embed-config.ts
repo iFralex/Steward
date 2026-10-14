@@ -1,5 +1,5 @@
 import type { EmbeddingConfig } from "@steward/embedding";
-import { usageHeaders } from "@steward/protocol";
+import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig | null {
   const endpoint = env.MAIL_EMBED_ENDPOINT ?? "http://127.0.0.1:4000/v1/embeddings";
@@ -9,7 +9,8 @@ export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env): Embedding
     model: env.MAIL_EMBED_MODEL ?? "local-embed",
     extraHeaders: usageHeaders("calendar-mcp", "embed"),
   };
-  if (env.MAIL_EMBED_API_KEY) cfg.apiKey = env.MAIL_EMBED_API_KEY;
+  const apiKey = gatewayCredential(endpoint, env.MAIL_EMBED_API_KEY, env.GATEWAY_API_KEY, Number(env.GATEWAY_PORT ?? 4000));
+  if (apiKey) cfg.apiKey = apiKey;
   const dim = env.MAIL_EMBED_DIM ? Number(env.MAIL_EMBED_DIM) : NaN;
   if (Number.isFinite(dim) && dim > 0) cfg.outputDimensionality = dim;
   return cfg;

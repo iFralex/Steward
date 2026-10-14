@@ -22,3 +22,7 @@ apps/mac-launcher/speech/models/
 .env
 **/.env
 !.env.example
+
+# Private model replay histories and local weights
+.local-evals/
+.local-models/

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ExtractedDocument, ReadCursor } from "./types.ts";
 
 export const DEFAULT_READ_CHARS = 6_000;
@@ -12,9 +13,9 @@ export function boundedInteger(value: unknown, fallback: number, min: number, ma
 
 export function parseCursor(value: unknown): ReadCursor | null {
   if (typeof value !== "string" || !value) return null;
-  const match = /^p(\d+):o(\d+)$/.exec(value);
+  const match = /^p(\d+):o(\d+)(?:@([a-f0-9]{16}))?$/.exec(value);
   if (!match) throw new Error("cursor must come from a previous document_read result");
-  return { page: Number(match[1]), offset: Number(match[2]) };
+  return { page: Number(match[1]), offset: Number(match[2]), ...(match[3] ? { version: match[3] } : {}) };
 }
 
 export function readDocumentPage(
@@ -22,6 +23,7 @@ export function readDocumentPage(
   args: { page?: unknown; cursor?: unknown; max_chars?: unknown; max_pages?: unknown },
 ) {
   const cursor = parseCursor(args.cursor);
+  if (cursor && cursor.version !== documentVersion(document)) throw new Error('Cursor belongs to an older or unversioned document; repeat document_info/search');
   if (cursor && args.page !== undefined) throw new Error("provide page or cursor, not both");
   const requestedPage = cursor?.page ?? boundedInteger(args.page, 1, 1, Number.MAX_SAFE_INTEGER);
   const page = requestedPage;
@@ -49,12 +51,12 @@ export function readDocumentPage(
     remaining -= separatorLength + marker.length + content.length;
     pagesRead++;
     if (currentOffset + content.length < source.length) {
-      nextCursor = `p${currentPage}:o${currentOffset + content.length}`;
+      nextCursor = documentCursor(document, currentPage, currentOffset + content.length);
       break;
     }
     currentPage++;
     currentOffset = 0;
-    nextCursor = currentPage <= document.pages.length ? `p${currentPage}:o0` : null;
+    nextCursor = currentPage <= document.pages.length ? documentCursor(document, currentPage, 0) : null;
   }
 
   const content = pieces.join("\n\n");
@@ -74,4 +76,11 @@ export function readDocumentPage(
     },
     ...(document.warnings.length ? { warnings: document.warnings } : {}),
   };
+}
+
+export function documentVersion(document: ExtractedDocument): string {
+  return createHash('sha256').update(document.cacheKey).digest('hex').slice(0, 16);
+}
+export function documentCursor(document: ExtractedDocument, page: number, offset: number): string {
+  return `p${page}:o${offset}@${documentVersion(document)}`;
 }

@@ -70,7 +70,7 @@ export class AppleStore {
   eventsInRange(opts: { startISO: string; endISO: string; account?: string; calendar?: string }): CalEvent[] {
     const startCd = unixToCoreData(isoToUnix(opts.startISO));
     const endCd = unixToCoreData(isoToUnix(opts.endISO));
-    const where: string[] = ["ci.start_date >= ?", "ci.start_date <= ?"];
+    const where: string[] = ["COALESCE(ci.end_date, ci.start_date) > ?", "ci.start_date < ?"];
     const params: unknown[] = [startCd, endCd];
     if (opts.account) { where.push("s.name = ?"); params.push(opts.account); }
     if (opts.calendar) { where.push("c.title = ?"); params.push(opts.calendar); }

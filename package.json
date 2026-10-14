@@ -11,7 +11,10 @@
     "deploy:update": "node tools/steward-deploy.mjs update",
     "deploy:verify": "node tools/steward-deploy.mjs verify",
     "deploy:rollback": "node tools/steward-deploy.mjs rollback",
-    "test:deploy": "node --test tools/steward-deploy.test.mjs"
+    "test:deploy": "node --test tools/steward-deploy.test.mjs",
+    "backup:operational": "node tools/steward-backup.mjs operational",
+    "backup:full": "node tools/steward-backup.mjs full",
+    "test:backup": "node --test tools/steward-backup.test.mjs"
   },
   "workspaces": [
     "apps/host",

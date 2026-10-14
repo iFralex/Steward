@@ -1,3 +1,4 @@
+import { timingSafeEqual, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -79,6 +80,7 @@ export const rates: Record<string, { input: number; output: number; cacheRead: n
 };
 
 interface CallMeta {
+  requestId: string;
   service: string;
   action: string;
   sessionId: string | null;
@@ -92,6 +94,7 @@ function callMeta(req: IncomingMessage, body: Json): CallMeta {
     return typeof v === "string" && v.trim() ? v.trim() : null;
   };
   return {
+    requestId: randomUUID(),
     service: h(USAGE_SERVICE_HEADER) ?? USAGE_UNKNOWN,
     action: h(USAGE_ACTION_HEADER) ?? USAGE_UNKNOWN,
     sessionId: h(USAGE_SESSION_HEADER),
@@ -139,7 +142,15 @@ export function shouldFallback(status: number): boolean {
 
 export function attemptsFor(model: string): { name: string; target: GatewayModel }[] {
   const names = fallbackOrder[model] ?? [model];
-  return names.flatMap((name) => (models[name] ? [{ name, target: models[name] }] : []));
+  const seen = new Set<string>();
+  return names.flatMap(name => {
+    const target = models[name];
+    if (!target) return [];
+    const key = JSON.stringify([target.provider, target.model, target.customHost, target.apiKey]);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ name, target }];
+  });
 }
 
 /** Base URL of a provider's OpenAI-compatible API. */
@@ -149,21 +160,27 @@ function directOpenAIBaseUrl(target: GatewayModel): string | undefined {
   return undefined;
 }
 
-async function callProvider(baseUrl: string, path: string, body: Json, target: GatewayModel): Promise<Response> {
+async function callProvider(baseUrl: string, path: string, body: Json, target: GatewayModel, meta: CallMeta): Promise<Response> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (target.apiKey) headers.authorization = `Bearer ${target.apiKey}`;
-  const timeoutMs = Number(process.env.GATEWAY_REQUEST_TIMEOUT_MS ?? 120_000);
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const configured = Number(process.env.GATEWAY_REQUEST_TIMEOUT_MS ?? 120_000);
+  const timeoutMs = Number.isFinite(configured) && configured > 0 ? configured : 120_000;
+  const remaining = Math.ceil(meta.t0 + timeoutMs - Date.now());
+  if (remaining <= 0) throw new Error('Gateway request deadline exceeded');
+  const startedAt = Date.now();
+  let status = 0;
   try {
-    return await fetch(`${baseUrl}${path}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(prepareProviderBody(body, target)),
-      signal: ac.signal,
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: "POST", headers, body: JSON.stringify(prepareProviderBody(body, target)),
+      // Signal stays active through body consumption; all fallback targets share a deadline.
+      signal: AbortSignal.timeout(remaining),
     });
+    status = response.status;
+    return response;
   } finally {
-    clearTimeout(timer);
+    try { usageLedger().recordProviderAttempt({ ts: startedAt, requestId: meta.requestId,
+      service: meta.service, action: meta.action, model: target.model, status,
+      durationMs: Date.now() - startedAt, stream: body.stream === true }); } catch { /* best effort */ }
   }
 }
 
@@ -205,7 +222,7 @@ async function proxyJson(path: string, body: Json, res: ServerResponse, meta: Ca
     const base = directOpenAIBaseUrl(target);
     if (!base) { lastText = `no route for provider ${target.provider}`; continue; }
     try {
-      const upstream = await callProvider(base, path, body, target);
+      const upstream = await callProvider(base, path, body, target, meta);
       const text = await upstream.text();
       if (upstream.ok) {
         let parsed: { usage?: unknown; model?: unknown } = {};
@@ -254,7 +271,7 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
 
     // 1) Native streaming, piped verbatim (keeps tool-call deltas + usage).
     try {
-      const upstream = await callProvider(base, path, body, target);
+      const upstream = await callProvider(base, path, body, target, meta);
       if (upstream.ok) {
         const { usage, model } = await pipeStreamingResponse(upstream, res);
         recordCall(meta, name, model ?? target.model, 200, true, usage);
@@ -274,9 +291,15 @@ async function proxyStream(path: string, body: Json, res: ServerResponse, meta: 
       lastText = err instanceof Error ? err.message : String(err);
     }
 
+    if (res.headersSent) {
+      recordCall(meta, name, target.model, 502, false, null);
+      res.destroy(new Error('Upstream stream interrupted; no fallback after visible output'));
+      return;
+    }
+
     // 2) Fallback: non-streaming call re-emitted as a synthetic SSE stream.
     try {
-      const upstream = await callProvider(base, path, { ...body, stream: false }, target);
+      const upstream = await callProvider(base, path, { ...body, stream: false }, target, meta);
       const text = await upstream.text();
       if (!upstream.ok) {
         if (!shouldFallback(upstream.status)) {
@@ -451,6 +474,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
 
+  if (!gatewayAuthorized(req.headers.authorization, process.env.GATEWAY_API_KEY)) {
+    json(res, 401, { error: { message: 'Invalid gateway bearer key', type: 'authentication_error' } });
+    return;
+  }
   try {
     const body = JSON.parse(await readBody(req)) as Json;
     const meta = callMeta(req, body);
@@ -477,4 +504,12 @@ export function startGateway(port = PORT): ReturnType<typeof createServer> {
 
 if (process.argv[1]?.endsWith("gateway.ts") || process.argv[1]?.endsWith("gateway.js")) {
   startGateway();
+}
+
+/** Local compatibility mode remains available when no shared key is configured. */
+export function gatewayAuthorized(header: string | undefined, key: string | undefined): boolean {
+  if (!key) return true;
+  const candidate = header?.match(/^Bearer (.+)$/i)?.[1] ?? '';
+  const a = Buffer.from(candidate), b = Buffer.from(key);
+  return a.length === b.length && timingSafeEqual(a, b);
 }

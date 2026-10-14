@@ -106,7 +106,7 @@ const MAX_OBJECT_KEYS = 80;
 const MAX_DEPTH = 8;
 
 function contentSnippet(text: string): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, CONTENT_SNIPPET_LEN);
+  return redactString(text).replace(/\s+/g, " ").trim().slice(0, CONTENT_SNIPPET_LEN);
 }
 
 function migrateLegacyPath(legacyPath: string, currentPath: string): void {
@@ -159,7 +159,11 @@ export function redact(value: unknown, depth = 0): unknown {
 function redactString(value: string): string {
   const compact = value
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [Redacted]")
-    .replace(/sk-[A-Za-z0-9._-]{12,}/g, "sk-[Redacted]");
+    .replace(/sk-[A-Za-z0-9._-]{12,}/g, "sk-[Redacted]")
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[Redacted]@")
+    .replace(/([?&](?:[^=&#\s]*(?:token|key|secret|password|auth)[^=&#\s]*)=)[^&#\s]*/gi, "$1[Redacted]")
+    .replace(/((?:api[_-]?key|password|passwd|secret|access[_-]?token|authorization)\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, "$1[Redacted]")
+    .replace(/-----BEGIN (?:[A-Z ]*PRIVATE KEY)-----[\s\S]*?-----END (?:[A-Z ]*PRIVATE KEY)-----/g, "[Redacted private key]");
   return compact.length > MAX_STRING ? `${compact.slice(0, MAX_STRING)}…[truncated ${compact.length - MAX_STRING} chars]` : compact;
 }
 
@@ -207,7 +211,7 @@ export class AuditLog {
     // backup or file read even before redact() is fixed for a new field name.
     const redactedPayloadJson = safeJson(redact(input.payload ?? null));
     const payloadJson = redactedPayloadJson;
-    const sourceRefsJson = safeJson(input.sourceRefs ?? []);
+    const sourceRefsJson = safeJson(redact(input.sourceRefs ?? []));
     const result = this.raw.prepare(
       `INSERT INTO audit_events (
          ts, actor, event_type, risk, summary, session_id, chat_id, action_id,
@@ -215,7 +219,7 @@ export class AuditLog {
          payload_json, redacted_payload_json, source_refs_json
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      ts, input.actor, input.eventType, risk, input.summary,
+      ts, input.actor, input.eventType, risk, redactString(input.summary),
       input.sessionId ?? null, input.chatId ?? null, input.actionId ?? null,
       input.toolName ?? null, input.toolCallId ?? null, input.correlationId ?? null,
       input.ok == null ? null : input.ok ? 1 : 0,

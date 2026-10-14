@@ -92,3 +92,13 @@ test("voice calls aggregate outcomes and expose recent SIP diagnostics", () => {
   assert.equal(s.recentVoice[0].sipStatus, 480);
   assert.equal(s.recentVoice[0].failureCode, "unreachable");
 });
+
+test('provider attempts are visible without double-counting terminal request costs',()=>{
+  const ledger=new UsageLedger(new Database(':memory:'));
+  ledger.recordProviderAttempt({ts:Date.now(),requestId:'request-1',service:'test',action:'fallback',model:'model',status:500,durationMs:10,stream:false});
+  const summary=ledger.summary();
+  assert.equal(summary.providerAttempts?.length,1);
+  assert.equal(summary.providerAttempts?.[0].requestId,'request-1');
+  assert.equal(summary.totals.calls,0);
+  ledger.raw.close();
+});

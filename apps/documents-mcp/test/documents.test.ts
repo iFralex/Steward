@@ -22,7 +22,7 @@ test("text extraction preserves markdown headings and bounded reads expose a cur
   const first = readDocumentPage(document, { max_chars: 1_000 });
   assert.equal(first.content.length, 1_000);
   assert.equal(first.navigation.hasMore, true);
-  assert.match(first.navigation.nextCursor ?? "", /^p1:o1000$/);
+  assert.match(first.navigation.nextCursor ?? "", /^p1:o1000@[a-f0-9]{16}$/);
   const second = readDocumentPage(document, { cursor: first.navigation.nextCursor, max_chars: 50_000 });
   assert.ok(second.content.length <= 12_000);
 });
@@ -36,7 +36,7 @@ test("lexical document search returns compact cursors without embeddings", async
   assert.equal(result.matches.length, 1);
   assert.equal(result.matches[0].page, 2);
   assert.match(result.matches[0].excerpt, /early exit penalty/i);
-  assert.match(result.matches[0].cursor, /^p2:o0$/);
+  assert.match(result.matches[0].cursor, /^p2:o0@[a-f0-9]{16}$/);
   assert.equal(result.search.semantic, "disabled");
 });
 
@@ -72,7 +72,7 @@ test("multi-page reads stop at the requested page budget and finish without a st
   const document = fakeDocument(["one", "two", "three"]);
   const first = readDocumentPage(document, { max_chars: 1_000, max_pages: 2 });
   assert.equal(first.selection.pagesRead, 2);
-  assert.equal(first.navigation.nextCursor, "p3:o0");
+  assert.match(first.navigation.nextCursor!, /^p3:o0@[a-f0-9]{16}$/);
   const last = readDocumentPage(document, { cursor: first.navigation.nextCursor, max_chars: 1_000 });
   assert.equal(last.navigation.hasMore, false);
   assert.equal(last.navigation.nextCursor, null);
@@ -148,3 +148,34 @@ function minimalPdf(text: string): Buffer {
   body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(body, "binary");
 }
+
+test('versioned cursors reject a document edited between reads', () => {
+  const doc=fakeDocument(['x'.repeat(1000)]);
+  const first=readDocumentPage(doc,{max_chars:200});
+  assert.throws(()=>readDocumentPage({...doc,cacheKey:'changed'}, {cursor:first.navigation.nextCursor}),/older/);
+});
+
+test('a previously failed vector is retried on a subsequent search', async () => {
+  const doc=fakeDocument(['alpha']);let available=false;
+  const config={endpoint:'http://example.test',model:'test'};
+  const deps={embedText:async()=>[1,0],embedTexts:async()=>[available?[1,0]:null]};
+  await searchDocument(doc,'alpha',{},config,deps);
+  available=true;
+  const result=await searchDocument(doc,'different',{},config,deps);
+  assert.equal(result.matches.length,1);
+});
+
+test('compressed Office files are rejected before inflation when directory size exceeds budget',async()=>{
+  const {validateArchiveBudget}=await import('../src/archive-budget.ts');
+  const zip=new JSZip();zip.file('word/document.xml','x'.repeat(10000));
+  const bytes=await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'});
+  assert.ok(bytes.length<1000);
+  assert.throws(()=>validateArchiveBudget(bytes,1000),/decompressed/);
+});
+
+test('document cache enforces aggregate estimated bytes rather than only entry count',async()=>{
+  const {cachedDocument,cacheDocument}=await import('../src/cache.ts');
+  const previous=process.env.DOCUMENT_CACHE_MAX_BYTES;process.env.DOCUMENT_CACHE_MAX_BYTES='1024';
+  try {clearDocumentCache();const doc=fakeDocument(['x'.repeat(1000)]);cacheDocument(doc);assert.equal(cachedDocument(doc.cacheKey),undefined);}
+  finally {if(previous===undefined)delete process.env.DOCUMENT_CACHE_MAX_BYTES;else process.env.DOCUMENT_CACHE_MAX_BYTES=previous;clearDocumentCache();}
+});

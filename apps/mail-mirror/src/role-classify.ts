@@ -1,5 +1,5 @@
 import type { Role } from "./mailbox-roles.ts";
-import { usageHeaders } from "@steward/protocol";
+import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 const ROLES: Role[] = ["inbox", "drafts", "sent", "trash", "junk", "archive", "important", "flagged"];
 
@@ -63,5 +63,5 @@ export function loadRoleClassifier(env: NodeJS.ProcessEnv = process.env): ((name
   if (!endpoint || endpoint === "off") return undefined;
   // tier-2 classifies mailbox names at 18/18 on a labelled IT+EN set with the
   // richer prompt; the gateway escalates up on failure. Override with MAIL_CLASSIFY_MODEL.
-  return makeRoleClassifier({ endpoint, model: env.MAIL_CLASSIFY_MODEL ?? "tier-2", apiKey: env.MAIL_CLASSIFY_API_KEY });
+  return makeRoleClassifier({ endpoint, model: env.MAIL_CLASSIFY_MODEL ?? "tier-2", apiKey: gatewayCredential(endpoint, env.MAIL_CLASSIFY_API_KEY, env.GATEWAY_API_KEY, Number(env.GATEWAY_PORT ?? 4000)) });
 }

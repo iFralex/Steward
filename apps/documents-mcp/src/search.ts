@@ -1,7 +1,8 @@
 import { embedText as sharedEmbedText, embedTexts as sharedEmbedTexts, rrf } from "@steward/search";
 import type { EmbeddingConfig } from "@steward/embedding";
 import type { DocumentChunk, ExtractedDocument } from "./types.ts";
-import { boundedInteger } from "./output-budget.ts";
+import { cacheDocument } from "./cache.ts";
+import { documentCursor, boundedInteger } from "./output-budget.ts";
 
 const CHUNK_CHARS = 1_800;
 const CHUNK_OVERLAP = 200;
@@ -33,10 +34,20 @@ export async function searchDocument(
   let semantic: string[] = [];
   const embedOne = deps.embedText ?? sharedEmbedText;
   const embedMany = deps.embedTexts ?? sharedEmbedTexts;
-  let semanticMode: "disabled" | "full" | "sampled" | "unavailable" = embedConfig ? "unavailable" : "disabled";
+  let semanticMode: "disabled" | "full" | "sampled" | "partial" | "unavailable" = embedConfig ? "unavailable" : "disabled";
   if (embedConfig && chunks.length) {
+    const modelKey = JSON.stringify([embedConfig.endpoint, embedConfig.model, embedConfig.outputDimensionality]);
+    if (document.embeddingModelKey !== modelKey) {
+      document.embeddings = undefined;
+      document.embeddingModelKey = modelKey;
+    }
     document.embeddingChunks ??= sampleChunks(chunks, MAX_EMBED_CHUNKS);
     if (!document.embeddings) document.embeddings = await embedInBatches(document.embeddingChunks.map((chunk) => chunk.text), embedConfig, embedMany);
+    const missing = document.embeddings.flatMap((vector, index) => vector ? [] : [index]);
+    if (missing.length) {
+      const retried = await embedInBatches(missing.map(index => document.embeddingChunks![index].text), embedConfig, embedMany);
+      missing.forEach((index, at) => { document.embeddings![index] = retried[at]; });
+    }
     const queryVector = await embedOne(normalizedQuery, embedConfig);
     if (queryVector) {
       semantic = document.embeddingChunks
@@ -45,7 +56,9 @@ export async function searchDocument(
         .sort((a, b) => b.score - a.score || a.chunk.id.localeCompare(b.chunk.id))
         .slice(0, CANDIDATES)
         .map((entry) => entry.chunk.id);
-      semanticMode = document.embeddingChunks.length === chunks.length ? "full" : "sampled";
+      const available = document.embeddings.filter(vector => vector && vector.length === queryVector.length).length;
+      semanticMode = available === 0 ? 'unavailable' : available < document.embeddingChunks.length ? 'partial'
+        : document.embeddingChunks.length === chunks.length ? 'full' : 'sampled';
     }
   }
 
@@ -59,17 +72,19 @@ export async function searchDocument(
       page: chunk.page,
       offset: chunk.offset,
       excerpt: excerpt(chunk.text, normalizedQuery, contextChars),
-      cursor: `p${chunk.page}:o${chunk.offset}`,
+      cursor: documentCursor(document, chunk.page, chunk.offset),
     }];
   });
+  cacheDocument(document);
   return {
     path: document.path,
     name: document.name,
     format: document.format,
     query: normalizedQuery,
     matches,
-    search: { lexical: true, semantic: semanticMode, totalChunks: chunks.length, embeddedChunks: document.embeddingChunks?.length ?? 0 },
+    search: { lexical: true, semantic: semanticMode, totalChunks: chunks.length, embeddedChunks: document.embeddings?.filter(Boolean).length ?? 0, selectedChunks: document.embeddingChunks?.length ?? 0 },
     truncated: orderedIds.length > limit,
+    ...(semanticMode === "partial" ? { warning: "Some document embeddings remain unavailable; lexical search covered the full document." } : {}),
     ...(semanticMode === "sampled" ? { warning: `Semantic search sampled ${document.embeddingChunks?.length} of ${chunks.length} chunks; lexical search covered the full document.` } : {}),
     ...(document.warnings.length ? { warnings: document.warnings } : {}),
   };

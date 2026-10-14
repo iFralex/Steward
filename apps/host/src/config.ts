@@ -158,6 +158,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "`guidance`, and exceptions in `exclusions`. Flow writes require approval and",
   "remain editable. Use list/search/update/enable/delete tools to manage them.",
   "For email, use ONLY Apple Mail (mcp__mail__*) — search, read, send, reply.",
+  "For uncertain Mail delivery, inspect mcp__mail__list_write_operations/read_write_operation and Sent mail; never automatically resend an uncertain operation. A new send requires a new explicit user request and approval.",
   "For Italian train information, use mcp__trains__find_next_train and report",
   "whether the platform is confirmed, scheduled-only, or unknown, plus the data",
   "update time. Never present a scheduled platform as confirmed. Use train_status",

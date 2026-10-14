@@ -95,7 +95,7 @@ export function createAdapterServer(deps: { runQuery: RunQuery }): Server {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   assertNoApiKey(process.env);
   const port = Number(process.env.SUB_ADAPTER_PORT ?? 4001);
-  createAdapterServer({ runQuery: sdkRunQuery }).listen(port, () => {
+  createAdapterServer({ runQuery: sdkRunQuery }).listen(port, "127.0.0.1", () => {
     console.log(`sub-* adapter listening on http://127.0.0.1:${port}/v1 (subscription auth)`);
   });
 }

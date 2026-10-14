@@ -1,6 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
 import {
   calendarFieldsMatch,
   findCalendarConfirmation,
@@ -10,77 +9,49 @@ import {
 } from "../src/write-ops-cli.ts";
 import { IndexDb } from "../../calendar-mcp/src/index-db.ts";
 
-function mailStoreWith(body: string) {
-  const db = new Database(":memory:");
-  db.exec(`CREATE TABLE messages (message_id TEXT, date INTEGER, mailbox TEXT, deleted INTEGER, from_addr TEXT, subject TEXT, body_text TEXT)`);
-  db.prepare(`INSERT INTO messages VALUES ('m1', ?, 'Sent', 0, 'me@x.com', 'Subj', ?)`).run(Math.floor(Date.now() / 1000), body);
-  return { raw: db, close: () => db.close() } as any;
+import { Store } from '../../mail-mirror/src/store.ts';
+
+function mailFixture(rows: Record<string, unknown>[] = [{}]) {
+  const store = Store.open(':memory:');
+  store.raw.exec(`INSERT INTO accounts VALUES ('a1','Main','me@x.com');
+    INSERT INTO accounts VALUES ('a2','Other','other@x.com');
+    INSERT INTO mailbox_roles VALUES ('a1','Sent','sent');
+    INSERT INTO mailbox_roles VALUES ('a2','Sent','sent');`);
+  for (const [i, input] of rows.entries()) {
+    const row = { id: `m${i}`, account: 'a1', mailbox: 'Sent', date: Math.floor(Date.now()/1000),
+      from: 'me@x.com', to: '["you@x.com"]', cc: '[]', subject: 'Subj', body: 'exact outgoing body', ...input };
+    store.raw.prepare(`INSERT INTO messages(message_id,account,mailbox,date,from_addr,to_addrs,cc_addrs,subject,body_text,body_state,source)
+      VALUES (@id,@account,@mailbox,@date,@from,@to,@cc,@subject,@body,'full','emlx')`).run(row);
+  }
+  return store;
+}
+function mailOperation(extra = {}) {
+  return { kind: 'mail.send', startedAt: Math.floor(Date.now()/1000)-10,
+    input: { to: ['you@x.com'], body: 'exact outgoing body' },
+    expected: { from: 'me@x.com', account: 'a1', subject: 'Subj', to: ['you@x.com'], cc: [] }, ...extra } as any;
 }
 
-test("confirmation matches a body snippet containing underscores", () => {
-  const body = "ecco la mia_variabile importante nel testo";
-  const store = mailStoreWith(body);
-  const op = {
-    startedAt: Math.floor(Date.now() / 1000) - 10,
-    expected: { bodySnippet: "ecco la mia_variabile importante", from: "me@x.com", subject: "Subj" },
-  } as any;
-  assert.ok(findMailConfirmation(store, op), "snippet with _ must match");
+test('confirms one exact sent message with sender/account/recipients/body evidence', () => {
+  const store = mailFixture();
+  assert.equal(findMailConfirmation(store, mailOperation())?.message_id, 'm0');
+  store.close();
 });
-
-test("falls back to from+subject+date when the body snippet is not in the mirror", () => {
-  const store = mailStoreWith("(body stored as html, snippet absent)");
-  const op = {
-    startedAt: Math.floor(Date.now() / 1000) - 10,
-    expected: { bodySnippet: "text the mirror never stored", from: "me@x.com", subject: "Subj" },
-  } as any;
-  assert.ok(findMailConfirmation(store, op), "must fall back to subject+from match");
+for (const [name, row] of Object.entries({
+  recipient: { to: '["wrong@x.com"]' }, account: { account: 'a2', from: 'other@x.com' },
+  folder: { mailbox: 'Inbox' }, body: { body: 'same prefix but different message' },
+  cc: { cc: '["unexpected@x.com"]' }, old: { date: Math.floor(Date.now()/1000)-1000 },
+})) test(`does not confirm a mismatched ${name}`, () => {
+  const store = mailFixture([row]);
+  assert.equal(findMailConfirmation(store, mailOperation()), null); store.close();
 });
-
-function storeWithRows(rows: { body?: string; from?: string; subject?: string; date: number }[]) {
-  const db = new Database(":memory:");
-  db.exec(`CREATE TABLE messages (message_id TEXT, date INTEGER, mailbox TEXT, deleted INTEGER, from_addr TEXT, subject TEXT, body_text TEXT)`);
-  let i = 0;
-  for (const r of rows) db.prepare(`INSERT INTO messages VALUES (?, ?, 'Sent', 0, ?, ?, ?)`).run(`m${i++}`, r.date, r.from ?? "me@x.com", r.subject ?? "Subj", r.body ?? "");
-  return { raw: db, close: () => db.close() } as any;
-}
-
-test("fallback does NOT confirm against a pre-existing message dated before the send attempt", () => {
-  const now = Math.floor(Date.now() / 1000);
-  const store = storeWithRows([{ date: now - 200, subject: "Subj", from: "me@x.com" }]); // older than startedAt
-  const op = { startedAt: now, expected: { bodySnippet: "text not in mirror", from: "me@x.com", subject: "Subj" } } as any;
-  assert.equal(findMailConfirmation(store, op), null, "a message older than the send must not confirm it");
+test('ambiguous identical sent messages remain unconfirmed', () => {
+  const store = mailFixture([{}, {}]);
+  assert.equal(findMailConfirmation(store, mailOperation()), null); store.close();
 });
-
-test("fallback confirms a message that lands just after the send attempt", () => {
-  const now = Math.floor(Date.now() / 1000);
-  const store = storeWithRows([{ date: now + 5, subject: "Subj", from: "me@x.com" }]);
-  const op = { startedAt: now, expected: { bodySnippet: "text not in mirror", from: "me@x.com", subject: "Subj" } } as any;
-  assert.ok(findMailConfirmation(store, op), "the send that landed just after must confirm");
-});
-
-test("fallback does NOT confirm a same-subject message far in the future (recurring subject)", () => {
-  const now = Math.floor(Date.now() / 1000);
-  const store = storeWithRows([{ date: now + 3 * 86400, subject: "Subj", from: "me@x.com" }]);
-  const op = { startedAt: now, expected: { bodySnippet: "text not in mirror", from: "me@x.com", subject: "Subj" } } as any;
-  assert.equal(findMailConfirmation(store, op), null, "a much later same-subject message must not confirm this send");
-});
-
-test("fallback picks the EARLIEST matching message after the send (not a later same-subject one)", () => {
-  const now = Math.floor(Date.now() / 1000);
-  const store = storeWithRows([
-    { date: now + 5, subject: "Subj", from: "me@x.com", body: "the real send" },
-    { date: now + 4000, subject: "Subj", from: "me@x.com", body: "a later same-subject email" },
-  ]);
-  const op = { startedAt: now, expected: { bodySnippet: "text not in mirror", from: "me@x.com", subject: "Subj" } } as any;
-  const row = findMailConfirmation(store, op);
-  assert.equal(row?.message_id, "m0", "must pick the earliest post-send match");
-});
-
-test("fallback never fires for a reply (no subject in expected)", () => {
-  const now = Math.floor(Date.now() / 1000);
-  const store = storeWithRows([{ date: now + 5, subject: "Subj", from: "me@x.com" }]);
-  const op = { startedAt: now, expected: { bodySnippet: "text not in mirror", from: "me@x.com" } } as any; // reply: no subject
-  assert.equal(findMailConfirmation(store, op), null, "replies must not use the header fallback");
+test('scheduled confirmation uses actual attempt time rather than enqueue time', () => {
+  const store = mailFixture();
+  assert.ok(findMailConfirmation(store, mailOperation({ startedAt: 1, attemptedAt: Math.floor(Date.now()/1000) })));
+  store.close();
 });
 
 test("mail confirmations are bounded when the mirror never observes the write", () => {
@@ -88,7 +59,7 @@ test("mail confirmations are bounded when the mirror never observes the write", 
   assert.equal(shouldExhaustMailConfirmation(12), true);
 });
 
-test("calendar confirmation checks target, all-day state, alarms and recurrence presence", () => {
+test("calendar confirmation checks target, alarms and exact recurrence", () => {
   const actual = {
     calendarId: "CAL-1",
     calendar: "Work",
@@ -98,6 +69,7 @@ test("calendar confirmation checks target, all-day state, alarms and recurrence 
     allDay: false,
     alarms: [60, 10],
     hasRecurrence: true,
+    recurrence: "FREQ=WEEKLY",
   };
   const expected = {
     calendarId: "CAL-1",
@@ -113,6 +85,7 @@ test("calendar confirmation checks target, all-day state, alarms and recurrence 
   assert.equal(calendarFieldsMatch({ ...actual, allDay: true }, expected), false);
   assert.equal(calendarFieldsMatch({ ...actual, alarms: [10] }, expected), false);
   assert.equal(calendarFieldsMatch({ ...actual, hasRecurrence: false }, expected), false);
+  assert.equal(calendarFieldsMatch({ ...actual, recurrence: "FREQ=DAILY" }, expected), false);
 });
 
 test("calendar confirmation compares all-day boundaries by civil date across DST", () => {
@@ -189,4 +162,49 @@ test("failed creates without a returned uid are terminal and confirmations are b
   assert.equal(shouldExhaustCalendarConfirmation(base), true);
   assert.equal(shouldExhaustCalendarConfirmation({ ...base, kind: "calendar.update", input: { uid: "U1" }, confirmAttempts: 10 }), false);
   assert.equal(shouldExhaustCalendarConfirmation({ ...base, kind: "calendar.update", input: { uid: "U1" }, confirmAttempts: 11 }), true);
+});
+
+test('calendar deletion needs fresh successful synchronization and baseline evidence', () => {
+  const index = IndexDb.open(':memory:');
+  const op = { kind: 'calendar.delete', input: {uid:'gone'}, expected:{uid:'gone',targetExisted:true}, startedAt:100, scriptFinishedAt:101 } as any;
+  assert.equal(findCalendarConfirmation(index, op), null);
+  index.finishSyncGeneration(1, 103000);
+  assert.equal(findCalendarConfirmation(index, op), 'gone');
+  assert.equal(findCalendarConfirmation(index, {...op,expected:{uid:'gone'}}), null);
+  index.close();
+});
+
+test('native recurrence evidence is required and must match the requested rule', () => {
+  const index=IndexDb.open(':memory:');
+  const op={kind:'calendar.update',input:{uid:'u'},expected:{recurrence:'FREQ=WEEKLY'},startedAt:1} as any;
+  assert.equal(findCalendarConfirmation(index,op),null);
+  assert.equal(findCalendarConfirmation(index,op,{uid:'u',hasRecurrence:true,recurrence:'FREQ=DAILY'} as any),null);
+  assert.equal(findCalendarConfirmation(index,op,{uid:'u',hasRecurrence:true,recurrence:'FREQ=WEEKLY'} as any),'u');
+  index.close();
+});
+
+test('same-second pre-write Calendar snapshots cannot confirm deletion',()=>{
+  const index=IndexDb.open(':memory:');
+  const op={kind:'calendar.delete',input:{uid:'gone'},expected:{targetExisted:true},startedAt:105,scriptFinishedAt:105,scriptFinishedAtMs:105500} as any;
+  index.finishSyncGeneration(1,105100);assert.equal(findCalendarConfirmation(index,op),null);
+  index.finishSyncGeneration(2,105600);assert.equal(findCalendarConfirmation(index,op),'gone');index.close();
+});
+
+
+test('a capped mail candidate set cannot establish unique delivery', () => {
+  const store=mailFixture(Array.from({length:200},(_,i)=>i===0?{}:{body:`other ${i}`}));
+  assert.equal(findMailConfirmation(store,mailOperation()),null);
+  store.close();
+});
+
+test('calendar confirmation follows an unambiguous historical UID alias', () => {
+  const index=IndexDb.open(':memory:');
+  const event={uid:'old',externalId:'stable',summary:'Renamed identity',description:null,location:null,
+    start:'2026-12-01T10:00:00.000Z',end:'2026-12-01T11:00:00.000Z',allDay:false,calendarId:'c',
+    calendar:'Work',account:'iCloud',alarms:[],hasRecurrence:false,status:1,url:null,lastModified:1};
+  index.upsertEvent(event,'h',index.beginSyncGeneration());
+  index.upsertEvent({...event,uid:'new'},'h',index.beginSyncGeneration());
+  index.finishSyncGeneration(2,3000);
+  assert.equal(findCalendarConfirmation(index,{kind:'calendar.update',input:{uid:'old'},expected:{summary:event.summary},startedAt:1,scriptFinishedAtMs:2000} as any),'new');
+  index.close();
 });

@@ -70,3 +70,19 @@ test("audit events are attributed to the store's actor, not always 'host'", () =
   assert.equal(scheduledEvent?.actor, "scheduler");
   assert.equal(returnedEvent?.actor, "scheduler");
 });
+
+test('two processes cannot both claim the same due send and a crash cannot requeue it', () => {
+  const dir=mkdtempSync(join(tmpdir(),'write-claim-'));
+  const a=WriteOpsStore.open(join(dir,'ops.db')), b=WriteOpsStore.open(join(dir,'ops.db'));
+  const now=Math.floor(Date.now()/1000), id=a.startScheduled(op,now);
+  assert.equal(a.claimScheduled(id,now)?.attemptedAt,now);
+  assert.equal(b.claimScheduled(id,now),null);
+  assert.equal(b.dueScheduled(now+3600).length,0);
+  a.close(); b.close();
+  const restarted=WriteOpsStore.open(join(dir,'ops.db'));
+  assert.equal(restarted.claimScheduled(id,now+3600),null);
+  restarted.markNeedsReview(id,'Inspect Sent and approve a new send');
+  assert.equal(restarted.get(id)?.status,'needs_review');
+  assert.equal(restarted.dueScheduled(now+3600).length,0);
+  restarted.close();
+});

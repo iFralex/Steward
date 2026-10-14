@@ -1,5 +1,9 @@
 export interface CalEvent {
   uid: string;
+  refId?: string;
+  recurrence?: string;
+  recurrenceRuleCount?: number;
+  occurrenceStart?: string;
   /** Server-provided identity; more durable than uid but not necessarily unique. */
   externalId?: string | null;
   summary: string;

@@ -79,3 +79,8 @@ test("calendar date inputs are normalized to UTC", () => {
   const updated = parseUpdateArgs({ uid: "U1", start: "2026-12-25T10:00:00+01:00" });
   assert.equal(updated.start, "2026-12-25T09:00:00.000Z");
 });
+
+
+test("empty recurrence is an explicit request to clear the native rule", () => {
+  assert.equal(parseUpdateArgs({uid:"U1",recurrence:""}).recurrence,"");
+});

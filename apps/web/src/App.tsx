@@ -1,3 +1,4 @@
+import { consumeNotificationTarget } from "./lib/notification-navigation";
 import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { BarChart3, ListChecks, Mic, Settings, Square } from "lucide-react";
@@ -262,6 +263,22 @@ function App() {
     const el = scrollRef.current;
     if (el && followLatestRef.current) el.scrollTop = el.scrollHeight;
   }, [host.messages, host.approvals, host.questions, host.state]);
+
+  const pendingNotificationRef = useRef<ReturnType<typeof consumeNotificationTarget> | null>(null);
+  const notificationConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!notificationConsumedRef.current) {
+      notificationConsumedRef.current = true;
+      pendingNotificationRef.current = consumeNotificationTarget();
+    }
+    if (!host.connected) return;
+    const target = pendingNotificationRef.current;
+    if (!target) return;
+    pendingNotificationRef.current = null;
+    if (target.actionId) {
+      setTab('actions'); setSelectedActionId(target.actionId); setPane('action'); setMobileDrill(true);
+    } else if (target.chatId) { setTab('chat'); selectChat(target.chatId); }
+  }, [host.connected, selectChat]);
 
   // Tapping a push notification: the service worker forwards the payload here so
   // we jump to the relevant action proposal (or chat).

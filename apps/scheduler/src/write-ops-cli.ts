@@ -1,23 +1,17 @@
 #!/usr/bin/env -S node --import tsx
+import { parseEventKitRecurrence } from "../../calendar-mcp/src/rrule.ts";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { Store } from "../../mail-mirror/src/store.ts";
 import { dbPath as mailDbPath } from "../../mail-mirror/src/paths.ts";
 import { sendScript, replyScript } from "../../mail-mcp/src/applescript.ts";
 import { runOsa } from "../../mail-mcp/src/osascript.ts";
 import type { ReplyArgs, SendArgs } from "../../mail-mcp/src/types.ts";
+import { eventKitBridgeAvailable, readEventKit } from "../../calendar-mcp/src/eventkit-client.ts";
+import type { CalEvent } from "../../calendar-mcp/src/types.ts";
 import { IndexDb } from "../../calendar-mcp/src/index-db.ts";
 import { indexDbPath as calendarIndexDbPath } from "../../calendar-mcp/src/paths.ts";
 import { WriteOpsStore, type WriteOpRow } from "@steward/write-ops";
 
-const execFileAsync = promisify(execFile);
-
-const RETRY_AFTER_CONFIRM_ATTEMPTS = Math.max(
-  1,
-  Number(process.env.WRITE_OP_RETRY_AFTER_CONFIRM_ATTEMPTS ?? 3),
-);
-const MAX_ATTEMPTS = Math.max(1, Number(process.env.WRITE_OP_MAX_ATTEMPTS ?? 2));
 const MAX_MAIL_CONFIRM_ATTEMPTS = Math.max(
   1,
   Number(process.env.WRITE_OP_MAIL_MAX_CONFIRM_ATTEMPTS ?? 12),
@@ -62,7 +56,9 @@ export async function sendDueWrites(): Promise<{ fired: number; failed: number }
   let fired = 0;
   let failed = 0;
   try {
-    for (const op of ops.dueScheduled(now, 50)) {
+    for (const candidate of ops.dueScheduled(now, 50)) {
+      const op = ops.claimScheduled(candidate.id, now);
+      if (!op) continue;
       try {
         if (op.kind === "mail.send") {
           await runOsa(sendScript(op.input as unknown as SendArgs), { timeoutMs: 300_000 });
@@ -94,7 +90,17 @@ export async function reconcileCalendarWrites(): Promise<{ confirmed: number; pe
   let pending = 0;
   try {
     for (const op of ops.pendingForConfirmation(["calendar.create", "calendar.update", "calendar.delete"], 100)) {
-      const confirmedUid = findCalendarConfirmation(index, op);
+      let native: CalEvent | null | undefined;
+      const recordedUid = op.result?.uid ?? op.input.uid;
+      if (eventKitBridgeAvailable() && typeof recordedUid === 'string') {
+        try { native = await readEventKit(index.resolveUid(recordedUid) ?? recordedUid, op.input.occurrenceStart as string | undefined); }
+        catch {
+          if (shouldExhaustCalendarConfirmation(op)) ops.markNeedsReview(op.id, 'Native Calendar verification unavailable; inspect the event before repeating the write.');
+          else { ops.incrementConfirmAttempt(op.id); pending++; }
+          continue;
+        }
+      }
+      const confirmedUid = findCalendarConfirmation(index, op, native);
       if (confirmedUid) {
         ops.markConfirmed(op.id, { uid: confirmedUid });
         confirmed++;
@@ -123,7 +129,7 @@ export function shouldExhaustCalendarConfirmation(op: WriteOpRow): boolean {
   return op.confirmAttempts + 1 >= MAX_CALENDAR_CONFIRM_ATTEMPTS;
 }
 
-export function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): string | null {
+export function findCalendarConfirmation(index: IndexDb, op: WriteOpRow, native?: CalEvent | null): string | null {
   const uid = typeof op.result?.uid === "string"
     ? op.result.uid
     : typeof op.input.uid === "string"
@@ -131,16 +137,25 @@ export function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): string
       : typeof op.expected.uid === "string"
         ? op.expected.uid
         : "";
-  if (op.kind === "calendar.delete") return uid && index.getEvent(uid) === null ? uid : null;
+  if (uid && native !== undefined) {
+    if (op.kind === 'calendar.delete') return native === null && op.expected.targetExisted === true ? uid : null;
+    return native && calendarFieldsMatch(native as unknown as Record<string, unknown>, op.expected) ? native.uid : null;
+  }
+  // A future-series effect or exact recurrence edit requires native evidence.
+  if (op.expected.scope === 'futureEvents' || op.expected.recurrence != null) return null;
+  const resolvedUid = uid ? index.resolveUid(uid) ?? uid : '';
+  const fresh = Number(index.getState('completed_sync_started_at') ?? 0) > (op.scriptFinishedAtMs ?? ((op.scriptFinishedAt ?? op.startedAt) + 1) * 1000);
+  if (typeof op.startedAt === "number" && !fresh) return null;
+  if (op.kind === "calendar.delete") return op.expected.targetExisted === true && fresh && uid && index.getEvent(resolvedUid) === null ? uid : null;
   if (op.kind === "calendar.update") {
     if (!uid) return null;
-    const ev = index.getEvent(uid);
+    const ev = index.getEvent(resolvedUid);
     if (!ev) return null;
     return calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected) ? ev.uid : null;
   }
   if (op.kind === "calendar.create") {
     if (uid) {
-      const ev = index.getEvent(uid);
+      const ev = index.getEvent(resolvedUid);
       return ev && calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected) ? ev.uid : null;
     }
     const candidates = index.writeConfirmationCandidates(op.expected)
@@ -179,8 +194,22 @@ export function calendarFieldsMatch(ev: Record<string, unknown>, expected: Recor
   if (expected.recurrence != null) {
     const expectedPresence = typeof expected.recurrence === "string" && expected.recurrence.trim().length > 0;
     if (Boolean(ev.hasRecurrence) !== expectedPresence) return false;
+    // Presence alone cannot confirm an RRULE change.
+    if (expectedPresence && (!canonicalRule(expected.recurrence) || canonicalRule(ev.recurrence) !== canonicalRule(expected.recurrence))) return false;
+    if (expectedPresence && ev.recurrenceRuleCount != null && ev.recurrenceRuleCount !== 1) return false;
   }
   return true;
+}
+
+function canonicalRule(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const spec = parseEventKitRecurrence(value);
+    if (spec.until?.length === 8) spec.until += 'T235959Z';
+    if (spec.daysOfWeek) spec.daysOfWeek.sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    for (const key of ['daysOfMonth','monthsOfYear','weeksOfYear','daysOfYear','setPositions'] as const) spec[key]?.sort((a,b) => a-b);
+    return JSON.stringify(spec);
+  } catch { return null; }
 }
 
 function localCivilDate(value: unknown): string | null {
@@ -201,7 +230,7 @@ export async function reconcileMailWrites(): Promise<{ confirmed: number; pendin
   const mail = Store.openReadonly(mailDbPath());
   let confirmed = 0;
   let pending = 0;
-  let retried = 0;
+  const retried = 0;
   let exhausted = 0;
   try {
     for (const op of ops.pendingForConfirmation(["mail.send", "mail.reply"], 100)) {
@@ -213,30 +242,8 @@ export async function reconcileMailWrites(): Promise<{ confirmed: number; pendin
       }
       ops.incrementConfirmAttempt(op.id);
       const afterThisAttempt = op.confirmAttempts + 1;
-      if (shouldPrepareRetry(op, afterThisAttempt)) {
-        try {
-          await restartMailForWrite();
-          ops.markRestartPrepared(op.id);
-          pending++;
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          ops.markRetryExhausted(op.id, message);
-          exhausted++;
-        }
-      } else if (shouldRetry(op)) {
-        ops.markRetrying(op.id);
-        try {
-          await retryMailOperation(op);
-          ops.scriptReturned(op.id, { retried: true });
-          retried++;
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          ops.markRetryExhausted(op.id, message);
-          exhausted++;
-        }
-      } else if (shouldExhaustMailConfirmation(afterThisAttempt)) {
-        const detail = op.lastError ? ` Last error: ${op.lastError}` : "";
-        ops.markRetryExhausted(op.id, `Mail write could not be confirmed.${detail}`);
+      if (shouldExhaustMailConfirmation(afterThisAttempt)) {
+        ops.markNeedsReview(op.id, "Mail delivery could not be confirmed. Inspect Sent mail; a new send requires explicit user approval.");
         exhausted++;
       } else {
         pending++;
@@ -253,114 +260,42 @@ export function shouldExhaustMailConfirmation(confirmAttempts: number): boolean 
   return confirmAttempts >= MAX_MAIL_CONFIRM_ATTEMPTS;
 }
 
-function shouldPrepareRetry(op: WriteOpRow, confirmAttempts: number): boolean {
-  if (!["unknown", "failed"].includes(op.status)) return false;
-  if (op.attempts >= MAX_ATTEMPTS) return false;
-  return confirmAttempts >= RETRY_AFTER_CONFIRM_ATTEMPTS;
-}
-
-function shouldRetry(op: WriteOpRow): boolean {
-  if (op.status !== "restart_prepared") return false;
-  return op.attempts < MAX_ATTEMPTS;
-}
-
 export function findMailConfirmation(mail: Store, op: WriteOpRow): { message_id: string; date: number; mailbox: string } | null {
-  const snippet = typeof op.expected.bodySnippet === "string" ? op.expected.bodySnippet : "";
-  const from = typeof op.expected.from === "string" ? op.expected.from.trim().toLowerCase() : "";
-  const subject = typeof op.expected.subject === "string" ? op.expected.subject.trim() : "";
-  const startedAt = op.startedAt - 300;
-
-  const query = (clauses: string[], params: unknown[]) =>
-    mail.raw.prepare(
-      `SELECT message_id, date, mailbox FROM messages WHERE ${clauses.join(" AND ")} ORDER BY date DESC LIMIT 1`,
-    ).get(...params) as { message_id: string; date: number; mailbox: string } | undefined;
-
-  if (snippet) {
-    const clauses = ["deleted=0", "date>=?", "body_text LIKE ? ESCAPE '\\'"];
-    const params: unknown[] = [startedAt, `%${snippet.replace(/[\\%_]/g, "\\$&")}%`];
-    if (from) { clauses.push("lower(from_addr)=?"); params.push(from); }
-    if (subject) { clauses.push("subject=?"); params.push(subject); }
-    const row = query(clauses, params);
-    if (row) return row;
-  }
-  // Fallback: the mirror may store a transformed body (HTML→text), so a valid
-  // send can miss the snippet match. Accept a header match, but tightly — the
-  // confirming message must land at/just-after the send attempt and within a
-  // sync window, and we take the EARLIEST such message so a later same-subject
-  // email (recurring reports, "Re:" threads) can't be mistaken for this send.
-  if (from && subject) {
-    const lo = op.startedAt - 60;          // small skew: server Date vs our startedAt
-    const hi = op.startedAt + 86400;        // tolerate mirror sync lag; bound recurring-subject false matches
-    const row = mail.raw.prepare(
-      `SELECT message_id, date, mailbox FROM messages
-       WHERE deleted=0 AND date>=? AND date<=? AND lower(from_addr)=? AND subject=?
-       ORDER BY date ASC LIMIT 1`,
-    ).get(lo, hi, from, subject) as { message_id: string; date: number; mailbox: string } | undefined;
-    if (row) return row;
-  }
-  return null;
-}
-
-async function retryMailOperation(op: WriteOpRow): Promise<void> {
-  if (op.kind === "mail.send") {
-    await runOsa(sendScript(op.input as unknown as SendArgs), { timeoutMs: 300_000 });
-    return;
-  }
-  if (op.kind === "mail.reply") {
-    await runOsa(replyScript(op.input as unknown as ReplyArgs), { timeoutMs: 300_000 });
-    return;
-  }
-  throw new Error(`unsupported mail retry kind: ${op.kind}`);
-}
-
-async function restartMailForWrite(): Promise<void> {
-  const hasVisibleCompose = await mailHasVisibleComposeWindow().catch(() => false);
-  if (hasVisibleCompose) {
-    throw new Error("Mail has visible compose windows; refusing automatic restart");
-  }
-  await quitMail().catch(async () => {
-    await execFileAsync("/usr/bin/killall", ["Mail"]).catch(() => undefined);
+  const addresses = (value: unknown): string[] => {
+    if (Array.isArray(value)) return [...new Set(value.map(String).map(v => v.trim().toLowerCase()))].sort();
+    if (typeof value !== "string") return [];
+    try { return addresses(JSON.parse(value)); } catch { return addresses(value.split(/[,;\s]+/).filter(Boolean)); }
+  };
+  const sourceId = String(op.expected.messageId ?? op.input.messageId ?? op.input.id ?? "");
+  const source = op.kind === "mail.reply" ? mail.getMessage(sourceId) : undefined;
+  const expectedTo = addresses(op.expected.to ?? op.input.to ?? (source ? [source.fromAddr] : undefined));
+  const expectedCc = addresses(op.expected.cc ?? op.input.cc ?? []);
+  // replyAll requires resolved recipient evidence; never infer an incomplete set.
+  if (addresses(op.input.bcc).length) return null; // mirror has no BCC evidence
+  if (!expectedTo.length || (op.kind === "mail.reply" && op.input.replyAll === true && !op.expected.to)) return null;
+  const from = String(op.expected.from ?? op.input.from ?? "").trim().toLowerCase();
+  const account = String(op.expected.account ?? source?.account ?? "");
+  const attemptedAt = op.attemptedAt ?? op.startedAt;
+  const body = String(op.input.body ?? "").replace(/\s+/g, " ").trim();
+  if (!body) return null;
+  const rows = mail.raw.prepare(`SELECT m.*, a.emails AS own_emails FROM messages m
+    JOIN mailbox_roles r ON r.account_uuid=m.account AND r.mailbox_name=m.mailbox AND r.role='sent'
+    JOIN accounts a ON a.uuid=m.account
+    WHERE m.deleted=0 AND m.date>=? AND m.date<=? ORDER BY m.date LIMIT 200`)
+    .all(attemptedAt - 60, attemptedAt + 86400) as Record<string, unknown>[];
+  if (rows.length === 200) return null; // An incomplete candidate set cannot prove uniqueness.
+  const matches = rows.filter(row => {
+    const sender = String(row.from_addr ?? "").trim().toLowerCase();
+    if (!addresses(row.own_emails).includes(sender) || (from && sender !== from) || (account && row.account !== account)) return false;
+    if (JSON.stringify(addresses(row.to_addrs)) !== JSON.stringify(expectedTo)
+      || JSON.stringify(addresses(row.cc_addrs)) !== JSON.stringify(expectedCc)) return false;
+    if (op.kind === "mail.reply") {
+      if (!source || row.in_reply_to !== source.messageId) return false;
+    } else if (String(row.subject ?? "") !== String(op.expected.subject ?? op.input.subject ?? "")) return false;
+    // Match the complete normalized outgoing text, not merely a 120-char prefix.
+    return String(row.body_text ?? "").replace(/\s+/g, " ").trim() === body;
   });
-  await sleep(2000);
-  await runOsa('tell application "Mail" to activate', { timeoutMs: 30_000 });
-  await waitForMailHealthy();
-}
-
-async function mailHasVisibleComposeWindow(): Promise<boolean> {
-  const out = await runOsa(`
-tell application "Mail"
-  set n to 0
-  repeat with m in outgoing messages
-    try
-      if visible of m is true then set n to n + 1
-    end try
-  end repeat
-  return n as string
-end tell`, { timeoutMs: 10_000 });
-  return Number(out.trim()) > 0;
-}
-
-async function quitMail(): Promise<void> {
-  await runOsa('tell application "Mail" to quit', { timeoutMs: 20_000 });
-}
-
-async function waitForMailHealthy(): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  let lastErr: unknown;
-  while (Date.now() < deadline) {
-    try {
-      await runOsa('tell application "Mail" to return (count of accounts) as string', { timeoutMs: 10_000 });
-      return;
-    } catch (err) {
-      lastErr = err;
-      await sleep(2000);
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "Mail did not become healthy"));
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return matches.length === 1 ? matches[0] as unknown as { message_id: string; date: number; mailbox: string } : null;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

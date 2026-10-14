@@ -22,6 +22,7 @@ export interface ExtractedDocument {
   cacheKey: string;
   chunks?: DocumentChunk[];
   embeddingChunks?: DocumentChunk[];
+  embeddingModelKey?: string;
   embeddings?: Array<number[] | null>;
 }
 
@@ -33,6 +34,7 @@ export interface DocumentChunk {
 }
 
 export interface ReadCursor {
+  version?: string;
   page: number;
   offset: number;
 }

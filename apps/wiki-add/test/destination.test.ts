@@ -41,7 +41,7 @@ test("withDestinationPrefix prefixes every targetRel", () => {
 
 test("withDestinationPrefix leaves targetRel unchanged when prefix is empty", () => {
   const plans = [{ src: "/a", targetRel: "one.pdf" }];
-  assert.deepEqual(withDestinationPrefix(plans, ""), plans);
+  assert.deepEqual(withDestinationPrefix(plans, ""), plans.map(p => ({...p,destinationChosen:true})));
 });
 
 test("planForChosenPath: single file uses the chosen path directly as targetRel", () => {
@@ -49,7 +49,7 @@ test("planForChosenPath: single file uses the chosen path directly as targetRel"
   writeFileSync(join(dir, "report.pdf"), "x");
   const chosen = join(sources, "progetti", "renamed.pdf");
   const plans = planForChosenPath(join(dir, "report.pdf"), chosen, sources);
-  assert.deepEqual(plans, [{ src: join(dir, "report.pdf"), targetRel: "progetti/renamed.pdf" }]);
+  assert.deepEqual(plans, [{ src: join(dir, "report.pdf"), targetRel: "progetti/renamed.pdf", destinationChosen: true }]);
 });
 
 test("planForChosenPath: single folder mirrors structure under the chosen path", () => {
@@ -63,4 +63,13 @@ test("planForChosenPath: single folder mirrors structure under the chosen path",
     plans.map((p) => p.targetRel).sort(),
     ["progetti/Renamed/a.md", "progetti/Renamed/sub/b.pdf"],
   );
+});
+
+test('canonical destination checks reject symlink escapes and traversal', async()=>{
+  const {symlinkSync}=await import('node:fs');
+  const {safeDestination}=await import('../src/core.ts');
+  const {dir,sources}=fixture(),outside=join(dir,'outside');mkdirSync(outside);
+  symlinkSync(outside,join(sources,'escape'));
+  assert.throws(()=>safeDestination(sources,'escape/file.md'),/Symlink/);
+  assert.throws(()=>safeDestination(sources,'../file.md'),/inside/);
 });

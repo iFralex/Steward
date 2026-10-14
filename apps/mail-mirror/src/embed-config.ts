@@ -1,5 +1,5 @@
 import type { EmbeddingConfig } from "@steward/embedding";
-import { usageHeaders } from "@steward/protocol";
+import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env, service = "mail-mirror"): EmbeddingConfig | null {
   // Default to the unified LLM gateway (sub-project 3). Override with
@@ -11,7 +11,8 @@ export function loadEmbedConfig(env: NodeJS.ProcessEnv = process.env, service = 
     model: env.MAIL_EMBED_MODEL ?? "local-embed",
     extraHeaders: usageHeaders(service, "embed"),
   };
-  if (env.MAIL_EMBED_API_KEY) cfg.apiKey = env.MAIL_EMBED_API_KEY;
+  const apiKey = gatewayCredential(endpoint, env.MAIL_EMBED_API_KEY, env.GATEWAY_API_KEY, Number(env.GATEWAY_PORT ?? 4000));
+  if (apiKey) cfg.apiKey = apiKey;
   const dim = env.MAIL_EMBED_DIM ? Number(env.MAIL_EMBED_DIM) : NaN;
   if (Number.isFinite(dim) && dim > 0) cfg.outputDimensionality = dim;
   return cfg;

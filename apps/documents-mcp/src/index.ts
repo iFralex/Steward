@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { extractDocument } from "./extraction.ts";
 import { loadDocumentEmbedConfig } from "./embed-config.ts";
-import { readDocumentPage } from "./output-budget.ts";
+import { documentCursor, readDocumentPage } from "./output-budget.ts";
 import { searchDocument } from "./search.ts";
 
 const server = new Server({ name: "documents", version: "0.0.0" }, { capabilities: { tools: {} } });
@@ -81,7 +81,7 @@ function documentInfo(document: Awaited<ReturnType<typeof extractDocument>>) {
     level,
     text: text.slice(0, 200),
     page,
-    cursor: `p${page}:o${offset}`,
+    cursor: documentCursor(document, page, offset),
   }));
   return {
     path: document.path,

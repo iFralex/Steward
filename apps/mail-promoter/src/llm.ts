@@ -1,4 +1,4 @@
-import { usageHeaders } from "@steward/protocol";
+import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 export type Chat = (system: string, user: string) => Promise<string>;
 
@@ -7,12 +7,13 @@ export function gatewayChat(
   cfg: { endpoint: string; model: string; apiKey?: string; usage?: { service: string; action: string } },
   fetchImpl: typeof fetch = fetch,
 ): Chat {
+  const apiKey = gatewayCredential(cfg.endpoint, cfg.apiKey, process.env.GATEWAY_API_KEY, Number(process.env.GATEWAY_PORT ?? 4000));
   return async (system, user) => {
     const res = await fetchImpl(cfg.endpoint, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         ...(cfg.usage ? usageHeaders(cfg.usage.service, cfg.usage.action) : {}),
       },
       body: JSON.stringify({ model: cfg.model, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),

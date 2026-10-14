@@ -5,6 +5,7 @@
  * (or opens) the app and forwards the payload so it can route to the chat/action.
  */
 import { cleanupOutdatedCaches, precacheAndRoute } from "workbox-precaching";
+import { notificationUrl } from "./lib/notification-navigation";
 import { clientsClaim } from "workbox-core";
 
 declare const self: ServiceWorkerGlobalScope & {
@@ -48,7 +49,7 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
         client.postMessage({ type: "notification-click", data });
         return;
       }
-      await self.clients.openWindow("/");
+      await self.clients.openWindow(notificationUrl(data));
     })(),
   );
 });

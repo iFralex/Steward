@@ -14,7 +14,8 @@ export type WriteOpStatus =
   | "failed"
   | "restart_prepared"
   | "retrying"
-  | "retry_exhausted";
+  | "retry_exhausted"
+  | "needs_review";
 
 export type WriteOpKind =
   | "mail.send"
@@ -35,8 +36,10 @@ export interface WriteOpRow extends WriteOpInput {
   attempts: number;
   confirmAttempts: number;
   startedAt: number;
+  attemptedAt?: number | null;
   updatedAt: number;
   scriptFinishedAt: number | null;
+  scriptFinishedAtMs?: number | null;
   confirmedAt: number | null;
   /** For status "scheduled": unix seconds at/after which the op should be sent. */
   scheduledFor: number | null;
@@ -103,6 +106,8 @@ export class WriteOpsStore {
     // index — an old table lacks the column, so the index can't be in SCHEMA).
     const cols = new Set((this.raw.prepare("PRAGMA table_info(write_ops)").all() as { name: string }[]).map((c) => c.name));
     if (!cols.has("scheduled_for")) this.raw.exec("ALTER TABLE write_ops ADD COLUMN scheduled_for INTEGER");
+    if (!cols.has("script_finished_at_ms")) this.raw.exec("ALTER TABLE write_ops ADD COLUMN script_finished_at_ms INTEGER");
+    if (!cols.has("attempted_at")) this.raw.exec("ALTER TABLE write_ops ADD COLUMN attempted_at INTEGER");
     this.raw.exec("CREATE INDEX IF NOT EXISTS idx_write_ops_scheduled ON write_ops(status, scheduled_for)");
   }
 
@@ -147,6 +152,29 @@ export class WriteOpsStore {
     return rows.map(rowToWriteOp);
   }
 
+  /** Atomic pre-send claim; a crash leaves started/uncertain, never scheduled again. */
+  claimScheduled(id: string, now = Math.floor(Date.now() / 1000)): WriteOpRow | null {
+    const changed = this.raw.prepare(`UPDATE write_ops SET status='started', attempts=attempts+1,
+      attempted_at=?, updated_at=? WHERE id=? AND status='scheduled' AND scheduled_for<=?`)
+      .run(now, now, id, now).changes;
+    if (!changed) return null;
+    const row = this.get(id)!;
+    auditWriteOp(this.actor, "write.claimed", id, row.kind, "high", true, { attemptedAt: now });
+    return row;
+  }
+
+  markNeedsReview(id: string, error: string): void {
+    this.raw.prepare("UPDATE write_ops SET status='needs_review', updated_at=?, last_error=? WHERE id=?")
+      .run(Math.floor(Date.now() / 1000), error, id);
+    const row = this.get(id);
+    auditWriteOp(this.actor, "write.needs_review", id, row?.kind ?? "mail.send", "high", false, { error });
+  }
+
+  listForReview(limit = 20): WriteOpRow[] {
+    return (this.raw.prepare("SELECT * FROM write_ops WHERE status IN ('needs_review','retry_exhausted') ORDER BY updated_at DESC LIMIT ?")
+      .all(Math.min(100, Math.max(1, Math.floor(limit)))) as Record<string, unknown>[]).map(rowToWriteOp);
+  }
+
   /** All still-pending scheduled ops (for listing). */
   listScheduled(limit = 100): WriteOpRow[] {
     const rows = this.raw.prepare(
@@ -167,9 +195,9 @@ export class WriteOpsStore {
     const now = Math.floor(Date.now() / 1000);
     this.raw.prepare(
       `UPDATE write_ops
-       SET status='script_returned', script_finished_at=?, updated_at=?, result_json=?, last_error=NULL
+       SET status='script_returned', script_finished_at=?, script_finished_at_ms=?, updated_at=?, result_json=?, last_error=NULL
        WHERE id=?`,
-    ).run(now, now, JSON.stringify(result), id);
+    ).run(now, Date.now(), now, JSON.stringify(result), id);
     const row = this.get(id);
     auditWriteOp(this.actor, "write.script_returned", id, row?.kind ?? "mail.send", "high", true, { result, row });
   }
@@ -180,9 +208,9 @@ export class WriteOpsStore {
     const status: WriteOpStatus = /timed out|timeout|-1712|connection is invalid|-609/i.test(message) ? "unknown" : "failed";
     this.raw.prepare(
       `UPDATE write_ops
-       SET status=?, script_finished_at=?, updated_at=?, last_error=?
+       SET status=?, script_finished_at=?, script_finished_at_ms=?, updated_at=?, last_error=?
        WHERE id=?`,
-    ).run(status, now, now, message, id);
+    ).run(status, now, Date.now(), now, message, id);
     const row = this.get(id);
     auditWriteOp(this.actor, `write.${status}`, id, row?.kind ?? "mail.send", "high", false, { error: message, row });
   }
@@ -274,8 +302,10 @@ function rowToWriteOp(row: Record<string, unknown>): WriteOpRow {
     attempts: Number(row.attempts ?? 0),
     confirmAttempts: Number(row.confirm_attempts ?? 0),
     startedAt: Number(row.started_at),
+    attemptedAt: row.attempted_at == null ? null : Number(row.attempted_at),
     updatedAt: Number(row.updated_at),
     scriptFinishedAt: row.script_finished_at == null ? null : Number(row.script_finished_at),
+    scriptFinishedAtMs: row.script_finished_at_ms == null ? null : Number(row.script_finished_at_ms),
     confirmedAt: row.confirmed_at == null ? null : Number(row.confirmed_at),
     scheduledFor: row.scheduled_for == null ? null : Number(row.scheduled_for),
     input: JSON.parse((row.input_json as string) || "{}"),

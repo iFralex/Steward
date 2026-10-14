@@ -46,7 +46,13 @@ export interface VoiceCallRecord {
   ok: boolean;
 }
 
+export interface ProviderAttempt {
+  ts: number; requestId: string; service: string; action: string; model: string;
+  status: number; durationMs: number; stream: boolean;
+}
+
 export interface LedgerSummary {
+  providerAttempts?: ProviderAttempt[];
   totals: { calls: number; cost: number; input: number; output: number; cacheRead: number; cacheWrite: number };
   byService: { service: string; cost: number; calls: number; tokens: number }[];
   byAction: { service: string; action: string; calls: number; cost: number; tokens: number; avgCost: number }[];
@@ -69,6 +75,12 @@ export interface LedgerSummary {
 }
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS provider_attempts(
+  id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, request_id TEXT NOT NULL,
+  service TEXT NOT NULL, action TEXT NOT NULL, model TEXT NOT NULL,
+  status INTEGER NOT NULL, duration_ms INTEGER NOT NULL, stream INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_provider_attempts_ts ON provider_attempts(ts);
 CREATE TABLE IF NOT EXISTS llm_calls (
   id INTEGER PRIMARY KEY,
   ts INTEGER NOT NULL,
@@ -136,6 +148,11 @@ export class UsageLedger {
     }
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     return new UsageLedger(new Database(join(dir, "usage.db")));
+  }
+
+  recordProviderAttempt(r: ProviderAttempt): void {
+    this.raw.prepare(`INSERT INTO provider_attempts(ts,request_id,service,action,model,status,duration_ms,stream)
+      VALUES (?,?,?,?,?,?,?,?)`).run(r.ts, r.requestId, r.service, r.action, r.model, r.status, r.durationMs, r.stream ? 1 : 0);
   }
 
   recordLlmCall(r: LlmCallRecord): void {
@@ -234,7 +251,10 @@ export class UsageLedger {
        FROM voice_calls WHERE ts >= ? ORDER BY ts DESC LIMIT 50`,
     ).all(cutoff) as LedgerSummary["recentVoice"];
 
-    return { totals, byService, byAction, byDay, byModel, byTier, recent, byTool, toolTotals, voiceTotals, byVoiceOutcome, recentVoice };
+    const providerAttempts = this.raw.prepare(`SELECT ts,request_id requestId,service,action,model,status,duration_ms durationMs,stream
+      FROM provider_attempts WHERE ts>=? ORDER BY ts DESC LIMIT 100`).all(cutoff) as ProviderAttempt[];
+    providerAttempts.forEach(attempt => { attempt.stream = Boolean(attempt.stream); });
+    return { providerAttempts, totals, byService, byAction, byDay, byModel, byTier, recent, byTool, toolTotals, voiceTotals, byVoiceOutcome, recentVoice };
   }
 }
 

@@ -65,7 +65,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
         out.calendar = scanCalendarForActions({
           actions,
           horizonDays: Number(process.env.ACTION_CENTER_CALENDAR_DAYS ?? 3),
-          modifiedAfter: automation.enabledAt ?? undefined,
+          modifiedAfter: Math.max(automation.enabledAt ?? 0, automation.calendarEnabledAt ?? 0) || undefined,
           textLanguage: automation.textLanguage,
         });
       } else if (what === "all" || what === "calendar") {

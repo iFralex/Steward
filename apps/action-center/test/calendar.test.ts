@@ -87,3 +87,19 @@ test("scanCalendarForActions ignores events not modified after a re-enable cutof
   assert.equal(actions.list()[0].payload.uid, "new");
   actions.close();
 });
+
+test('calendar reminder identity survives UID churn and a moved start time',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'action-calendar-identity-')),calPath=join(dir,'calendar.db');
+  const cal=IndexDb.open(calPath),actions=ActionStore.open(':memory:');
+  const original={uid:'old',externalId:'server-event',summary:'Meeting',description:null,location:null,
+    start:'2026-06-27T10:00:00.000Z',end:'2026-06-27T11:00:00.000Z',allDay:false,
+    calendarId:'cal',calendar:'Work',account:'iCloud',alarms:[],hasRecurrence:false,status:1,url:null,lastModified:1};
+  cal.upsertEvent(original,'hash',1);
+  const scan=()=>scanCalendarForActions({actions,calendarDbPath:calPath,now:new Date('2026-06-26T10:00:00.000Z')});
+  scan();const first=actions.list()[0];
+  cal.upsertEvent({...original,uid:'new'},'hash',2);
+  cal.upsertEvent({...original,uid:'new',start:'2026-06-28T10:00:00.000Z',end:'2026-06-28T11:00:00.000Z'},'hash',3);
+  scan();assert.equal(actions.list().length,1);assert.equal(actions.list()[0].id,first.id);
+  assert.equal(actions.list()[0].payload.uid,'new');
+  cal.close();actions.close();
+});

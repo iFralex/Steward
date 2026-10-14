@@ -89,6 +89,30 @@ fn git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
         .map_err(|e| format!("git {args:?} failed to start: {e}"))
 }
 
+/// Restrict the advertised private GitHub backup to an identifiable repository.
+pub fn backup_repository(remote: &str) -> Result<String, String> {
+    let path = remote.strip_prefix("https://github.com/")
+        .or_else(|| remote.strip_prefix("git@github.com:"))
+        .ok_or("Private backup requires a github.com HTTPS or SSH remote")?;
+    let path = path.trim_end_matches('/').trim_end_matches(".git");
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() != 2 || parts.iter().any(|part| part.is_empty() || *part == "." || *part == ".."
+        || !part.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))) {
+        return Err("Invalid GitHub backup repository".to_string());
+    }
+    Ok(path.to_string())
+}
+
+fn require_private_repository(remote: &str) -> Result<(), String> {
+    let repository = backup_repository(remote)?;
+    let response = Command::new("gh").args(["api", &format!("repos/{repository}"), "--jq", ".private"])
+        .output().map_err(|_| "Cannot verify repository privacy. Install/authenticate GitHub CLI; no vault was pushed.".to_string())?;
+    if !response.status.success() || String::from_utf8_lossy(&response.stdout).trim() != "true" {
+        return Err("Backup requires a verified private GitHub repository. Check gh authentication/visibility; no vault was pushed.".to_string());
+    }
+    Ok(())
+}
+
 /// Initialize the repo if needed, refresh .gitignore, stage, commit only
 /// if there are changes, and push. Returns a structured status for UI/API use.
 pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<BackupRunResult, String> {
@@ -108,6 +132,8 @@ pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<BackupRunRes
     if !root.exists() {
         return Err(format!("project path does not exist: {project_path}"));
     }
+
+    require_private_repository(&cfg.remote_url)?;
 
     // 1. git init (idempotent).
     if !root.join(".git").exists() {
@@ -154,7 +180,8 @@ pub fn run_backup(project_path: &str, cfg: &BackupConfig) -> Result<BackupRunRes
         ));
     }
     // 6. push.
-    let push = git(root, &["push", "-u", "origin", "HEAD:main"])?;
+    // Push the verified URL explicitly; an existing origin.pushurl must not redirect the vault.
+    let push = git(root, &["push", &cfg.remote_url, "HEAD:main"])?;
     if !push.status.success() {
         return Err(format!(
             "git push failed: {}",
@@ -193,5 +220,19 @@ mod tests {
         assert!(!gi.contains(".llm-wiki/image-caption-cache.json"));
         assert!(!gi.contains(".llm-wiki/page-history"));
         assert!(!gi.contains(".llm-wiki/review.json"));
+    }
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::backup_repository;
+    #[test]
+    fn accepts_only_identifiable_github_repositories() {
+        assert_eq!(backup_repository("https://github.com/user/vault.git").unwrap(), "user/vault");
+        assert_eq!(backup_repository("git@github.com:user/vault.git").unwrap(), "user/vault");
+        assert!(backup_repository("https://user:password@github.com/user/vault").is_err());
+        assert!(backup_repository("https://example.com/user/vault").is_err());
+        assert!(backup_repository("https://github.com/user/vault?token=secret").is_err());
+        assert!(backup_repository("https://github.com/../vault").is_err());
     }
 }
