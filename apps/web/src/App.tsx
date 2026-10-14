@@ -1,3 +1,4 @@
+import { PreparationBanner } from "./components/preparation-banner";
 import { consumeNotificationTarget } from "./lib/notification-navigation";
 import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -733,6 +734,8 @@ function App() {
           </Popover>
         </div>
       </header>
+      <PreparationBanner httpBase={HTTP_BASE} token={authToken} connected={host.connected}
+        onUnauthorized={onUnauthorized} onDetails={() => { setTab('system'); setPane('system'); }} />
 
       <ShortcutsDialog open={showShortcuts} onOpenChange={setShowShortcuts} />
 

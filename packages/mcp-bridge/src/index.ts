@@ -1,95 +1,110 @@
-/**
- * Bridges existing MCP servers (stdio) into Pi custom tools. Tool names are
- * mcp__<server>__<tool> so the existing tool-policy keys match verbatim; the
- * MCP server is called with the bare tool name.
- */
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+/** Persistent MCP connectors, independently started and shared by the host. */
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { SearchPreparationResultSchema } from '@steward/search';
 
 export interface McpServerSpec {
-  command: string;
-  args: string[];
-  /** Per-tool request timeout. Long-running media tools need more than MCP's 60s default. */
-  callTimeoutMs?: number;
+  command:string;
+  args:string[];
+  callTimeoutMs?:number;
 }
-
+export interface ConnectorState {
+  state:'connecting'|'ready'|'error'|'closed';
+  tools:string[];
+  error?:string;
+}
 export interface McpBridge {
-  tools: ToolDefinition[];
-  callTool(toolName: string, args: Record<string, unknown>): Promise<unknown>;
-  close(): Promise<void>;
+  tools:ToolDefinition[];
+  callTool(toolName:string,args:Record<string,unknown>):Promise<unknown>;
+  close():Promise<void>;
+  connectorStates?():Record<string,ConnectorState>;
+  waitForServer?(server:string):Promise<void>;
+  prepareSearch?(server:string):Promise<{skipped?:string}>;
+  activeCalls?:number;
+  firstReady?:Promise<void>;
+  settled?:Promise<void>;
 }
-
-export async function buildMcpBridge(specs: Record<string, McpServerSpec>): Promise<McpBridge> {
-  const clients: Client[] = [];
-  const clientsByServer = new Map<string, Client>();
-  const tools: ToolDefinition[] = [];
-
-  for (const [server, spec] of Object.entries(specs)) {
-    const transport = new StdioClientTransport({ command: spec.command, args: spec.args });
-    const client = new Client({ name: `host-${server}`, version: "0.0.0" });
-    // A connector that dies must not take down the whole host: swallow async
-    // transport errors and skip a server that fails to start, keeping the rest.
-    client.onerror = (err) => console.warn(`[mcp-bridge] ${server}: ${err?.message ?? err}`);
+export function startMcpBridge(specs:Record<string,McpServerSpec>):McpBridge {
+  const clients=new Map<string,Client>();
+  const states:Record<string,ConnectorState>={};
+  const tools:ToolDefinition[]=[];
+  let closed=false, activeCalls=0;
+  let firstReadyResolve!:()=>void;
+  const firstReady=new Promise<void>(resolve=>{firstReadyResolve=resolve;});
+  const connecting=new Map<string,Promise<void>>();
+  const call=async(toolName:string,args:Record<string,unknown>)=>{
+    const parsed=/^mcp__(.+?)__(.+)$/.exec(toolName);
+    if(!parsed)throw new Error(`Invalid MCP tool name: ${toolName}`);
+    const [,server,tool]=parsed;
+    activeCalls++;
     try {
-      await client.connect(transport);
-      const { tools: mcpTools } = await client.listTools();
-      clients.push(client);
-      clientsByServer.set(server, client);
-      for (const t of mcpTools) {
-        const bareName = t.name;
-        const fullName = `mcp__${server}__${bareName}`;
-        tools.push({
-          name: fullName,
-          label: bareName,
-          description: t.description ?? bareName,
-          parameters: (t.inputSchema ?? { type: "object", properties: {} }) as any,
-          prepareArguments: (a: unknown) => a as any,
-          execute: async (_id: string, params: any) => {
-            const res: any = await client.callTool(
-              { name: bareName, arguments: params ?? {} },
-              undefined,
-              spec.callTimeoutMs ? { timeout: spec.callTimeoutMs } : undefined,
-            );
-            return { content: res.content ?? [{ type: "text", text: "" }], details: {} };
-          },
-        } as ToolDefinition);
-      }
-    } catch (err) {
-      console.warn(
-        `[mcp-bridge] skipping server "${server}" (${err instanceof Error ? err.message : String(err)})`,
-      );
-      try {
-        await client.close();
-      } catch {
-        /* already gone */
-      }
-    }
-  }
-
-  return {
-    tools,
-    callTool: async (toolName, args) => {
-      const parsed = parseBridgeToolName(toolName);
-      if (!parsed) throw new Error(`Invalid MCP tool name: ${toolName}`);
-      const client = clientsByServer.get(parsed.server);
-      if (!client) throw new Error(`MCP server not available: ${parsed.server}`);
-      const spec = specs[parsed.server];
-      const res: any = await client.callTool(
-        { name: parsed.tool, arguments: args ?? {} },
-        undefined,
-        spec?.callTimeoutMs ? { timeout: spec.callTimeoutMs } : undefined,
-      );
-      return res.content ?? [{ type: "text", text: "" }];
-    },
-    close: async () => {
-      for (const c of clients) await c.close();
-    },
+      await connecting.get(server);
+      const client=clients.get(server);
+      if(!client)throw new Error(`MCP server not available: ${server}`);
+      const res=await client.callTool({name:tool,arguments:args??{}},undefined,
+        specs[server].callTimeoutMs?{timeout:specs[server].callTimeoutMs}:undefined);
+      return res.content as any[] ??[{type:'text',text:''}];
+    } finally {activeCalls--;}
   };
+  for(const [server,spec]of Object.entries(specs)) {
+    states[server]={state:'connecting',tools:[]};
+    const client=new Client({name:`host-${server}`,version:'0.0.0'});
+    clients.set(server,client);
+    client.onerror=err=>console.warn(`[mcp-bridge] ${server}: ${err?.message??err}`);
+    client.onclose=()=>{if(states[server].state==='ready')states[server]={...states[server],state:'error',error:'Connector disconnected'};};
+    const pending=(async()=>{
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(new Error('Connector startup timed out')),10_000);
+      try {
+        await client.connect(new StdioClientTransport({command:spec.command,args:spec.args}),{signal:controller.signal});
+        const result=await client.listTools(undefined,{signal:controller.signal});
+        if(closed)return;
+        for(const tool of result.tools) {
+          const name=`mcp__${server}__${tool.name}`;
+          tools.push({name,label:tool.name,description:tool.description??tool.name,parameters:tool.inputSchema as any,
+            prepareArguments:(args:unknown)=>args as any,
+            execute:async(_id:string,args:any)=>({content:await call(name,args),details:{}})} as ToolDefinition);
+        }
+        states[server]={state:'ready',tools:result.tools.map(tool=>tool.name)};
+        firstReadyResolve();
+      } catch(error) {
+        states[server]={state:'error',tools:[],error:error instanceof Error?error.message:String(error)};
+        clients.delete(server);
+        try{await client.close();}catch{/* already stopped */}
+      } finally {clearTimeout(timer);}
+    })();
+    connecting.set(server,pending);
+  }
+  const settled=Promise.all(connecting.values()).then(()=>{firstReadyResolve();});
+  return {tools,callTool:call,firstReady,settled,get activeCalls(){return activeCalls;},
+    connectorStates:()=>Object.fromEntries(Object.entries(states).map(([key,value])=>[key,{...value,tools:[...value.tools]}])),
+    waitForServer:async server=>{
+      await connecting.get(server);
+      if(states[server]?.state!=="ready")throw new Error(`MCP server not available: ${server}`);
+    },
+    prepareSearch:async server=>{
+      await connecting.get(server);
+      const client=clients.get(server);
+      if(!client||states[server]?.state!=='ready')throw new Error(`MCP server not available: ${server}`);
+      try {return await client.request({method:'steward/prepareSearch'},SearchPreparationResultSchema,{timeout:35_000});}
+      catch(error) {
+        if((error as {code?:number}).code===ErrorCode.MethodNotFound)return {skipped:'Connector does not support search preparation'};
+        throw error;
+      }
+    },
+    close:async()=>{
+      closed=true;
+      await Promise.allSettled([...clients.values()].map(client=>client.close()));
+      await settled;
+      clients.clear();
+      for(const state of Object.values(states))state.state='closed';
+    }};
 }
-
-function parseBridgeToolName(toolName: string): { server: string; tool: string } | null {
-  const match = /^mcp__(.+?)__(.+)$/.exec(toolName);
-  if (!match) return null;
-  return { server: match[1], tool: match[2] };
+/** Full-catalog initialization for one-shot callers and existing integrations. */
+export async function buildMcpBridge(specs:Record<string,McpServerSpec>):Promise<McpBridge> {
+  const bridge=startMcpBridge(specs);
+  await bridge.settled;
+  return bridge;
 }

@@ -539,6 +539,7 @@ export class VoiceCallCoordinator {
     for (let attempt = 1; attempt <= PREFLIGHT_ATTEMPTS; attempt += 1) {
       try {
         const bridge = await withTimeout((this.deps.bridge ?? (() => sharedMcpBridge(this.config.mcpServers)))(), timeoutMs, "Ringback MCP startup");
+        if (bridge.waitForServer) await withTimeout(bridge.waitForServer("voice"), timeoutMs, "Ringback MCP startup");
         const required = ["mcp__voice__call_start", "mcp__voice__call_status", "mcp__voice__call_end"];
         const missing = required.filter((name) => !bridge.tools.some((tool) => tool.name === name));
         if (missing.length) throw new Error(`Ringback is missing required tools: ${missing.join(", ")}`);

@@ -1,5 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { currentMcpBridge } from "./agent-runner.ts";
+import { startupPreparationSnapshot, type PreparationTask } from "./startup-preparation.ts";
 import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, statfsSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -21,6 +21,7 @@ export interface SystemServiceStatus {
   state: ServiceState;
   detail?: string;
   checks?: SystemServiceCheck[];
+  preparation?: PreparationTask;
   tools?: number;
   toolDetails?: SystemToolStatus[];
   updatedAt: number;
@@ -71,7 +72,6 @@ const LAUNCH_AGENT_LABEL = "com.llm-wiki.launcher";
 const GATEWAY_URL = "http://127.0.0.1:4000/health";
 const OLLAMA_URL = "http://127.0.0.1:11434/api/tags";
 const LLM_WIKI_URL = "http://127.0.0.1:19828/api/v1/health";
-const discoveredTools = new Map<string, string[]>();
 const bundledToolNames: Record<string, string[]> = {
   "llm-wiki": ["llm_wiki_status", "llm_wiki_projects", "llm_wiki_files", "llm_wiki_read_file", "llm_wiki_reviews", "llm_wiki_search", "llm_wiki_graph", "llm_wiki_rescan_sources", "llm_wiki_add_source", "llm_wiki_create_folder", "llm_wiki_show_window", "llm_wiki_hide_window"],
   mail: ["list_mailboxes", "search_messages", "read_message", "save_attachment", "send_email", "reply", "list_scheduled", "list_write_operations", "read_write_operation", "cancel_scheduled", "get_thread"],
@@ -186,7 +186,7 @@ async function httpStatus(id: string, label: string, url: string): Promise<Syste
 }
 
 async function gatewayStatus(): Promise<SystemServiceStatus> {
-  const status = await httpStatus("gateway", "LLM Gateway", GATEWAY_URL);
+  const status = { ...await httpStatus("gateway", "LLM Gateway", GATEWAY_URL), preparation: startupPreparationSnapshot().tasks["local-embed"] };
   if (status.state !== "ok") return status;
   try {
     const res = await fetchWithTimeout("http://127.0.0.1:4000/v1/models", 2_500);
@@ -274,93 +274,18 @@ async function schedulerStatus(): Promise<SystemServiceStatus> {
 }
 
 async function mcpStatus(
-  id: string,
-  label: string,
-  command: string,
-  args: string[],
-  config: HostConfig,
-  usage: ToolUsageMap,
+  id: string, label: string, _command: string, _args: string[], config: HostConfig, usage: ToolUsageMap,
 ): Promise<SystemServiceStatus> {
-  const started = Date.now();
-  let client: Client | null = null;
-  try {
-    const transport = new StdioClientTransport({ command, args });
-    client = new Client({ name: "host-system-status", version: "0.0.0" }, { capabilities: {} });
-    client.onerror = () => {};
-    await withTimeout(client.connect(transport), 5_000);
-    const tools = await withTimeout(client.listTools(), 5_000);
-    discoveredTools.set(id, tools.tools.map((tool) => tool.name));
-    const smoke = await mcpSmoke(id, client, tools.tools.map((tool) => tool.name));
-    const state: ServiceState = smoke.verified === false || !smoke.ok ? "warning" : "ok";
-    const toolDetails = tools.tools.map((tool) => toolStatus(id, tool.name, config, usage));
-    return {
-      id: `mcp-${id}`,
-      label,
-      state,
-      detail: `${tools.tools.length} tools; ${smoke.verified === false ? "live check not configured" : `${smoke.name} ${smoke.ok ? "OK" : "failed"}`}`,
-      checks: [
-        { name: "tools/list", ok: tools.tools.length > 0, detail: `${tools.tools.length} tools` },
-        smoke,
-      ],
-      tools: tools.tools.length,
-      toolDetails,
-      updatedAt: started,
-    };
-  } catch (err) {
-    const names = discoveredTools.get(id) ?? bundledToolNames[id] ?? [];
-    const toolDetails = names.map((name) => toolStatus(id, name, config, usage));
-    return {
-      id: `mcp-${id}`,
-      label,
-      state: "error",
-      detail: err instanceof Error ? err.message : String(err),
-      tools: toolDetails.length || undefined,
-      toolDetails: toolDetails.length ? toolDetails : undefined,
-      updatedAt: started,
-    };
-  } finally {
-    try {
-      await client?.close();
-    } catch {
-      /* already closed */
-    }
-  }
-}
-
-async function mcpSmoke(id: string, client: Client, toolNames: string[]): Promise<SystemServiceCheck> {
-  const smoke = smokeCallFor(id);
-  if (!smoke) return { name: "live check", ok: false, verified: false, detail: "Not configured; tool discovery only." };
-  if (!toolNames.includes(smoke.tool)) {
-    return { name: `call ${smoke.tool}`, ok: false, detail: "Tool is not listed." };
-  }
-  try {
-    const result = await withTimeout(client.callTool({ name: smoke.tool, arguments: smoke.arguments }), 8_000) as {
-      content?: unknown[];
-    };
-    const count = Array.isArray(result.content) ? result.content.length : 0;
-    return { name: `call ${smoke.tool}`, ok: true, detail: `${count} content blocks` };
-  } catch (err) {
-    return { name: `call ${smoke.tool}`, ok: false, detail: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function smokeCallFor(id: string): { tool: string; arguments: Record<string, unknown> } | null {
-  switch (id) {
-    case "llm-wiki":
-      return { tool: "llm_wiki_status", arguments: {} };
-    case "mail":
-      return { tool: "list_mailboxes", arguments: {} };
-    case "calendar":
-      return { tool: "list_calendars", arguments: {} };
-    case "contacts":
-      return { tool: "search_contacts", arguments: { query: "__llm_wiki_smoke__", limit: 1 } };
-    case "action-center":
-      return { tool: "list_actions", arguments: { limit: 1 } };
-    case "shell":
-      return { tool: "run_command", arguments: { command: "pwd", maxLines: 1 } };
-    default:
-      return null;
-  }
+  const connector = currentMcpBridge()?.connectorStates?.()[id];
+  const preparation = startupPreparationSnapshot().tasks[id];
+  const names = connector?.tools.length ? connector.tools : bundledToolNames[id] ?? [];
+  const toolDetails = names.map(name => toolStatus(id,name,config,usage));
+  return { id: `mcp-${id}`, label,
+    state: connector?.state === 'ready' ? 'ok' : connector?.state === 'error' ? 'error' : 'unknown',
+    detail: connector?.error ?? (connector?.state === 'ready' ? `${connector.tools.length} tools; connected host runtime` : 'Connector is preparing'),
+    preparation, tools: toolDetails.length, toolDetails,
+    checks: [{name:'host connection',ok:connector?.state==='ready',verified:!!connector}],
+    updatedAt:Date.now() };
 }
 
 type ToolUsageMap = Map<string, { calls: number; errors: number; lastUsedAt?: number; lastOk?: boolean }>;
@@ -561,20 +486,6 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
     return await fetch(url, { signal: ac.signal });
   } finally {
     clearTimeout(timer);
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

@@ -10,7 +10,7 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createAgentSession, DefaultResourceLoader, SessionManager, type AgentSession, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { buildMcpBridge, type McpBridge } from "@steward/mcp-bridge";
+import { buildMcpBridge, startMcpBridge, type McpBridge } from "@steward/mcp-bridge";
 import { recordAudit } from "@steward/audit-log";
 import { gateToolDefinition, type ToolExecutionGuard } from "./permission-gate.ts";
 import { buildAskUserTool } from "./ask-user-tool.ts";
@@ -28,16 +28,16 @@ import { buildApprovalPreview } from "./approval-preview.ts";
 import { buildWatchTools } from "./watch-tools.ts";
 
 let sharedBridge: Promise<McpBridge> | undefined;
-/** One set of MCP connector child processes for the whole host process. Built
- *  lazily and kept for the process lifetime — never closed per-connection, since
- *  closing it would tear down connectors other chats/connections still use.
- *  A failed build is not cached, so a transient failure can be retried. */
+let startedBridge: McpBridge | undefined;
+/** Start all connectors immediately; a slow connector does not hold ready ones back. */
 export function sharedMcpBridge(specs: Parameters<typeof buildMcpBridge>[0]): Promise<McpBridge> {
-  return (sharedBridge ??= buildMcpBridge(specs).catch((err) => {
-    sharedBridge = undefined; // don't poison the process with a cached rejection
-    throw err;
-  }));
+  return sharedBridge ??= (async () => {
+    startedBridge = startMcpBridge(specs);
+    await startedBridge.firstReady;
+    return startedBridge;
+  })().catch(error => { sharedBridge = undefined; throw error; });
 }
+export function currentMcpBridge(): McpBridge | undefined { return startedBridge; }
 
 /**
  * Turn Pi's tool result into a UI-friendly `output`: pull the text out of the
@@ -148,6 +148,7 @@ interface BridgeRuntime {
 }
 
 interface ChatRuntime {
+  catalogSignature: string;
   chatId: string;
   session: AgentSession;
   unsub: () => void;
@@ -199,9 +200,13 @@ export class ChatManager {
 
   /** Build (or reopen) the Pi session for a chat, restoring memory from its file. */
   private async ensureChat(chatId: string): Promise<ChatRuntime> {
-    const existing = this.chats.get(chatId);
-    if (existing) return existing;
     const b = await this.ensureBridge();
+    const catalogSignature = b.bridge.tools.map(tool => tool.name).sort().join('\n');
+    const existing = this.chats.get(chatId);
+    if (existing?.catalogSignature === catalogSignature) return existing;
+    // Reopen the persisted Pi session only between turns when a late connector
+    // adds tools. Do not freeze the first partial catalog for this chat forever.
+    if (existing) { existing.unsub(); existing.session.dispose(); this.chats.delete(chatId); }
     const store = chatStore();
 
     const file = store.getSessionFile(chatId);
@@ -273,7 +278,7 @@ export class ChatManager {
     piSession = created;
 
     const runtime: ChatRuntime = {
-      chatId, session: piSession, unsub: () => {},
+      chatId, catalogSignature, session: piSession, unsub: () => {},
       lastCostUsd: 0, lastTokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       assistantBuffer: "", aborted: false, starts: new Map(), toolInputs: new Map(), effectiveToolInputs, turnAssistantMessages: [],
     };

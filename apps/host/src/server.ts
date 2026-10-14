@@ -12,7 +12,8 @@ import { execFile } from "node:child_process";
 import { extname, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ClientEvent } from "@steward/protocol";
-import { ChatManager } from "./core/agent-runner.ts";
+import { beginStartupPreparation, startupPreparationSnapshot } from "./core/startup-preparation.ts";
+import { sharedMcpBridge, currentMcpBridge, ChatManager } from "./core/agent-runner.ts";
 import { isRunning } from "./core/running-chats.ts";
 import { auditLog, recordAudit, type AuditActor, type AuditRisk } from "@steward/audit-log";
 import { ActionRevisionRequestedError, executeActionProposal, getActionAutomationSettings, getActionItem, loadActionCenterState, markAction, pollNewActionNotifications, reviseActionProposal, setActionAutomationSettings, setPushRegistry } from "./core/action-center-service.ts";
@@ -111,7 +112,7 @@ function isLocalhostRequest(req: IncomingMessage): boolean {
 }
 
 /** HTTP routes that require a valid token (everything that reads/writes agent state or files). */
-const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/autostart", "/settings/", "/push/", "/quick-send", "/quick-call", "/transcribe", "/voice/"];
+const DATA_ROUTE_PREFIXES = ["/usage", "/audit", "/upload", "/file/", "/resolve", "/system/status", "/system/preparation", "/system/autostart", "/settings/", "/push/", "/quick-send", "/quick-call", "/transcribe", "/voice/"];
 function isDataRoute(url: string): boolean {
   return DATA_ROUTE_PREFIXES.some((p) => url.startsWith(p));
 }
@@ -533,6 +534,11 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
     });
     return;
   }
+  if (req.method === "GET" && url.split('?')[0] === "/system/preparation") {
+    res.writeHead(200, { "Content-Type": "application/json", ...CORS });
+    res.end(JSON.stringify(startupPreparationSnapshot()));
+    return;
+  }
   if (req.method === "GET" && url.startsWith("/system/status")) {
     void loadSystemStatus(config, { voice: voiceCalls.status(), push: pushRegistry.status() }).then((status) => {
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
@@ -830,6 +836,7 @@ function isAuditRisk(value: string | null): value is AuditRisk {
 }
 
 export function startServer(config: HostConfig): WebSocketServer {
+  let preparation: ReturnType<typeof beginStartupPreparation> | undefined;
   const pushRegistry = new PushRegistry(pushSubscriptionsPath());
   const voiceNetwork = new VoiceNetworkFallback();
   let pollWatches: () => Promise<void> = async () => {};
@@ -911,6 +918,8 @@ export function startServer(config: HostConfig): WebSocketServer {
   const useTls = !!(tlsCert && tlsKey);
   const wss = new WebSocketServer({ noServer: true });
   wss.once("close", () => {
+    preparation?.stop();
+    void currentMcpBridge()?.close();
     clearInterval(actionPushTimer);
     clearInterval(watchTimer);
     watchSession.closed = true;
@@ -1306,6 +1315,10 @@ export function startServer(config: HostConfig): WebSocketServer {
   httpServer.on("upgrade", acceptUpgrade);
   httpServer.listen(config.port, "127.0.0.1", () => {
     console.log(`[host] http://127.0.0.1:${config.port} (localhost)`);
+    // Start after listening, without delaying HTTP/UI readiness for connector startup.
+    void sharedMcpBridge(config.mcpServers).catch(error => console.warn('[host] connector startup failed', error));
+    const bridge = currentMcpBridge();
+    if (bridge) preparation = beginStartupPreparation(bridge, config);
   });
 
   // HTTPS on all interfaces for the phone over Tailscale (secure context → push).

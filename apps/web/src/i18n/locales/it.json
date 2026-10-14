@@ -1,5 +1,10 @@
 {
   "app": {
+    "preparation": {
+      "running": "Preparazione dei servizi e della ricerca. I servizi pronti sono già utilizzabili.",
+      "failed": "Non è stato possibile preparare alcuni servizi.",
+      "details": "Dettagli"
+    },
     "appName": "Steward",
     "connection": {
       "thinking": "Sta pensando",
@@ -117,6 +122,13 @@
     }
   },
   "system": {
+    "preparation": {
+      "queued": "Preparazione ricerca in attesa",
+      "running": "Preparazione della ricerca",
+      "ready": "Ricerca preparata",
+      "skipped": "Preparazione non eseguita",
+      "error": "Preparazione non riuscita"
+    },
     "title": "Sistema",
     "subtitle": "Servizi locali, tool MCP e avvio al login.",
     "refresh": "Aggiorna",

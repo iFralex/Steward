@@ -1,5 +1,10 @@
 {
   "app": {
+    "preparation": {
+      "running": "Preparing services and search. Ready services remain available.",
+      "failed": "Some services could not be prepared.",
+      "details": "Details"
+    },
     "appName": "Steward",
     "connection": {
       "thinking": "Thinking",
@@ -117,6 +122,13 @@
     }
   },
   "system": {
+    "preparation": {
+      "queued": "Search preparation queued",
+      "running": "Preparing search",
+      "ready": "Search prepared",
+      "skipped": "Preparation skipped",
+      "error": "Preparation failed"
+    },
     "title": "System",
     "subtitle": "Local services, MCP tools, and launch at login.",
     "refresh": "Refresh",

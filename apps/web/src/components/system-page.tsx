@@ -19,6 +19,7 @@ interface SystemServiceStatus {
   state: ServiceState;
   detail?: string;
   checks?: SystemServiceCheck[];
+  preparation?: {state:string;detail?:string;durationMs?:number};
   tools?: number;
   toolDetails?: SystemToolStatus[];
   updatedAt: number;
@@ -122,7 +123,10 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
   const voiceRequestId = useRef<string | null>(null);
 
+  const refreshInFlight = useRef(false);
   const refresh = useCallback(async () => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -149,15 +153,17 @@ export function SystemPage({ httpBase, token, onUnauthorized }: { httpBase: stri
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      refreshInFlight.current = false;
       setLoading(false);
     }
   }, [httpBase, token, onUnauthorized, i18n.resolvedLanguage]);
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    const preparing = status?.services.some(service => (service.id.startsWith("mcp-") && service.state === "unknown") || ["queued","running"].includes(service.preparation?.state ?? ""));
+    const timer = window.setInterval(() => { void refresh(); }, preparing ? 2_000 : 30_000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, status?.services.some(service => (service.id.startsWith("mcp-") && service.state === "unknown") || ["queued","running"].includes(service.preparation?.state ?? ""))]);
 
   useEffect(() => {
     if (!voicePreviewUrl) return;
@@ -822,6 +828,10 @@ function ServiceRow({ service }: { service: SystemServiceStatus }) {
         <div className="min-w-0">
           <CardTitle className="break-words">{service.label}</CardTitle>
           <CardDescription className="break-words">{service.detail ?? t("system.serviceNoDetail")}</CardDescription>
+          {service.preparation && <p className="text-muted-foreground text-xs">
+            {t(`system.preparation.${service.preparation.state}`)}
+            {service.preparation.detail ? ` — ${service.preparation.detail}` : ''}
+          </p>}
         </div>
         <Badge variant={badgeVariant(service.state)}>{service.state}</Badge>
       </CardHeader>

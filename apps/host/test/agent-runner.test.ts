@@ -282,3 +282,25 @@ test("onPiEvent persists assistant text interleaved between tool calls, not merg
   assert.deepEqual(messages[1].toolRequestedInput, { draft: true });
   assert.deepEqual(messages[1].toolInput, { approved: true });
 });
+
+test('late connector tools refresh between turns while preserving the persisted Pi history',async()=>{
+  const config={port:0,systemPrompt:'fixture',policy:defaultPolicy,approvalTimeoutMs:1000,
+    gateway:{baseUrl:'http://127.0.0.1:4000/v1',tier:'tier-5',apiKey:'fixture',cost:{input:0,output:0,cacheRead:0,cacheWrite:0}},mcpServers:{}} as any;
+  const manager=new ChatManager(config,new Session(()=>{},1000),()=>{});
+  const bridge=await sharedMcpBridge({});
+  const chat=chatStore().createChat('Late tools fixture');
+  const initialTools=bridge.tools.length;
+  try {
+    const first=await (manager as any).ensureChat(chat.id);
+    first.session.sessionManager.appendMessage({role:'assistant',content:[{type:'text',text:'Persisted before connector readiness'}],
+      api:'openai-completions',provider:'gateway',model:'tier-5',stopReason:'stop',timestamp:Date.now(),
+      usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}});
+    const file=first.session.sessionManager.getSessionFile();
+    bridge.tools.push({name:'mcp__late__read',label:'Late fixture',description:'fixture',parameters:{type:'object',properties:{}},execute:async()=>({content:[],details:{}})} as any);
+    const next=await (manager as any).ensureChat(chat.id);
+    assert.notEqual(next,first);
+    assert.ok(next.session.getActiveToolNames().includes('mcp__late__read'));
+    assert.equal(next.session.sessionManager.getSessionFile(),file);
+    assert.ok(next.session.messages.some((message:any)=>message.role==='assistant'&&message.content.some((part:any)=>part.text==='Persisted before connector readiness')));
+  } finally {bridge.tools.splice(initialTools);await manager.close();}
+});

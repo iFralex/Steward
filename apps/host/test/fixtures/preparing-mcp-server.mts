@@ -1,0 +1,12 @@
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { SearchPreparationRequestSchema } from '@steward/search';
+import { existsSync } from 'node:fs';
+const readyFile=process.argv[2];
+while(readyFile&&!existsSync(readyFile))await new Promise(resolve=>setTimeout(resolve,10));
+const server=new Server({name:'preparation-fixture',version:'1'},{capabilities:{tools:{}}});
+server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[{name:'echo',inputSchema:{type:'object',properties:{}}}]}));
+server.setRequestHandler(CallToolRequestSchema,async()=>({content:[{type:'text',text:'fixture response'}]}));
+server.setRequestHandler(SearchPreparationRequestSchema,async()=>({}));
+await server.connect(new StdioServerTransport());

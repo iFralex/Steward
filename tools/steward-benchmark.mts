@@ -142,7 +142,7 @@ async function child(caseName:string, working:string) {
         if(caseName==='mail.knn')return await measure(()=>({count:store.knn(vector,50).length}),SQL_SAMPLES);
         // Isolate query embedding cost from the same production retrieval path.
         const queryEmbed=caseName.endsWith('cached-vector')?async()=>vector:embed;
-        return await measure(async()=>({count:(await searchDb(store,{query:QUERY,limit:12,perMessage:true},queryEmbed)).length}),caseName.endsWith('cached-vector')?SQL_SAMPLES:EMBED_SAMPLES,()=>store.knn(vector,50));
+        return await measure(async()=>({count:(await searchDb(store,{query:QUERY,limit:12,perMessage:true},queryEmbed)).length}),caseName.endsWith('cached-vector')?SQL_SAMPLES:EMBED_SAMPLES,()=>store.knnAsync(vector,50));
       }
     } else {
       const table=kind==='calendar'?'events':'contacts', limit=kind==='calendar'?500:200;
