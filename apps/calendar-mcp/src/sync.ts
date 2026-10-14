@@ -21,11 +21,12 @@ export interface SyncDeps {
 
 export async function syncIndex(deps: SyncDeps): Promise<{ upserted: number; embedded: number; deleted: number }> {
   const events = deps.store.allForIndex();
+  const generation = deps.index.beginSyncGeneration();
   let upserted = 0;
   const toEmbed: { uid: string; rowid: number; text: string; hash: string }[] = [];
   for (const e of events) {
     const hash = sourceHash(e);
-    const rowid = deps.index.upsertEvent(e, hash);
+    const rowid = deps.index.upsertEvent(e, hash, generation);
     upserted++;
     if (deps.embedConfig && deps.index.embedStateFor(e.uid)?.sourceHash !== hash) {
       toEmbed.push({ uid: e.uid, rowid, text: embedText(e), hash });

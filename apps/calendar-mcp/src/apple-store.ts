@@ -3,7 +3,7 @@ import { coreDataToISO, isoToUnix, unixToCoreData } from "./coredata.ts";
 import type { CalEvent, CalendarInfo } from "./types.ts";
 
 const SELECT = `
-  SELECT ci.UUID AS uid, ci.summary AS summary, ci.description AS description,
+  SELECT ci.UUID AS uid, ci.external_id AS external_id, ci.summary AS summary, ci.description AS description,
          l.title AS location, ci.start_date AS start_cd, ci.end_date AS end_cd,
          ci.all_day AS all_day, c.UUID AS calendar_uuid, c.title AS calendar, s.name AS account,
          ci.has_recurrences AS has_recurrences,
@@ -34,6 +34,7 @@ function toEvent(r: Record<string, unknown>): CalEvent {
   } catch { /* malformed Calendar data is treated as no explicit alarms */ }
   return {
     uid: String(r.uid ?? ""),
+    externalId: (r.external_id as string) ?? null,
     summary: String(r.summary ?? ""),
     description: (r.description as string) ?? null,
     location: (r.location as string) ?? null,

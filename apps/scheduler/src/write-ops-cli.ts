@@ -94,9 +94,9 @@ export async function reconcileCalendarWrites(): Promise<{ confirmed: number; pe
   let pending = 0;
   try {
     for (const op of ops.pendingForConfirmation(["calendar.create", "calendar.update", "calendar.delete"], 100)) {
-      const ok = findCalendarConfirmation(index, op);
-      if (ok) {
-        ops.markConfirmed(op.id, { uid: op.result?.uid ?? op.input.uid ?? op.expected.uid });
+      const confirmedUid = findCalendarConfirmation(index, op);
+      if (confirmedUid) {
+        ops.markConfirmed(op.id, { uid: confirmedUid });
         confirmed++;
       } else if (shouldExhaustCalendarConfirmation(op)) {
         const detail = op.lastError ? ` Last error: ${op.lastError}` : "";
@@ -123,7 +123,7 @@ export function shouldExhaustCalendarConfirmation(op: WriteOpRow): boolean {
   return op.confirmAttempts + 1 >= MAX_CALENDAR_CONFIRM_ATTEMPTS;
 }
 
-export function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): boolean {
+export function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): string | null {
   const uid = typeof op.result?.uid === "string"
     ? op.result.uid
     : typeof op.input.uid === "string"
@@ -131,27 +131,43 @@ export function findCalendarConfirmation(index: IndexDb, op: WriteOpRow): boolea
       : typeof op.expected.uid === "string"
         ? op.expected.uid
         : "";
-  if (op.kind === "calendar.delete") return uid ? index.getEvent(uid) === null : false;
+  if (op.kind === "calendar.delete") return uid && index.getEvent(uid) === null ? uid : null;
   if (op.kind === "calendar.update") {
-    if (!uid) return false;
+    if (!uid) return null;
     const ev = index.getEvent(uid);
-    if (!ev) return false;
-    return calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected);
+    if (!ev) return null;
+    return calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected) ? ev.uid : null;
   }
   if (op.kind === "calendar.create") {
     if (uid) {
       const ev = index.getEvent(uid);
-      return !!ev && calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected);
+      return ev && calendarFieldsMatch(ev as unknown as Record<string, unknown>, op.expected) ? ev.uid : null;
     }
-    return false;
+    const candidates = index.writeConfirmationCandidates(op.expected)
+      .filter((event) => calendarFieldsMatch(event as unknown as Record<string, unknown>, op.expected));
+    return candidates.length === 1 ? candidates[0].uid : null;
   }
-  return false;
+  return null;
 }
 
 export function calendarFieldsMatch(ev: Record<string, unknown>, expected: Record<string, unknown>): boolean {
-  for (const key of ["calendar", "summary", "start", "end", "location", "description", "url"] as const) {
+  for (const key of ["calendar", "summary", "location", "description", "url"] as const) {
     if (expected[key] == null) continue;
     if (String(ev[key] ?? "") !== String(expected[key])) return false;
+  }
+  // Calendar's private database stores all-day boundaries independently from
+  // EventKit's local-midnight representation. Across a DST transition those
+  // instants can differ by an hour (and EventKit may expose the inclusive end
+  // as one second before midnight), while still describing the same civil
+  // dates. Reconcile all-day writes by local calendar date, not epoch value.
+  const compareAsCivilDate = Boolean(ev.allDay) || expected.allDay === true;
+  for (const key of ["start", "end"] as const) {
+    if (expected[key] == null) continue;
+    if (compareAsCivilDate) {
+      if (localCivilDate(ev[key]) !== localCivilDate(expected[key])) return false;
+    } else if (String(ev[key] ?? "") !== String(expected[key])) {
+      return false;
+    }
   }
   if (expected.calendarId != null && String(ev.calendarId ?? "") !== String(expected.calendarId)) return false;
   if (expected.allDay != null && Boolean(ev.allDay) !== Boolean(expected.allDay)) return false;
@@ -165,6 +181,19 @@ export function calendarFieldsMatch(ev: Record<string, unknown>, expected: Recor
     if (Boolean(ev.hasRecurrence) !== expectedPresence) return false;
   }
   return true;
+}
+
+function localCivilDate(value: unknown): string | null {
+  const date = new Date(String(value ?? ""));
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 export async function reconcileMailWrites(): Promise<{ confirmed: number; pending: number; retried: number; exhausted: number }> {

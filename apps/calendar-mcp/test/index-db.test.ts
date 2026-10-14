@@ -80,3 +80,35 @@ test("embed bookkeeping round-trips", () => {
   assert.equal(db.embedStateFor("U1")?.sourceHash, "h1");
   db.close();
 });
+
+test("full-sync UUID replacement preserves identity and resolves the stale UUID", () => {
+  const db = IndexDb.open(":memory:");
+  const before = { ...ev("OLD-UUID", "Dentist"), externalId: "server-event-1" };
+  db.upsertEvent(before, "h1", 1);
+  db.recordEmbed("OLD-UUID", "h1", 3, "local-embed");
+
+  const after = { ...before, uid: "NEW-UUID", calendarId: "NEW-CALENDAR-UUID" };
+  db.upsertEvent(after, "h1", 2);
+
+  assert.deepEqual(db.allUids(), ["NEW-UUID"]);
+  assert.equal(db.resolveUid("OLD-UUID"), "NEW-UUID");
+  assert.equal(db.resolveUid("NEW-UUID"), "NEW-UUID");
+  assert.equal(db.embedStateFor("NEW-UUID")?.sourceHash, "h1");
+  db.close();
+});
+
+test("duplicate external identifiers do not cause an ambiguous UUID rebind", () => {
+  const db = IndexDb.open(":memory:");
+  const first = { ...ev("OLD-1", "Duplicate"), externalId: "shared-server-id" };
+  const second = { ...first, uid: "OLD-2" };
+  db.upsertEvent(first, "h1", 1);
+  db.upsertEvent(second, "h2", 1);
+
+  // Same server id/calendar/start is intentionally ambiguous. A third local
+  // UUID must remain a distinct event rather than hijacking either reference.
+  db.upsertEvent({ ...first, uid: "NEW-3" }, "h3", 2);
+  assert.deepEqual(db.allUids().sort(), ["NEW-3", "OLD-1", "OLD-2"]);
+  assert.equal(db.resolveUid("OLD-1"), "OLD-1");
+  assert.equal(db.resolveUid("OLD-2"), "OLD-2");
+  db.close();
+});

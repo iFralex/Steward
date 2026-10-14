@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import {
   calendarFieldsMatch,
+  findCalendarConfirmation,
   findMailConfirmation,
   shouldExhaustCalendarConfirmation,
   shouldExhaustMailConfirmation,
 } from "../src/write-ops-cli.ts";
+import { IndexDb } from "../../calendar-mcp/src/index-db.ts";
 
 function mailStoreWith(body: string) {
   const db = new Database(":memory:");
@@ -111,6 +113,71 @@ test("calendar confirmation checks target, all-day state, alarms and recurrence 
   assert.equal(calendarFieldsMatch({ ...actual, allDay: true }, expected), false);
   assert.equal(calendarFieldsMatch({ ...actual, alarms: [10] }, expected), false);
   assert.equal(calendarFieldsMatch({ ...actual, hasRecurrence: false }, expected), false);
+});
+
+test("calendar confirmation compares all-day boundaries by civil date across DST", () => {
+  const previousTZ = process.env.TZ;
+  process.env.TZ = "Europe/Rome";
+  try {
+    const base = {
+      uid: "A1",
+      summary: "DST weekend",
+      calendarId: "CAL-1",
+      allDay: true,
+      alarms: [],
+      hasRecurrence: false,
+    };
+
+    // SQLite commonly exposes UTC-midnight dates, while an EventKit request
+    // uses local midnight. These are the same civil days around DST start.
+    assert.equal(calendarFieldsMatch({
+      ...base,
+      start: "2026-03-29T00:00:00.000Z",
+      end: "2026-03-31T00:00:00.000Z",
+    }, {
+      summary: "DST weekend",
+      calendarId: "CAL-1",
+      allDay: true,
+      start: "2026-03-28T23:00:00.000Z",
+      end: "2026-03-30T22:00:00.000Z",
+    }), true);
+
+    // A genuine one-day displacement must not be accepted.
+    assert.equal(calendarFieldsMatch({
+      ...base,
+      start: "2026-03-30T00:00:00.000Z",
+      end: "2026-04-01T00:00:00.000Z",
+    }, {
+      summary: "DST weekend",
+      calendarId: "CAL-1",
+      allDay: true,
+      start: "2026-03-28T23:00:00.000Z",
+      end: "2026-03-30T22:00:00.000Z",
+    }), false);
+  } finally {
+    if (previousTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTZ;
+  }
+});
+
+test("a create saved before a crash is recovered uniquely without a returned uid", () => {
+  const index = IndexDb.open(":memory:");
+  const event = {
+    uid: "EVENT-1", externalId: "SERVER-1", summary: "Crash recovery",
+    description: null, location: null, start: "2026-12-01T10:00:00.000Z", end: "2026-12-01T11:00:00.000Z",
+    allDay: false, calendarId: "CAL-1", calendar: "Work", account: "iCloud",
+    alarms: [], hasRecurrence: false, status: 1, url: null, lastModified: 1,
+  };
+  index.upsertEvent(event, "h1");
+  const op = {
+    kind: "calendar.create", result: null, input: {},
+    expected: { summary: event.summary, start: event.start, end: event.end, calendarId: event.calendarId, allDay: false },
+  } as any;
+  assert.equal(findCalendarConfirmation(index, op), "EVENT-1");
+
+  index.upsertEvent({ ...event, uid: "EVENT-2", externalId: "SERVER-2" }, "h2");
+  assert.equal(findCalendarConfirmation(index, op), null, "identical candidates must remain ambiguous");
+  index.close();
 });
 
 test("failed creates without a returned uid are terminal and confirmations are bounded", () => {

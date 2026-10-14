@@ -1,5 +1,7 @@
 export interface CalEvent {
   uid: string;
+  /** Server-provided identity; more durable than uid but not necessarily unique. */
+  externalId?: string | null;
   summary: string;
   description: string | null;
   location: string | null;

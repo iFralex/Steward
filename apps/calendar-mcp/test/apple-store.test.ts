@@ -13,7 +13,7 @@ function seed(): string {
     CREATE TABLE Location(ROWID INTEGER PRIMARY KEY, title TEXT);
     CREATE TABLE CalendarItem(ROWID INTEGER PRIMARY KEY, summary TEXT, description TEXT,
       location_id INTEGER, start_date REAL, end_date REAL, all_day INTEGER, calendar_id INTEGER,
-      status INTEGER, url TEXT, last_modified REAL, has_recurrences INTEGER, entity_type INTEGER, UUID TEXT);
+      status INTEGER, url TEXT, last_modified REAL, has_recurrences INTEGER, entity_type INTEGER, UUID TEXT, external_id TEXT);
     CREATE TABLE Alarm(ROWID INTEGER PRIMARY KEY, trigger_interval INTEGER, type INTEGER,
       default_alarm INTEGER, calendaritem_owner_id INTEGER);
   `);
@@ -38,6 +38,7 @@ test("eventsInRange returns joined fields within the window", () => {
   assert.equal(evs[0].account, "iCloud");
   assert.equal(evs[0].calendarId, "CAL-10");
   assert.equal(evs[0].calendar, "Casa");
+  assert.equal(evs[0].externalId, null);
   assert.deepEqual(evs[0].alarms, [15]);
   assert.equal(evs[0].hasRecurrence, false);
   assert.equal(evs[0].start, "2026-06-25T10:00:00.000Z");

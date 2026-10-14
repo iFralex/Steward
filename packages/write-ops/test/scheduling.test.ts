@@ -45,6 +45,15 @@ test("a fired scheduled op flows into the confirmation queue", () => {
   s.close();
 });
 
+test("a stale started operation is reconciled after a crash but an in-flight one is not", () => {
+  const s = mk();
+  const fresh = s.start(op);
+  assert.equal(s.pendingForConfirmation(["mail.send"]).some((row) => row.id === fresh), false);
+  s.raw.prepare("UPDATE write_ops SET updated_at=? WHERE id=?").run(Math.floor(Date.now() / 1000) - 61, fresh);
+  assert.equal(s.pendingForConfirmation(["mail.send"]).some((row) => row.id === fresh), true);
+  s.close();
+});
+
 test("audit events are attributed to the store's actor, not always 'host'", () => {
   const host = mk(); // default
   const hostId = host.start(op);

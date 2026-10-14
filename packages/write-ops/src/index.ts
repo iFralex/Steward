@@ -233,13 +233,15 @@ export class WriteOpsStore {
 
   pendingForConfirmation(kinds: WriteOpKind[], limit = 100): WriteOpRow[] {
     const placeholders = kinds.map(() => "?").join(",");
+    const staleStartedBefore = Math.floor(Date.now() / 1000) - 60;
     const rows = this.raw.prepare(
       `SELECT * FROM write_ops
        WHERE kind IN (${placeholders})
-         AND status IN ('script_returned','unknown','failed','restart_prepared','retrying')
+         AND (status IN ('script_returned','unknown','failed','restart_prepared','retrying')
+              OR (status='started' AND updated_at<=?))
        ORDER BY started_at ASC
        LIMIT ?`,
-    ).all(...kinds, limit) as Record<string, unknown>[];
+    ).all(...kinds, staleStartedBefore, limit) as Record<string, unknown>[];
     return rows.map(rowToWriteOp);
   }
 }
