@@ -1968,62 +1968,180 @@ These values are implementation defaults, not architectural constants. Environme
 
 ### Measured Local Benchmarks
 
-The following measurements were taken on 2026-08-19 on the primary development system:
+Rerun on **2026-10-14**, after the audit fixes, using
+[`tools/steward-benchmark.mts`](tools/steward-benchmark.mts). The repeat pass below
+completed **26 cases without errors**; an initial 25-case pass established the
+same workload before adding a positive Contacts query. Both reports retain every
+timing sample and aggregate result count:
 
-- Apple M4, 16 GiB RAM, arm64;
-- macOS 26.3.1;
-- packaged Steward services and Ollama already running;
-- SQLite databases opened with `readonly` and `query_only=ON`;
-- fixed generic queries only; no message, event or contact content was printed;
-- eight repetitions for SQLite operations (first sample plus seven warm samples), six for embedding/hybrid operations.
+- [Repeat pass, used in the tables](docs/benchmarks/2026-10-14.json).
+- [Initial pass, retained for startup variability](docs/benchmarks/2026-10-14-initial.json).
+- [Historical 2026-08-19 measurements](docs/benchmarks/2026-08-19.md).
 
-The gateway embedding calls were labeled `benchmark / readonly-embedding`. They performed no external write operation, though the gateway correctly added their token/timing records to Steward's normal usage ledger.
+#### Method And Reproduction
+
+The system was an Apple M4 with 16 GiB RAM, arm64, macOS 26.3.1 and Node
+24.13.0. The measured repository revision was `a5cc1c3`; the benchmark
+harness is introduced with these results. Existing packaged services and Ollama
+`bge-m3` stayed running. The gateway was measured as that already-running local
+service, not rebuilt or redeployed for the run.
+
+```sh
+# SQLite/search plus disposable synthetic document fixtures; no model requests:
+npm run benchmark
+# Add local-embed generation, KNN and hybrid retrieval:
+npm run benchmark -- --with-local-embeddings --output=/private/tmp/steward-benchmarks.json
+# Portable document-only cases, without personal indexes or model requests:
+npm run benchmark -- --documents-only
+# Check statistics, read-only enforcement and local endpoint validation:
+npm run benchmark:check
+```
+
+Default reports go to ignored `tmp/benchmarks/`. Database defaults follow Steward
+paths; `BENCH_MAIL_DB`, `BENCH_CALENDAR_DB` and `BENCH_CONTACTS_DB` select alternate
+existing indexes. Missing indexes are reported explicitly. Local embedding calls
+require a loopback HTTP `/v1/embeddings` endpoint (`BENCH_GATEWAY_URL` override)
+and use `GATEWAY_API_KEY` when configured. They send only the fixed generic query,
+carry `benchmark / readonly-embedding` attribution and add ordinary gateway Usage
+records. Query vectors remain in a temporary directory that is removed afterward.
+No messages, names, addresses, identifiers or document excerpts enter the reports.
+
+Each case runs sequentially in a fresh child process. SQLite connections are
+`readonly`, `fileMustExist` and `query_only=ON`; no migrations or personal data
+writes run. SQL cases have **31 timed operations: one first query and 30 warm
+samples**. Extraction and local-embedding cases use one first operation plus ten
+subsequent samples. Median excludes the first; p95 uses the nearest-rank empirical
+percentile. With only ten subsequent observations, p95 is the maximum observed
+sample and is descriptive, not a reliable production-tail estimate.
+
+“First query” excludes child bootstrap, module imports, database connection and
+extension loading. The OS page cache is **not flushed**, and background services
+are not paused; it is not a disk-cold or full MCP startup measurement. The local
+embedding model is primed by one untimed generic-vector check. Hybrid cases
+explicitly warm KNN before timing to represent an established connector process.
+Text queries are fixed: Mail `project`, Calendar `meeting`, Contacts `università`
+and an absent `university` control. Archive counts are sampled after each pass,
+not frozen in a transaction across all cases.
 
 #### Dataset
 
-| Index | On-disk size | Active records | Vector coverage |
-|---|---:|---:|---:|
-| Mail mirror | 3.7 GiB | 69,155 messages, 38,294 threads, 11,235 attachments | 69,371 embedding-state rows, 1,024 dimensions |
-| Calendar | 9.2 MiB | 553 events | 553/553, 1,024 dimensions |
-| Contacts | 4.4 MiB | 771 normalized contacts | 771/771, 1,024 dimensions |
-
-The mail mirror contained 32,500 active `partial`/`none` bodies (47.0%), demonstrating why explicit body state and targeted AppleScript fallback matter in practice. Mail embedding-state count is reported independently from the active-message count because state can temporarily include rows outside the current active set until maintenance catches up.
-
-#### Query Latency
-
-| Operation | Result pool | First sample | Warm median | Warm p95 |
+| Index | Main SQLite file | WAL at sampling | Records | Embedding state / dimension |
 |---|---:|---:|---:|---:|
-| Mail FTS5, top 50 | 37 | 16.16 ms | **0.71 ms** | 0.85 ms |
-| Mail trigram subject, top 500 | 72 | 40.06 ms | **2.06 ms** | 2.22 ms |
-| Mail trigram body, top 500 | 252 | 43.66 ms | **2.25 ms** | 2.61 ms |
-| Mail structured recent/unread, top 20 | 20 | 40.81 ms | **13.49 ms** | 14.11 ms |
-| Mail vector KNN, top 50 | 50 | **4,133.66 ms** | **34.67 ms** | 53.15 ms |
-| Gateway `local-embed`, 1,024 dimensions | 1 vector | 162.26 ms | **119.50 ms** | 123.55 ms |
-| Mail hybrid end-to-end after index warm-up | 50 | 183.29 ms | **175.35 ms** | 179.22 ms |
-| Calendar FTS5, top 500 | 57 | 8.12 ms | **0.08 ms** | 0.12 ms |
-| Calendar vector KNN, top 500 | 500 | 141.70 ms | **1.12 ms** | 1.27 ms |
-| Contacts FTS5, top 200 | 3 | 1.69 ms | **0.02 ms** | 0.02 ms |
-| Contacts vector KNN, top 200 | 200 | 63.97 ms | **0.37 ms** | 0.41 ms |
+| Mail mirror | 3.73 GiB | 4.60 MiB | 78,024 active messages; 45,150 thread rows; 13,857 attachment rows | 78,432 / 1,024 |
+| Calendar | 13.35 MiB | 4.15 MiB | 694 indexed events | 694 / 1,024 |
+| Contacts | 4.36 MiB | 0 | 771 normalized contacts | 771 / 1,024 |
 
-The hybrid measurement includes local query embedding, FTS retrieval, vector KNN and in-process RRF. It was run after the standalone vector test had mapped the vector table, so it represents steady interactive behavior rather than process startup.
+Mail has 35,857 active `partial`/`none` bodies
+(46.0%). Embedding-state rows are independent
+from active-message counts and do not prove exact active-vector coverage. File
+sizes exclude auxiliary files other than the separately reported WAL.
 
-A separate warm-cache negative lookup over the full mail corpus compared a synthetic absent substring:
+#### Retrieval Latency
 
-| Strategy | Wall time |
-|---|---:|
-| Trigram `MATCH` | <10 ms |
-| `body_text LIKE '%…%'` full scan | 290 ms |
+| Operation | Returned | First query | Warm median | Warm p95 |
+|---|---:|---:|---:|---:|
+| Mail FTS5 candidates, cap 50 | 50 | 75.79 ms | **1.13 ms** | 1.17 ms |
+| Mail subject trigram candidates, cap 500 | 412 | 81.13 ms | **2.44 ms** | 2.83 ms |
+| Mail body trigram candidates, cap 500 | 500 | 35.71 ms | **4.83 ms** | 5.08 ms |
+| Mail recent unread IDs, cap 20 | 20 | 54.94 ms | **15.85 ms** | 18.92 ms |
+| Mail lexical search + summaries, cap 12 | 12 | 4.70 ms | **1.51 ms** | 1.63 ms |
+| Mail body substring search + summaries, cap 12 | 12 | 20.87 ms | **12.29 ms** | 14.12 ms |
+| Mail vector KNN, cap 50 | 50 | 8,843.00 ms | **38.49 ms** | 47.15 ms |
+| Gateway `local-embed` (returned dimensions) | 1,024 | 36.77 ms | **18.55 ms** | 21.90 ms |
+| Mail hybrid, precomputed query vector | 12 | 167.77 ms | **40.47 ms** | 48.33 ms |
+| Mail hybrid, fresh local query embedding | 12 | 156.75 ms | **73.17 ms** | 133.20 ms |
+| Calendar FTS5 candidates, cap 500 | 58 | 27.06 ms | **0.065 ms** | 0.086 ms |
+| Calendar vector KNN, cap 500 | 500 | 83.45 ms | **1.80 ms** | 2.06 ms |
+| Contacts FTS5 matching query, cap 200 | 10 | 3.92 ms | **0.032 ms** | 0.040 ms |
+| Contacts FTS5 absent query, cap 200 | 0 | 3.82 ms | **0.017 ms** | 0.024 ms |
+| Contacts vector KNN, cap 200 | 200 | 11.34 ms | **0.669 ms** | 0.759 ms |
 
-The result validates the architecture's main performance assumptions:
+Candidate rows measure bounded SQL retrieval without body materialization.
+The lexical/substring/hybrid response rows call the current production `searchDb`
+with `perMessage: true` and limit 12, including filters and summary loading but
+excluding MCP transport, host wrappers and UI rendering. KNN uses a real generic
+1,024-dimensional local query vector. Returned pools at their cap do not imply
+that the complete corpus has only that many matches.
 
-1. **Lexical and substring retrieval are not bottlenecks** once the SQLite pages are warm.
-2. **Embedding generation dominates steady-state hybrid latency**: approximately 120 ms of a 175 ms query.
-3. **Mail vector startup is expensive**: the first KNN in a new process spent about 4.1 seconds loading/mapping the 69k × 1,024-dimensional vector index, while subsequent KNN calls were about 35 ms.
-4. **Persistent MCP processes are important**: keeping the mail connector alive amortizes vector initialization instead of paying it per query.
-5. **Small calendar/contact indexes are effectively instantaneous** after warm-up.
-6. **The trigram index has measurable value even at 69k messages**, and the advantage grows when a `LIKE` scan cannot terminate early or filesystem pages are cold.
+The precomputed-vector hybrid case isolates retrieval and fusion from query
+embedding. Its warm median is 40.47 ms versus
+73.17 ms with a fresh local embedding. The separate embedding median is
+18.55 ms; these separately sampled distributions are not additive components
+of one instrumented request. Both retrieval and model/HTTP work matter at this
+archive size. Calendar/Contacts KNN are raw candidate queries, not full tool calls
+or Calendar recurrence expansion.
 
-These are point-in-time engineering measurements, not universal product guarantees. Latency changes with query selectivity, filesystem cache, model state, archive size and concurrent background jobs. Future performance work should preserve the same methodology and record both first-process and warm distributions.
+#### Negative Lookup And First-Query Variability
+
+The fixed absent substring is `stewardbenchmarkabsent9e7318fd`; both strategies
+returned zero rows on every sample:
+
+| Operation | Returned | First query | Warm median | Warm p95 |
+|---|---:|---:|---:|---:|
+| Absent body substring, trigram | 0 | 217.60 ms | **1.88 ms** | 2.03 ms |
+| Absent body substring, `LIKE` scan | 0 | 653.35 ms | **326.15 ms** | 549.08 ms |
+
+The warm median `LIKE` scan was about
+173× the trigram lookup for this absent query. This
+is the case where an unindexed scan cannot stop at an early positive match;
+it is not a universal speedup for all substrings.
+
+| First operation in a new process | Initial pass | Repeat pass |
+|---|---:|---:|
+| Recent unread IDs | 10,770.32 ms | 54.94 ms |
+| Absent `LIKE` scan | 17,162.81 ms | 653.35 ms |
+| Mail vector KNN | 8,057.89 ms | 8,843.00 ms |
+
+A new process does not imply a cold filesystem cache: the unread and negative
+scan first samples varied sharply between passes, while Mail KNN still incurred
+roughly eight seconds on its first timed query. Warm KNN medians were about
+38.49 ms in both passes. The measurements support persistent connectors and
+bounded indexed retrieval, while leaving OS cache, memory pressure and background
+activity as uncontrolled factors. They do not isolate the precise cause of every
+first-query stall or establish a performance regression against August.
+
+#### Document Extraction, Cache And Search
+
+These cases use disposable generated files rather than private documents.
+Extraction clears the LRU **before every sample** and includes safe-path checks,
+worker startup, parsing, result transfer and cache publication. Its subsequent
+samples remain uncached extractions; the separate cache case primes one extracted
+document before timing. Search starts from extracted text: the first sample builds
+chunks/vectors as applicable, later samples reuse them. Read timings start from
+extracted text too and are not file-opening or end-to-end client latency.
+
+| Operation | Returned | First query | Warm median | Warm p95 |
+|---|---:|---:|---:|---:|
+| Uncached text extraction, 100,000 chars | 100,000 | 75.44 ms | **36.40 ms** | 38.03 ms |
+| Uncached text extraction, 2,000,000 chars | 2,000,000 | 41.65 ms | **38.23 ms** | 41.38 ms |
+| Uncached text-layer PDF, 20 pages¹ | 911 | 845.41 ms | **365.42 ms** | 389.04 ms |
+| Uncached PPTX, 20 slides¹ | 44,591 | 106.31 ms | **74.66 ms** | 75.87 ms |
+| Cached extraction lookup, 2,000,000 chars | 2,000,000 | 0.047 ms | **0.021 ms** | 0.030 ms |
+| Read from extracted text, default budget | 6,000 | 0.474 ms | **0.003 ms** | 0.013 ms |
+| Lexical search, 65 chunks | 5 | 6.84 ms | **0.152 ms** | 0.322 ms |
+| Lexical search, 1,284 chunks | 5 | 9.47 ms | **2.62 ms** | 3.45 ms |
+| Fusion, 1,284 chunks / 256 synthetic vectors² | 5 | 10.79 ms | **2.63 ms** | 3.01 ms |
+
+¹ The PDF has 6,365 input bytes and yields 911 characters across 20 text-layer
+pages; PPTX has 4,403 compressed input bytes and yields 44,591 characters across
+20 slides. These deliberately simple fixtures measure format initialization and
+basic extraction, not scanned-PDF OCR, complex layout fidelity or every Office
+feature. Text fixtures are exactly 100,000 and 2,000,000 UTF-8 ASCII bytes.
+
+² The fusion case injects fixed 1,024-dimensional vectors through the existing
+search dependency hooks. It measures chunk selection, cosine ranking and RRF,
+**not embedding-model latency or relevance**. Lexical search covers all 1,284
+chunks; semantic coverage is explicitly `sampled` at 256 chunks. No network
+request occurs in this case. The read case returns 6,000 characters; searches
+return five excerpts within the normal output budget.
+
+The warm extracted-text lookup is below 0.1 ms, while uncached worker extraction
+costs tens of milliseconds for these text/Office fixtures and hundreds for PDF.
+At two million characters, cached lexical search remains a few milliseconds.
+This quantifies the value of retaining extraction results without changing the
+worker resource bounds. These are point-in-time measurements; the August report
+uses different archive sizes, queries and an unretained harness, so numerical
+changes must not be presented as a controlled before/after improvement.
 
 ## Trust Boundaries And Threat Model
 

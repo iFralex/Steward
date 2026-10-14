@@ -3,8 +3,8 @@
 Reviewed on **2026-10-14**, against repository code at `b3b051c` and the checked-in
 manifests/lockfiles. The root README was read in full. The first phase corrected
 documentation only. The subsequent implementation phase fixes the residual issues
-at the user's request; this working-tree revision now includes code, tests and
-aligned guides. The table below preserves the original discrepancy/evidence;
+at the user's request; commits `03dd5f7` (code/tests) and `a5cc1c3`
+(guides/register) record that phase. The table below preserves the original discrepancy/evidence;
 the resolution matrix records the resulting implementation and its limits.
 
 ## Method and coverage
@@ -17,7 +17,8 @@ configuration, not a fresh external pricing/availability verification.
 
 The root README retains its product → workflow → internals → operations
 structure. Existing dated benchmarks remain historical evidence; no personal
-archive was rescanned or re-benchmarked. Component changes are targeted, except
+archive was rescanned or re-benchmarked during that phase. The later authorized
+benchmark rerun is recorded separately below. Component changes are targeted, except
 for the web template and substantially outdated host/Calendar/Mail guides.
 Vendored wiki documentation receives an integration note rather than a rewrite
 of its upstream product description.
@@ -190,3 +191,31 @@ Documentation verification includes whitespace, local links/anchors, fences,
 workspace scripts and consistency scans. The original documentation phase also
 parsed all 15 Mermaid diagrams; the software phase updates the journal diagram
 without changing its grammar or historical benchmark results.
+
+## Authorized benchmark rerun — 2026-10-14
+
+After committing implementation and guide changes, the user requested new
+benchmarks, README results, a separate commit and push. The initial pass ran 25
+cases; the repeat pass ran 26 after adding a positive Contacts query alongside
+the absent-query control. Both completed without errors. Each SQLite case uses
+one fresh child process, read-only/query-only connections and 31 samples; document
+extraction/embedding cases use 11. Reports contain only timing samples and
+aggregate counts. Fixed generic text goes only to the loopback local-embed route;
+its normal Usage attribution is the only operational ledger write. No personal
+Mail/Calendar/Contacts mutation, source rescan, installation or deployment ran.
+
+The README now distinguishes first-query versus warm samples, process startup
+versus filesystem cache, raw SQL candidates versus production summary retrieval,
+uncached worker extraction versus cached reads, and synthetic vector fusion versus
+real model latency. It records the larger current archive, separate WAL sizes,
+negative substring scans and the variability between two passes. Historical
+August results are preserved, without treating the new numbers as a controlled
+speedup. Benchmark self-checks validate summary statistics, SQLite read-only
+enforcement and loopback endpoint restrictions; the harness passes TypeScript
+checking.
+
+- [Reproducible harness](../tools/steward-benchmark.mts).
+- [Repeat-pass aggregate samples](benchmarks/2026-10-14.json).
+- [Initial-pass aggregate samples](benchmarks/2026-10-14-initial.json).
+- [Preserved August measurements](benchmarks/2026-08-19.md).
+- [Current README results](../README.md#measured-local-benchmarks).
