@@ -219,3 +219,44 @@ checking.
 - [Initial-pass aggregate samples](benchmarks/2026-10-14-initial.json).
 - [Preserved August measurements](benchmarks/2026-08-19.md).
 - [Current README results](../README.md#measured-local-benchmarks).
+
+## Startup preparation — 2026-10-14
+
+Following the benchmark discussion, the user authorized eager connectors,
+coordinated index preparation and local model preparation. Commit `426ee79`
+introduces persistent read-only vector workers; `3fbfda2` wires independent eager
+connector startup, the serial preparation coordinator, authenticated status and
+localized client presentation. The document parser isolation policy is unchanged.
+
+The host begins connecting after HTTP becomes available. Ready peers can serve
+calls before a slow connector finishes; direct calls wait only for their own
+server. Late tool catalogs are incorporated between chat turns with persisted Pi
+history and policy wrappers intact. Private preparation requests warm the same
+worker connection used by asynchronous KNN, with bounded lexical lookups. The
+queue visits Mail, enabled local-embed endpoints, Calendar and Contacts, one heavy
+task at a time. Active MCP calls defer the next preparation; requests can overtake
+queued worker preparation, while running native SQLite work cannot be preempted.
+
+Model preparation respects Mail/document endpoint/model/disable configuration,
+uses only enabled loopback local-embed routes and fixed generic text, and records
+host/startup-embedding Usage. Remote/disabled embeddings are not warmed. Missing
+indexes or unsupported preparation methods skip; errors remain visible without
+holding other connected tools behind the preparation queue. System diagnostics
+inspect the existing connector pool rather than spawning extra processes or Mail
+Automation smoke calls. The client shows startup preparation and failure states.
+
+Validation uses **410 passing deterministic tests**: Search 7, Mail MCP 115,
+Calendar 62, Contacts 27, host/web helpers 199. These cover persistent-worker
+read-back after index updates, actual lexical table shapes, independent delayed
+connectors, failed/cancelled startup, serial ordering, interactive deferral,
+configuration/endpoint restrictions, missing models/auth, and late tool discovery
+with retained Pi history. Eight affected workspace TypeScript checks, a production
+web/PWA build, benchmark self-checks and compiled vector-worker preparation/query
+also passed. Live E2E, personal-source mutations, real model preparation,
+installation and deployment were not used for these checks.
+
+The October benchmark samples remain the pre-preparation baseline. The harness
+now primes the asynchronous query connection for future hybrid runs; no historical
+latencies were rewritten or claimed as measured startup improvements. Workers
+can time out/restart, models can unload and OS caches can evict pages. Preparation
+completion is not a source-permission guarantee or permanent residency promise.

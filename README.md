@@ -444,20 +444,21 @@ services. `GET /system/status` builds one bounded snapshot in parallel from:
   spawning a second Ringback process;
 - readability/writability of primary SQLite stores, available disk space and
   macOS Mail/Calendar data access;
-- a fresh MCP `tools/list` plus a harmless connector-specific smoke call where
-  one is defined.
+- connection state and the tool catalog of the host's persistent MCP processes,
+  plus queued/running/completed search preparation. Diagnostics do not spawn
+  duplicate connectors or trigger Mail AppleScript smoke calls.
 
 Each MCP tool is shown with its fully qualified name, source, scope
 (`chat`/`call`/`watch`/`all`), current deterministic policy decision, call/error
-totals and most recent result from the Usage ledger. Discovery is cached and
+totals and most recent result from the Usage ledger. The live catalog is
 combined with a bundled manifest: if an MCP server is temporarily down, the UI
 keeps its tool inventory visible and marks the service unavailable instead of
 making the tools disappear. Native host tools such as `create_watch`,
 `create_agent_watch`, `stop_watch`, `ask_user` and the call-only speech-rate
 tool are reported through the same model.
 
-Health is intentionally observational. Probes have short timeouts, close their
-temporary MCP clients, and never start an external action. State transitions
+Health is intentionally observational. Network probes have short timeouts; MCP
+checks inspect existing host connections and never start an external action. State transitions
 between `ok`, `warning`, `error` and `unknown` are written to Audit only when
 the state changes. Scheduler and watch checks distinguish “not observed in this
 process” from a verified failure, avoiding false certainty after startup.
@@ -1966,6 +1967,52 @@ Local-first does not mean unbounded. Several limits keep cold starts, model cont
 
 These values are implementation defaults, not architectural constants. Environment variables expose the operationally important ones, while hard candidate caps protect interactive latency. Performance changes should be measured against realistic multi-gigabyte mail databases, not only test fixtures.
 
+### Preparing Search Before The First Request
+
+Once the host HTTP listener is available, it starts the configured MCP connectors
+without waiting for a chat. Each connector initializes independently with a
+10-second startup deadline. A ready connector can serve calls while a slow peer
+is still connecting. Direct calls wait only for their own connector; chat sessions
+incorporate tools discovered later between turns by reopening their persisted Pi
+session, preserving history and approval wrappers. This does not replace the tool
+set during an active turn or approval.
+
+Heavy preparation is a separate serial queue: **Mail → local embeddings → Calendar
+→ Contacts**. It waits for active MCP tool calls to finish before beginning the
+next task. Mail/Calendar/Contacts expose a private `steward/prepareSearch` request,
+not an agent tool. A missing index or an unsupported preparation method is skipped;
+a preparation failure is recorded without disabling other connected tools.
+
+Vector retrieval and preparation run in a persistent worker per connector index,
+using a read-only/query-only SQLite connection. The warm-up performs one bounded
+KNN and small lexical/trigram lookups without returning source content. Real
+vector searches reuse that worker connection; slow native SQLite work does not
+block the connector's stdio/event loop. Interactive requests overtake preparation
+still queued inside the worker; a native query already executing cannot be
+preempted. Worker requests have a 30-second deadline, after which the worker is
+terminated and pending reads fail explicitly; a later read can create a new worker.
+SQLite updates remain visible through WAL, and worker connections close with their
+owning store/process. Returned row identities are resolved in the current main
+connection before producing tool responses.
+
+Model preparation respects the Mail/document embedding endpoint/model overrides
+and `off` settings. It only calls enabled loopback `/v1/embeddings` endpoints using
+`local-embed`, deduplicating common endpoints and visiting distinct local endpoints
+sequentially. It sends the fixed text `Steward startup preparation.`, with
+`host / startup-embedding` Usage attribution and the appropriate configured key.
+Remote endpoints are not contacted by automatic model preparation. Each local
+request has a 30-second deadline; missing models/auth or invalid responses become
+preparation errors rather than blocking the UI.
+
+Authenticated `GET /system/preparation` returns connection/task state. The client
+shows a preparation banner and the System page exposes per-service status and
+failure details; refreshing diagnostics reuses the host's connectors. Completion
+means the initial read/model preparation finished, not guaranteed source permissions,
+permanent model residency or a zero-latency next request. OS cache eviction, model
+unloading and connector restarts can still reintroduce latency. Warm-up spends
+CPU/I/O and memory before first use, so it is limited to one heavy task at a time;
+ordinary interactive work can still overlap an already-running preparation.
+
 ### Measured Local Benchmarks
 
 Rerun on **2026-10-14**, after the audit fixes, using
@@ -2019,6 +2066,9 @@ extension loading. The OS page cache is **not flushed**, and background services
 are not paused; it is not a disk-cold or full MCP startup measurement. The local
 embedding model is primed by one untimed generic-vector check. Hybrid cases
 explicitly warm KNN before timing to represent an established connector process.
+These recorded measurements predate automatic startup preparation and asynchronous
+vector workers; they remain a baseline, not measured post-change startup latency.
+The current harness warms the asynchronous retrieval connection for new hybrid runs.
 Text queries are fixed: Mail `project`, Calendar `meeting`, Contacts `università`
 and an absent `university` control. Archive counts are sampled after each pass,
 not frozen in a transaction across all cases.

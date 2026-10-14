@@ -103,3 +103,23 @@ Host unit tests cover policy, sessions, connectors, voice/watch coordination and
 route behavior with injected dependencies. Live train/phone/data tests are
 separate opt-in flows. The root README describes their scope; do not substitute
 real external actions for deterministic verification.
+
+## Startup preparation and availability
+
+After opening its HTTP listener, the host starts the process-wide MCP bridge.
+Connectors initialize independently (10 s deadline); ready peers remain usable
+while others connect. Calls wait for their own server, and a chat refreshes its
+catalog between turns while retaining its persisted Pi history and approval gate.
+Search preparation is serial: Mail, local-embed, Calendar, Contacts. Active MCP
+calls defer the next task; a running native query cannot be interrupted for priority.
+Index searches use persistent read-only workers, sharing the warmed connection
+with real queries. Worker read deadlines are 30 s; failures do not block stdio.
+
+`GET /system/preparation` requires the host token and returns connector/task
+states. The web client displays preparation/failure status; `/system/status`
+inspects these same processes rather than spawning duplicate MCP probes.
+Local model preparation respects embedding overrides/disable settings, sends only
+fixed generic text to enabled loopback local-embed endpoints, and records
+`host / startup-embedding` Usage. It never warms a remote provider automatically.
+This is initial preparation rather than a guarantee of permanent cache/model
+residency. See [startup internals](../../README.md#preparing-search-before-the-first-request).
