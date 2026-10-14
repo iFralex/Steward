@@ -1,112 +1,154 @@
-# calendar-mcp
+# Calendar MCP
 
-MCP server and CLI for reading and writing Apple Calendar events via local SQLite access and AppleScript.
+Read Apple Calendar's local SQLite store, build a hybrid search sidecar, and
+perform host-approved writes through the launcher's EventKit bridge or an
+AppleScript compatibility path. Never write directly to Apple's database.
 
-## Permissions
+## Permissions and runtime
 
-**Full Disk Access (FDA) — required for reads.**
-`list_calendars`, `search_events`, and `read_event` read directly from the Apple Calendar SQLite database at
-`~/Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb`.
-Grant FDA to the process running the server (Terminal, your agent host, etc.) in
-System Settings → Privacy & Security → Full Disk Access.
+| Capability | Permission / runtime |
+|---|---|
+| Read calendars/events and sync index | Full Disk Access for the process reading `~/Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb`. |
+| EventKit create/update/delete | Running Steward launcher (macOS 14+) and Calendar **Full Access** in Privacy & Security → Calendars. |
+| AppleScript compatibility writes | Calendar.app Automation permission for the invoking process. |
 
-**Automation — required for writes.**
-`create_event`, `update_event`, and `delete_event` drive Calendar.app via AppleScript (`osascript`).
-The first time a write tool is called, macOS will prompt for Automation permission.
-If denied, grant it in System Settings → Privacy & Security → Automation.
+The packaged launcher proactively requests EventKit access and explains Full
+Disk Access. Standalone Terminal/Node invocations have a separate privacy
+identity. Missing FDA does not authorize replacing database reads with a
+framework write or disabling the host approval gate.
 
-## CLI
+`STEWARD_CALENDAR_BRIDGE_DIR` is set by the launcher for managed children. Its
+presence selects bridge-capable dispatch; it is not a liveness probe. A failed
+bridge write is returned to reconciliation, never blindly retried through
+AppleScript after an uncertain native effect.
 
-```
-npx calendar-mcp <command>
-```
+## CLI and index
 
-| Command | Description |
-|---------|-------------|
-| `index` / `sync` | Build or refresh the local search index (reads all events from Apple Calendar and upserts into `calendar-index.sqlitedb`). |
-| `status` | Show how many events are in the index and where the DB lives. |
+From the monorepo root:
 
-### Search index and embeddings
-
-The `index` command populates a local SQLite index that enables hybrid keyword + semantic search via `search_events`.
-
-Semantic embeddings are generated via the gateway `local-embed` model. The endpoint defaults to
-`http://127.0.0.1:4000/v1/embeddings` (controlled by `MAIL_EMBED_ENDPOINT`). Set
-`MAIL_EMBED_ENDPOINT=off` to disable embedding and build a keyword-only index.
-
-```bash
-# Build the index with embeddings (gateway must be running)
-calendar-mcp index
-
-# Build keyword-only index (no embedding endpoint needed)
-MAIL_EMBED_ENDPOINT=off calendar-mcp index
-
-# Check index status
-calendar-mcp status
+```sh
+node --import tsx apps/calendar-mcp/src/cli.ts sync
+node --import tsx apps/calendar-mcp/src/cli.ts status
+# Keyword-only sync, without gateway embeddings:
+MAIL_EMBED_ENDPOINT=off node --import tsx apps/calendar-mcp/src/cli.ts index
 ```
 
-The index DB path defaults to `~/Library/Application Support/llm-wiki/calendar-index.sqlitedb` and can be
-overridden with the `CALENDAR_INDEX_DB` environment variable.
+`index` and `sync` read all current event rows, upsert text/metadata, remove
+missing rows and update changed embeddings. Embeddings use the shared
+`MAIL_EMBED_ENDPOINT`/`MODEL`/`API_KEY`/`DIM` settings, defaulting to gateway
+`http://127.0.0.1:4000/v1/embeddings`, model `local-embed`, with attribution
+`calendar-mcp / embed`. These variable names are shared with Mail/Contacts;
+they are not Calendar-only overrides.
 
-## MCP tools
+`CALENDAR_INDEX_DB` overrides the default
+`~/Library/Application Support/steward/calendar-index.sqlitedb`. If absent,
+legacy `llm-wiki/calendar-index.sqlitedb` is moved best-effort when no current
+index exists. The sidecar stores FTS/vectors and historical UID aliases; deleting
+it rebuilds search data but loses historical identity mappings.
 
-| Tool | Description |
-|------|-------------|
-| `list_calendars` | List all calendars with stable ID and account name. Use the ID for writes. Requires FDA. |
-| `search_events` | Search events by free-text query (hybrid keyword + semantic if the index exists) and/or time range, account, and calendar filters. Requires FDA. |
-| `read_event` | Read one event by uid. Requires FDA. |
-| `create_event` | Create a new calendar event. Requires Automation. |
-| `update_event` | Update fields of an existing event by uid. Requires Automation. |
-| `delete_event` | Delete an event by uid. Requires Automation. |
+## Read tools
 
-### search_events parameters
+| Tool | Input / output |
+|---|---|
+| `list_calendars` | Stable `id`, title, account and type. Prefer the ID for writes. |
+| `search_events` | Optional `query`, `start`, `end`, `account`, `calendar`, `limit`, `offset`; compact events plus page continuation. Default 10, maximum 20. |
+| `read_event` | `uid`, optional `occurrenceStart`; full event or null. Resolves a historical UID through the sidecar when available. |
 
-All `start` and `end` values accepted by calendar tools are instants in RFC 3339
-format with an explicit timezone (`Z` or `±HH:MM`). Inputs are normalized to UTC
-internally. Event results are rendered in the Mac's local timezone with the
-date-specific explicit offset, matching the wall-clock time shown by Calendar.app.
-Floating date-times and date-only strings are rejected because their meaning
-changes with the Mac's timezone. For all-day events, pass local-midnight
-boundaries with the applicable explicit offset.
+Input date-times require RFC 3339 with explicit `Z` or `±HH:MM` and normalize to
+UTC. Outputs use the Mac's local timezone with the date-specific offset. Date-only
+or floating local strings are rejected. All-day create boundaries should be
+local midnight with explicit offsets, including the applicable DST offset.
 
-All parameters are optional and ANDed:
+Time browsing matches half-open overlap (`event.end > start`, `event.start < end`),
+by default 30 days back to 90 ahead. A configured bridge handles explicit ranges
+and query-free browsing through EventKit occurrence expansion, then applies
+account/calendar/text filters and pagination. Windows above 366 days or above
+1,000 occurrences fail explicitly. Each returned occurrence has `occurrenceStart`.
+Indexed hybrid text search without explicit dates remains an unbounded entity
+search over stored rows. Compatibility range reads apply lexical query terms;
+when relevant recurring masters exist, they reject the request rather than imply
+complete occurrence availability.
 
-- `query` (string) — free-text search; uses hybrid search when the index is built, otherwise falls back to `eventsInRange`
-- `start` (ISO string) — start of time range (default: 30 days ago)
-- `end` (ISO string) — end of time range (default: 90 days from now)
-- `account` (string) — filter by account name
-- `calendar` (string) — filter by calendar name
-- `limit` (number) — page size, default 10, max 20
-- `offset` (number) — rank offset returned as `page.nextOffset`
+## Write tools and compatibility
 
-### create_event parameters
+| Tool | Arguments and result |
+|---|---|
+| `create_event` | Required `summary`, `start`, `end`, plus either `calendarId` or unique legacy `calendar` title. Optional `allDay`, location, description, URL, recurrence and alarms. Returns `uid`, `operationId`. |
+| `update_event` | Required `uid` and at least one effective change. Optional summary, start/end, location, description, URL, recurrence, alarms, scope and occurrenceStart. Returns `ok`, `operationId`. |
+| `delete_event` | Required `uid`, optional scope and occurrenceStart. Returns UID, operation ID and `pending_confirmation` on backend success. |
 
-Required: `calendar`, `summary`, `start` (ISO), `end` (ISO).
-Optional: `allDay` (boolean), `location`, `description`, `url`, `recurrence`.
+Alarms are non-negative minutes before start, rounded to integers; update `[]`
+clears them; native update `recurrence: ""` clears recurrence. Create requires end after start. Update rejects a UID-only or
+ineffective empty update, and validates a changed time against the live unchanged
+boundary. EventKit validates effective times again before committing. Attendees and real invitations are
+not exposed by these schemas.
 
-### Attendees limitation
+For create, EventKit selects the stable `calendarId`. The legacy title is
+resolved only when unique. Compatibility creation uses a title after resolving
+that ID and rejects duplicate titles: Calendar's scripting identifier selector
+is unreliable on current macOS. Update/delete resolve known old UIDs before
+backend dispatch.
 
-AppleScript cannot send real calendar invitations. `create_event` and `update_event` do not support
-an `attendees` field. To invite attendees, use the Calendar.app UI or an Exchange/CalDAV API directly.
+EventKit supports `scope: thisEvent` (default) or `futureEvents`; recurring
+updates/deletes require an explicit `occurrenceStart`. AppleScript updates reject
+recurring targets and `futureEvents`; compatibility deletion rejects future scope. Create/update choose EventKit
+when a bridge is configured and the recurrence is representable; delete chooses
+it whenever the bridge is configured.
 
-## Destructive operations
+The bridge RRULE subset includes `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL`,
+`COUNT` or `UNTIL`, `BYDAY`, `BYMONTHDAY`, `BYMONTH`, `BYWEEKNO`, `BYYEARDAY` and
+`BYSETPOS`. Unsupported or duplicate fields make the rule unrepresentable and
+select compatibility; they are not silently removed. Calendar.app may still
+reject a compatibility rule. `UNTIL` accepts a basic date or UTC date-time.
 
-`create_event`, `update_event`, and `delete_event` are destructive. When running under the `apps/host`
-agent host, each of these tool calls is gated by the host's PreToolUse approval hook — the user must
-explicitly confirm before the operation executes.
+## Bridge protocol, journal and confirmation
 
-## Live test (manual only)
+The default IPC root is
+`~/Library/Application Support/Steward/calendar-bridge/` with `requests/`,
+`processing/`, `responses/`. Directories use `0700`, Node request files `0600`.
+UUID request JSON is published by rename; Swift polls every 100 ms and claims it
+by moving it to `processing/`. Node polls responses every 50 ms for up to 30 s
+and removes the consumed response. Swift serializes operations and commits via
+EventKit. It checks Full Access before executing, including `ping`.
 
-```bash
-# Creates and immediately deletes a test event in the "Casa" calendar.
-# Do NOT run in CI — it modifies real calendar data.
-node --import tsx apps/calendar-mcp/realtest.mts
+Restarted processing requests get `outcomeUnknown` without replay. Requests
+carry an expiry checked before execution. On timeout an unclaimed request is
+withdrawn and reported unexecuted; a claimed/running request remains uncertain
+and can complete later. No automatic replay or backend switch follows uncertainty. This is private local-user IPC, not a same-user security sandbox.
+
+The connector journals executable inputs before dispatch and stores the backend
+result as `script_returned`, a historical state name also used for EventKit.
+Reconciliation resolves UID aliases and compares supplied fields and sorted
+alarms. All-day dates use local civil-day matching. Native recurrence comparison
+requires one supported canonical RRULE; recurrence presence alone is insufficient.
+Recurring/future-scope operations require native read-back of the selected
+occurrence. This verifies observable rule state, not all future instances.
+
+Sidecar confirmation requires a completed source sync started after backend
+completion (milliseconds; conservative extra second for legacy records). Metadata,
+deletions and the completed marker publish in one transaction before optional
+embedding work. Delete confirmation additionally requires a pre-write target
+baseline. Fresh native read-back can avoid waiting for that sync. A create with
+no returned UID needs one unambiguous field match from a bounded candidate set.
+Calendar never automatically re-executes writes; the normal confirmation ceiling
+is 12 checks. Exhaustion is lack of confirmation, not rollback.
+
+See [root Calendar internals](../../README.md#calendar-write-transport-and-identity)
+and [the resolution register](../../docs/readme-code-audit.md).
+
+Host approval is enforced in the host's deterministic tool wrapper, not by the
+standalone MCP server. External MCP clients own their own authorization boundary.
+Journal inputs are operational sensitive data; Audit copies have separate,
+heuristic redaction.
+
+## Validation
+
+```sh
+npm test -w @steward/calendar-mcp
 ```
 
-## Unit tests
-
-```bash
-cd apps/calendar-mcp && npm test
-```
-
-Tests cover: CoreData conversion, AppleStore queries, IndexDb, sync, hybrid search, AppleScript builders, and argument parsers. The `realtest.mts` is NOT included in `npm test`.
+Tests use fixtures for parsers, CoreData, search/index identity, EventKit client
+IPC and sync. Scheduler confirmation tests cover evidence/attempt bounds.
+`realtest.mts` and the EventKit harness under `tools/eventkit-validation/` are
+manual-only: they can request native permissions and modify real events. They
+are not documentation checks or part of deterministic CI verification.

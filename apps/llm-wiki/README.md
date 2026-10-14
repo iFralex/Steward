@@ -28,6 +28,31 @@
   <img src="assets/overview.jpg" width="100%" alt="Overview">
 </p>
 
+## Steward integration notes
+
+This directory is the vendored wiki workspace inside Steward; its npm workspace
+name is `llm-wiki`, not `@steward/llm-wiki`. From the monorepo root,
+`npm run mcp:build -w llm-wiki` builds the compiled MCP entrypoint used by the
+Steward host. Enable Settings → API + MCP and configure
+`LLM_WIKI_API_TOKEN` for clients; this credential is separate from Steward's
+browser pairing token. See [the MCP guide](mcp-server/README.md).
+
+The wiki chooses its own chat, vision and embedding providers. Configure them
+to use Steward's gateway if centralized routing/accounting is desired; MCP
+access does not automatically change those settings. Deep Research, MinerU
+cloud parsing and optional Git vault backup are independent network features.
+The backup runs every six hours while the app process stays alive, defaults off,
+and uses the configured Git remote/credential helper. It excludes selected
+transient/vector state and app configuration, but includes raw sources and
+valuable ingest/caption caches. Before staging/push, `gh api` must verify that
+the configured GitHub remote is private; missing authentication or an unverifiable
+remote aborts the run. The push uses the verified URL explicitly. It is distinct from native Steward deployment snapshots.
+
+For the integrated runtime, permissions and recovery boundaries, use the
+[Steward root README](../../README.md) and [backup explanation](../../README.md#backup-boundaries).
+The standalone installation and upstream feature description below remain
+specific to this wiki component.
+
 ## Features
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache

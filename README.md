@@ -14,7 +14,7 @@ The technical way to describe it is:
 
 > Steward is a local-first agent platform made of a React/PWA client, a Node host running a Pi-based agent, MCP connectors for local data sources, a self-hosted OpenAI-compatible LLM gateway, background indexing/distillation jobs, and a vendored LLM Wiki desktop app used as long-term inspectable memory.
 
-Everything important runs locally. Your data is stored on your machine. Network egress is limited to the model providers configured behind the gateway, plus optional private phone access through Tailscale/Web Push.
+The host, local connectors and primary stores run on your Mac. Chat context sent to a remote model leaves the machine through the configured gateway. LLM Wiki has its own provider settings and optional network features: web research, MinerU cloud parsing and Git vault backup can contact other services. Train lookups contact ViaggiaTreno; phone access and notifications use Tailscale/Web Push, and optional calls use SIP/Ringback. “Local-first” describes ownership and runtime placement, not an enforced network-egress allow-list.
 
 > `apps/llm-wiki` is a vendored fork of the LLM Wiki desktop app. The surrounding Steward host, web UI, connectors, scheduler, gateway, launcher, approval system, mobile access, and automation layer are original to this repo.
 
@@ -27,10 +27,10 @@ Everything important runs locally. Your data is stored on your machine. Network 
 - [System Health And Tool Inventory](#system-health-and-tool-inventory) — live service checks, background-job diagnostics and tool-policy visibility.
 - [Architecture](#architecture) — services and the three operating planes.
 - [End-To-End Data Journeys](#end-to-end-data-journeys) — complete chat, mail ingestion, threading, embedding and wiki-promotion flows.
-- [Retrieval Internals](#retrieval-internals) — mail, calendar, contacts, wiki and local-file search algorithms.
+- [Retrieval Internals](#retrieval-internals) — mail, calendar, contacts, wiki and local-file search algorithms, Calendar write transport/identity and bounded document reads.
 - [Approval And Write Reliability](#approval-and-write-reliability) — tool policy, human approval, journaling, confirmation and retry.
 - [Proactive And Background Processing](#proactive-and-background-processing) — Action Center, scheduler consistency and gateway routing.
-- [Data Ownership And Rebuildability](#data-ownership-and-rebuildability) — which stores are authoritative and which are disposable indexes.
+- [Data Ownership And Rebuildability](#data-ownership-and-rebuildability) — authoritative stores, index identity state and backup boundaries.
 - [Failure Modes And Graceful Degradation](#failure-modes-and-graceful-degradation) — behavior when permissions, models or local services are unavailable.
 - [Performance, Bounding And Backpressure](#performance-bounding-and-backpressure) — the limits that keep large local datasets and background work predictable.
 - [Trust Boundaries And Threat Model](#trust-boundaries-and-threat-model) — enforced guarantees and explicit non-goals.
@@ -67,7 +67,7 @@ Steward can then:
 - look up live Italian trains and notify you as their state changes;
 - keep a personal wiki of durable facts, decisions, commitments and source links.
 
-The assistant does not silently send mail or mutate your files. It can propose those actions, but the host gates them with deterministic code and waits for your confirmation.
+Interactive sensitive tools require host-mediated approval. An explicitly approved agent watch may later perform its constrained actions without a new card for each event. Background wiki promotion and indexing also write local state under their configured automation rules; approval of every filesystem write is not a platform-wide guarantee.
 
 ### For a technical user
 
@@ -81,7 +81,7 @@ Steward is a monorepo of local services:
 - local SQLite stores mirror mail, calendar/contact indexes, action items, write-operation journals, chats and usage.
 - `apps/mac-launcher` packages all of this as a menu-bar macOS app.
 
-The agent uses MCP tools through `packages/mcp-bridge`. Tool calls are classified by a default-deny policy as allowed, gated or denied. Read-only queries can run directly; side-effecting operations become approval cards in the UI.
+The agent uses MCP tools through `packages/mcp-bridge`. Tool calls are classified as allowed, gated or denied. The interactive default is `gate`; known safe tools are explicitly allowed and denied prefixes are blocked. Sensitive operations normally become approval cards; approved watch grants provide a separate constrained future authority.
 
 ## Main Workflows
 
@@ -150,9 +150,13 @@ The `list_actions` MCP tool returns compact summaries unless `includePayload` is
 
 Steward also supports explicit, reusable **flows** for personal procedures that the model could not reliably infer on its own. Ask in chat to create a flow from the steps you just described; Steward presents a dedicated approval card where you can edit its name, triggering situation, guidance and exclusions before saving it. Flows are never learned silently and never execute writes automatically. They can be listed, searched, updated, disabled or deleted through the Action Center tools.
 
-Action generation can be disabled from the System page without stopping the rest of Steward. While disabled, incoming mail and calendar changes do not create Action items. Re-enabling establishes a fresh cutoff: only items ingested or modified from that moment onward are eligible, so the disabled-period backlog is not replayed unexpectedly.
+Action generation can be disabled from the System page without stopping the rest of Steward. The global `enabled` setting stops both mail and calendar scans; re-enabling sets `enabledAt`, which filters mail by ingestion time and calendar entries by modification time. A separate `calendarEnabled` setting suppresses only Calendar reminders; re-enabling it records `calendarEnabledAt`. Calendar uses the later of its own and the global cutoff. Existing Actions remain available.
 
-The Action Center sends Web Push notifications to paired phones when a new Action is created, in addition to notifications associated with chat responses and pending approvals. Notifications can open the relevant Action directly. A notification is marked dispatched only when no subscription exists or at least one registered endpoint accepts it; if all endpoints fail, the Action remains eligible for a later retry. Expired subscriptions returning HTTP 404/410 are pruned without treating successful deliveries to other devices as failures.
+Calendar reminders are deterministic, not LLM plans: indexed non-cancelled events starting within the next three days (`ACTION_CENTER_CALENDAR_DAYS`) produce `event-reminder` items, with high priority within 24 hours and normal priority afterwards. Their source key combines event UID and start instant. Calendar availability and index freshness therefore affect reminder generation independently from mail planning.
+
+`GET`/`POST /settings/actions` expose these controls plus `textLanguage` (`default`, `en`, `it`), stored in Action Center metadata. The language preference guides newly generated display titles, summaries, proposal and step labels, and revised summaries. It does not bulk-translate existing items or authorize translation of tool arguments, source identifiers, email drafts or calendar content. `default` omits an LLM language directive; the deterministic calendar renderer currently uses English title labels with Italian date formatting. See [Action settings and Calendar reminders](#action-settings-and-calendar-reminders) for the processing contract.
+
+The Action Center sends Web Push notifications to paired phones when a new Action is created, in addition to notifications associated with chat responses and pending approvals. Notifications route to the relevant Action/chat through a validated payload in an existing window or URL parameters in a newly opened window. The app consumes those parameters once and waits for an authenticated host connection before selecting the destination. A notification is marked dispatched only when no subscription exists or at least one registered endpoint accepts it; if all endpoints fail, the Action remains eligible for a later retry. Expired subscriptions returning HTTP 404/410 are pruned without treating successful deliveries to other devices as failures.
 
 ![Opening an Action Center item in chat, ready to refine or execute its proposal](docs/images/action-center-open-in-chat.png)
 
@@ -210,7 +214,7 @@ Steward does not ask Apple Mail to search everything live each time. It maintain
 - vector indexes through sqlite-vec;
 - embedding state;
 - mailbox role classification;
-- fallback AppleScript reads for partial messages.
+- fallback AppleScript reads for non-full messages with insufficient mirrored text.
 
 `apps/mail-promoter` then scans mail threads and promotes durable knowledge into the wiki. It filters noise, extracts decisions, commitments, facts, useful documents and selected attachments, then writes source notes with `message://` backlinks so you can inspect the original email.
 
@@ -218,7 +222,7 @@ Steward does not ask Apple Mail to search everything live each time. It maintain
 
 Calendar and Contacts are also indexed locally.
 
-`apps/calendar-mcp` reads Apple's Calendar database, builds a searchable index, and can create/update/delete events through AppleScript when approved.
+`apps/calendar-mcp` reads Apple's Calendar database and builds a searchable index. Approved writes use the launcher's EventKit bridge when configured and representable; AppleScript remains a compatibility path. Full Disk Access for database reads, Calendar Full Access for EventKit and Calendar Automation for the compatibility path are distinct permissions.
 
 `apps/contacts-mcp` reads AddressBook data, deduplicates people, labels fields, supports hybrid search, and exposes `resolve_recipient` so the agent can turn "Marco" or "Anna from Polimi" into the right address before proposing an email.
 
@@ -370,8 +374,7 @@ grants and event context; it cannot change tools or widen arguments.
 
 The train adapter currently emits platform announcement/confirmation/change,
 departure, arrival, cancellation, delay/ETA change and per-stop
-arrival/departure events. Named-stop rules are validated against the current
-route at creation and use `where.station` or the stable `where.stationId`; a
+arrival/departure events. Stop-event rules require a selector: `where.station`, stable `where.stationId` or numeric `where.positionRelativeToDestination`. Unfiltered stop rules are rejected; notifications for every stop need explicit route-stop rules. Named-stop selectors are validated against the current route at creation; a
 separate watcher observes a different downstream stop without mutating the
 opaque `trainRef`. For relative stop rules, `positionRelativeToDestination: -1`
 means the stop immediately before the requested destination and `0` means the
@@ -385,7 +388,7 @@ train-specific scheduler.
 
 ### Usage & Cost
 
-Every LLM call the platform makes — the host's chat agent, mail-mirror's embeddings, mail-promoter's triage/distillation, calendar-mcp's embeddings, or anywhere else — goes through the shared `apps/llm-gateway` and is logged once per call into `packages/usage-ledger`. Callers attribute their own spend with `x-usage-service` / `x-usage-action` HTTP headers; a call that forgets to label itself is recorded as `unknown` rather than silently disappearing, and the Usage page calls that out explicitly so unlabeled spend never goes unnoticed.
+Host chat and the default service embedding/analysis paths use `apps/llm-gateway`, which records one terminal row per gateway request in `packages/usage-ledger`. Provider fallback attempts are not individually billed in that ledger. Calls made through independently configured wiki providers, overridden direct endpoints or local-model replay are outside this gateway accounting. Callers attribute their own spend with `x-usage-service` / `x-usage-action` HTTP headers; a call that forgets to label itself is recorded as `unknown` rather than silently disappearing, and the Usage page calls that out explicitly so unlabeled spend never goes unnoticed.
 
 Non-interactive work is attributed separately from WebSocket chat. Quick Send
 uses `host / quick-send`, resumed watch turns use
@@ -395,7 +398,7 @@ the same tool ledger: watch polling/delivery, approval-preview lookups,
 planner-selected background reads and directly executed Action steps all record
 duration and success/failure instead of disappearing behind their parent job.
 
-The web UI's **Usage** page is the observability view over that ledger: total cost and tokens for the selected period (7 days, 30 days or all-time), cost broken down by service, by action, by day, by model and by token type (input/output/cache read/cache write), plus per-tool call counts, error counts and timing (average/max/total), and a table of the most recent calls. Cost figures combine the ledger's raw token counts with the gateway's live `/rates` endpoint, so a pricing change is reflected immediately without re-ingesting old data.
+The web UI's **Usage** page is the observability view over that ledger: total cost and tokens for the selected period (7 days, 30 days or all-time), cost broken down by service, by action, by day, by model and by token type (input/output/cache read/cache write), plus per-tool call counts, error counts and timing (average/max/total), and a table of the most recent calls. Cost figures combine recorded token counts with the gateway’s `/rates` table. That endpoint serves rates configured in gateway code; it does not fetch provider prices automatically. Editing and restarting the gateway can therefore change displayed historical estimates without re-ingesting tokens. This is usage estimation, not a provider invoice.
 
 ![The Usage page: cost and token breakdowns by service, action, day and model](docs/images/usage-page.png)
 
@@ -418,7 +421,9 @@ Steward keeps a redacted, queryable audit log of what happened across chat, tool
 - mail-to-wiki promotion writes;
 - session, file and system events (connect, upload, open, autostart, ...).
 
-Redaction happens before anything is written to disk. Secrets (tokens, API keys, passwords) are stripped by key name, and full email or document bodies are never stored — only a short snippet, the same convention `packages/write-ops` already uses for mail bodies. The raw, unredacted payload never touches disk.
+Audit payload redaction runs before insertion: both payload columns contain the same redacted representation. Secret-like key names are replaced; selected full-text keys (`body`, `bodytext`, `html`, `htmlbody`, `content`, `markdown`) become 120-character snippets. Other strings are bounded to 600 characters. Bearer/`sk-` patterns, URL credentials and sensitive query parameters, common inline secret assignments and PEM private keys are masked before snippets are produced; arrays, object keys and nesting are also capped.
+
+This is a heuristic, not universal secret detection. Event summaries and source references also pass through string redaction before storage; unrecognized secret formats or arbitrary sensitive prose can still retain excerpts. Audit is best-effort and failures do not block product work, so it is not a guaranteed complete forensic ledger. These rules do not redact the primary chat transcript, operational journal, wiki or uploads.
 
 The host exposes the ledger at `/audit` (filterable by actor, event type, risk, chat, tool, date range or free text). The web UI has an **Audit** page — reachable from the desktop sidebar footer and the mobile bottom-nav's "Altro" overflow — with a filterable timeline and a per-event detail view showing the redacted payload and any linked files/sources.
 
@@ -457,7 +462,7 @@ between `ok`, `warning`, `error` and `unknown` are written to Audit only when
 the state changes. Scheduler and watch checks distinguish “not observed in this
 process” from a verified failure, avoiding false certainty after startup.
 
-The native launcher complements this runtime view with a localized AppKit
+The native launcher complements this runtime view with supervised child processes and a localized AppKit
 startup overlay. It reports the Ollama, gateway, wiki, host and web-loading
 stages while the WebKit view remains hidden underneath, degrades non-critical
 embedding failures to warnings, and offers a retry only for terminal repository
@@ -467,44 +472,31 @@ that would replace the actual navigation state.
 
 ## Architecture
 
-```text
-                    browser / PWA / WebKit window
-                ┌────────────────────────────────────┐
-                │ apps/web                            │
-                │ chat, approvals, actions, usage,    │
-                │ system, mobile pairing, push, audio │
-                └─────────────────▲──────────────────┘
-                                  │ WebSocket + HTTP
-                                  │ packages/protocol
-┌────────────────────┐    ┌───────┴────────────────────────────┐
-│ apps/mac-launcher  │───▶│ apps/host :4317                     │
-│ menu bar app,      │    │ Pi agent sessions, auth token,      │
-│ shortcut, service  │    │ tool policy, approvals, chat store, │
-│ health/startup     │    │ usage ledger, file registry, push,  │
-└────────────────────┘    │ speech, Action Center executor      │
-                          │ watch engine, event queue           │
-                          └───────┬───────────┬────────▲────────┘
-                                  │           │        │ OpenAI-compatible
-                                  │ MCP stdio │        │
-        ┌───────────────────────────────┐ ┌──────────┐  ┌─────────────────────────┐
-        │ MCP connectors                │ │ Ringback │  │ apps/llm-gateway :4000  │
-        │ wiki, mail, calendar,         │ │ external │  │ tier-1..tier-6,         │
-        │ contacts, shell, trains       │ │ SIP MCP  │  │ local-embed, rates      │
-        └──────────────▲────────────────┘ └────┬─────┘  └─────────▲───────────────┘
-                       │                       └────────▶ Linphone / phone
-                       │ local DB / AppleScript / files       │
-        ┌──────────────┴──────────────────────────────────────┴────┐
-        │ apps/scheduler                                             │
-        │ mail reconcile, mail embed, mail distill, calendar sync,   │
-        │ write confirmation/retry, Action Center scan               │
-        └────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    UI[Web / PWA / WebKit client] <-->|HTTP + WebSocket protocol| Host[Host :4317 / optional HTTPS :4318]
+    Launcher[macOS launcher / service supervisor] -->|starts managed children| Host
+    Host -->|MCP stdio| Connectors[Wiki / Mail / Calendar / Contacts / Documents / Shell / Trains]
+    Host -->|voice MCP| Ringback[External Ringback SIP runtime]
+    Ringback <--> Phone[Linphone / phone]
+    Host -->|chat completions| Gateway[LLM gateway :4000]
+    Scheduler[Scheduler: CLI jobs] -->|index / promote / confirm / scan| Local[Local mirrors / wiki sources / operational SQLite stores]
+    Scheduler -->|analysis / embeddings| Gateway
+    Connectors <--> Local
+    Connectors -->|live train JSON| VT[ViaggiaTreno]
+    Connectors -->|Calendar write IPC| Bridge[Launcher EventKit bridge]
+    Bridge --> Apple[Apple Calendar]
+    Gateway --> Providers[Ollama :11434 / configured remote provider]
+    Connectors -->|wiki API :19828| Wiki[LLM Wiki desktop runtime]
+    Wiki -->|independent provider / optional research, parsing, backup| External[Configured wiki services]
 ```
+
 
 There are three operating planes:
 
 1. **Interactive plane** — the user chats in the web UI; the host runs an agent and exposes tools through MCP. Read actions can run directly. Writes become approval cards.
 2. **Background plane** — the scheduler keeps local indexes fresh, embeds mail, distills durable knowledge into the wiki, scans for action items and confirms write operations; the host watch engine polls active resource monitors and delivers matching events.
-3. **Reliability plane** — writes are journaled before execution and confirmed against local mirrors; watch events, voice outcomes and temporary network-route changes have their own durable claims or journals so retries cannot silently duplicate effects.
+3. **Reliability plane** — mail/calendar writes are journaled before execution and checked against local mirrors. Watch actions use durable claims and temporary network-route changes use a recovery journal. These mechanisms bound retries and preserve evidence; they do not make an external AppleScript or EventKit effect atomic with a Steward database commit.
 
 ## End-To-End Data Journeys
 
@@ -544,7 +536,7 @@ sequenceDiagram
     Pi-->>UI: Final streamed answer
 ```
 
-Each chat has its own Pi session and permission-gate context, so an approval is routed back to the chat that requested it. `packages/mcp-bridge` converts MCP tools into Pi tools named `mcp__<server>__<tool>`. The host wraps every tool before it reaches the agent; the model never receives a direct handle to AppleScript, SQLite or the filesystem.
+Each chat has a persisted Pi agent session; each channel connection owns a `Session` for approvals/questions, with `chatId` routing back to the requesting chat. `packages/mcp-bridge` converts MCP tools into Pi tools named `mcp__<server>__<tool>`. The host wraps every tool before it reaches the agent; the model never receives a direct handle to AppleScript, SQLite or the filesystem.
 
 `ChatManager.runTurn()` serializes work per chat and returns `TurnResult` after
 the normal transcript, audit, usage and status cleanup has completed:
@@ -582,7 +574,7 @@ sequenceDiagram
     Note over Host: No chat or SIP INVITE exists until preflight passes
     Host->>Net: acquire call-scoped route lease
     Net-->>Host: direct SIP usable or reversible exit-node route
-    Host->>Agent: hidden automatic turn in a fresh/existing chat
+    Host->>Agent: hidden automatic turn in a fresh chat
     Agent->>MCP: call_start(opening line)
     MCP->>Phone: SIP INVITE + RTP
     loop Spoken turns
@@ -725,7 +717,7 @@ sequenceDiagram
     Engine->>DB: persist active watch + snapshot
     Note over Engine,Adapter: Immediate startup poll, then every 45 s by default
     loop Each non-overlapping poll
-        Engine->>DB: expire due watches; load active watches
+        Engine->>DB: expire due watches and load active watches
         Engine->>Adapter: fetch current snapshot
         Adapter-->>Engine: semantic events(previous,current)
         Engine->>Engine: match event type + where filters + once
@@ -761,8 +753,8 @@ message; assistant and tool messages are appended normally. A process-wide
 running-chat check defers the event while an interactive turn is active. The
 background policy is deny-by-default: normal watches get read-only tools, while
 an agent watch receives the union of grants on the rules matched by this event.
-All rules matching one domain event are aggregated into one agent turn. Thus an
-“every stop” notification and a “call at the penultimate stop” rule do not
+All rules matching one domain event are aggregated into one agent turn. Thus a
+per-stop notification rule and a “call at the penultimate stop” rule do not
 produce duplicate messages; the call is the delivery for that stop.
 
 The push body is capped at 240 characters. On generation failure the event
@@ -837,7 +829,7 @@ There are three synchronization modes:
 |---|---|---|
 | `backfill` | Initial import | Enumerates the archive recent-first so current mail becomes useful before old history finishes. |
 | `watch` | Low-latency updates | Uses filesystem events to ingest newly created or changed EMLX paths. Filesystem events are an optimization, not the sole source of truth. |
-| `reconcile` | Guaranteed convergence | Diffs disk paths and mtimes against the database, ingests new/changed files, removes vanished paths and soft-deletes orphaned logical messages. |
+| `reconcile` | Periodic convergence | Diffs disk paths and mtimes against the database, ingests new/changed files, removes vanished paths and soft-deletes orphaned logical messages. |
 
 The packaged scheduler runs reconciliation periodically, so missing one filesystem event does not permanently lose a message.
 
@@ -857,14 +849,14 @@ The thread table tracks normalized subject, participants, first/last activity an
 
 Apple Mail may keep only a `.partial.emlx` until a message is opened or downloaded. Steward does not pretend a partial body is complete:
 
-- search results expose `bodyState`;
+- individual message reads expose `bodyState`; compact search pages do not;
 - a useful partial body remains searchable;
-- reading a partial/empty message can ask Mail.app for the live content through AppleScript;
-- live content replaces the mirror text only when it is available and more complete;
+- a non-`full` body with fewer than 20 trimmed characters triggers a live AppleScript read; a useful partial body is served directly;
+- usable live content is returned only when longer than the mirrored body; this read does not persist the replacement into the mirror;
 - if AppleScript fails, the connector returns the best mirrored body instead of failing the entire read;
 - opening a `message://` deep link remains available for inspecting the source in Mail.app.
 
-This creates a graceful continuum: local mirror first, targeted live fallback second, explicit source link always.
+The live finder first tries a usable numeric Mail ID, then may scan globally by RFC message ID; “targeted” describes the selected message, not a guarantee of a cheap account-scoped lookup. A failed or poorer live read keeps the mirrored result and its original body state.
 
 ### Email Embedding Lifecycle
 
@@ -934,7 +926,9 @@ The pipeline deliberately distinguishes final and retryable outcomes:
 
 A promoted note uses stable YAML frontmatter with `message://` provenance, `thread://` identity, all source message IDs, account, categories, dates, selected attachments and optional review date. Updating a thread rewrites the same `mail-thread-<id>.md` rather than creating duplicate memory.
 
-The batch runner processes most-recently-active threads first and uses a bounded worker pool (default concurrency 8). LLM/wiki calls are I/O-bound; SQLite writes remain naturally serialized by the JavaScript process and `better-sqlite3`.
+The batch runner processes most-recently-active threads first. `runBatch()` defaults to eight workers when called directly; the `backfill` CLI passes `MAIL_PROMOTER_CONCURRENCY`, default **10**, and the scheduler runs that CLI. SQLite writes remain serialized by the JavaScript process and `better-sqlite3`.
+
+The production `backfill` path resolves the wiki sources directory and writes notes through `makeFsWikiPromoter`: each note is written to a temporary file and renamed into place. Selected attachment blobs are copied separately. The wiki app can be closed during these writes. When promotion succeeds, the CLI attempts one API rescan at the end; a failed rescan is reported but does not undo written sources or their recorded promotion state. Reopen the wiki and run `node --import tsx apps/mail-promoter/src/cli.ts rescan` to request indexing again. Source creation and wiki-page generation are separate completion boundaries. The reusable API-backed promoter can fail/defer on API errors, but an unavailable wiki API does not by itself prevent filesystem backfill.
 
 ## Retrieval Internals
 
@@ -1082,11 +1076,11 @@ If the embedding endpoint is disabled or unavailable, `vecIds` is empty and the 
 
 ### Reading A Mail Result
 
-Search returns a compact, paginated page rather than a fixed batch of full messages. A separate read resolves the selected message:
+Search returns `{ messages, page }`, default eight results and hard maximum 12 per MCP page. Summaries contain `id`, subject, sender, date, account, mailbox, snippet, optional `threadId` and `mailUrl`; the snippet is capped at 200 characters for the first three results and 120 afterwards. `bodyState` and full attachment metadata belong to message reads. These public page limits are separate from the search engine’s internal 100-row limit and bounded candidate pools. A separate read resolves the selected message:
 
 1. Reject rows that have been soft-deleted.
 2. Load subject, sender, date, mirrored body and attachment metadata from SQLite.
-3. If the body is partial or empty, run a scoped AppleScript read against Mail.app.
+3. If the body is non-`full` and has fewer than 20 trimmed characters, try the live Mail finder through AppleScript.
 4. Accept live text only if it is usable and more complete than the mirror.
 5. Return the best body, explicit body state, attachments and deep link.
 
@@ -1112,11 +1106,105 @@ This separation supports distinct questions efficiently:
 
 | Question | Important signals |
 |---|---|
-| “Am I free Thursday afternoon?” | Time overlap and calendar filters; semantic search is unnecessary. |
+| “What starts Thursday afternoon?” | Start-time range and calendar filters; semantic search is unnecessary. |
 | “Meetings about the certification project” | Hybrid text/vector relevance constrained to an event window. |
 | “What was my appointment with Marco in May?” | Name/title relevance plus historical time range. |
 
-Calendar writes do not modify the CoreData database directly. Approved create/update/delete operations go through Calendar.app via AppleScript, and later synchronization observes the authoritative result.
+Calendar writes never modify the CoreData database directly. The Node connector journals the approved operation, then selects EventKit or the AppleScript compatibility path. Later Calendar sync reads the Apple-owned store and write reconciliation checks the indexed result.
+
+Time browsing uses half-open overlap: an event matches when `event.end > start`
+and `event.start < end`. The default window is 30 days back to 90 days ahead.
+With the launcher bridge, explicit date windows and query-free browsing use
+EventKit to expand recurring occurrences, apply account/calendar and lexical text
+filters, and paginate compact results. Native windows above 366 days or results
+above 1,000 occurrences fail explicitly rather than silently truncate availability.
+Each occurrence includes `occurrenceStart` for subsequent reads or writes.
+
+Indexed hybrid text search without explicit dates remains an entity search over
+stored event rows and does not impose the default window. Without the bridge,
+range retrieval applies overlap and all supplied text terms. If relevant recurring
+masters exist, it fails explicitly because it cannot establish complete occurrence
+availability. Search is still subject to Apple permissions, source freshness and
+the selected calendars; it is not a transactional reservation of a time slot.
+
+### Calendar Write Transport And Identity
+
+The Calendar connector selects its write backend per operation, not merely by OS
+version. The Swift launcher targets macOS 14+ and starts `CalendarEventKitBridge`;
+its managed children receive `STEWARD_CALENDAR_BRIDGE_DIR`. A standalone Node
+host without that environment uses AppleScript. A configured but unresponsive
+bridge is an error, not permission to switch backends and repeat an uncertain
+write.
+
+```mermaid
+sequenceDiagram
+    participant Gate as Host Approval Gate
+    participant MCP as Calendar MCP
+    participant Ops as Write Journal
+    participant Files as Private Bridge Directories
+    participant Swift as Launcher / EventKit
+    participant Sync as Calendar Sync / Reconciliation
+    Gate->>MCP: Approved effective input
+    MCP->>Ops: Record started operation
+    MCP->>Files: Atomic request JSON rename
+    Swift->>Files: Move request into processing
+    Swift->>Swift: Verify Full Access and commit EventKit mutation
+    Swift->>Files: Atomic response JSON
+    Files-->>MCP: Result or error / uncertain timeout
+    MCP->>Ops: script_returned, unknown or failed
+    Sync->>Sync: Refresh index from Apple Calendar store
+    Sync->>Ops: Confirm observed fields or exhaust checks
+```
+
+The default bridge root is
+`~/Library/Application Support/Steward/calendar-bridge/`. Directories are created
+with mode `0700`; Node requests use mode `0600`, a random UUID filename and a
+temporary-file rename. Swift polls every 100 ms on a serial queue and moves a
+request from `requests/` to `processing/` before execution. Responses are written
+through a temporary path into `responses/`; Node checks every 50 ms, consumes the
+response, and normally waits up to 30 seconds. This is local per-user IPC, not an
+authenticated network API or protection against another process running as the
+same macOS user.
+
+On launcher restart, requests left in `processing/` receive `outcomeUnknown`.
+They are not replayed. Requests carry `expiresAtMs`, checked before native
+execution. On timeout, Node withdraws an unclaimed request from `requests/` and
+reports that it was not executed. If Swift already claimed it, the result remains
+uncertain: the external mutation can finish after its caller stopped waiting.
+Expiration and withdrawal prevent stale queued execution; neither rolls back an
+operation already running.
+
+| Operation | EventKit path | Compatibility path |
+|---|---|---|
+| Create | Available bridge and representable recurrence; select calendar by stable `calendarId`. | Without a usable representation or configured bridge, resolve the ID and require a unique calendar title before AppleScript creation. Duplicate titles fail. |
+| Update | Available bridge and representable recurrence; resolve historical UID aliases before dispatch. `scope` selects `thisEvent` or `futureEvents`. | Nonrecurring updates by UID only; recurring updates and `futureEvents` fail before dispatch when EventKit cannot be used. |
+| Delete | Available bridge; `thisEvent` default or `futureEvents`. Result reports `pending_confirmation`. | `thisEvent` only; `futureEvents` is explicitly rejected. |
+
+The RRULE parser accepts `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`, `INTERVAL`,
+`COUNT` or `UNTIL`, `BYDAY` (including ordinals), `BYMONTHDAY`, `BYMONTH`,
+`BYWEEKNO`, `BYYEARDAY` and `BYSETPOS`. Unsupported/duplicate components are not
+silently discarded: they make the recurrence unrepresentable for this bridge.
+Compatibility selection is not a promise that Calendar.app will accept every
+other RRULE. Attendees/invitations are not exposed by either tool schema.
+
+Calendar identity is also eventually consistent. The sidecar keeps an internal
+`ref_id` and historical UID aliases. A sync first recognizes the current UID or a
+known alias. Otherwise it attempts one unambiguous match using external ID,
+account, calendar and start, or—without an external ID—account, calendar, times,
+all-day flag, summary and location. Generation tracking excludes rows already
+observed in the same sync, preventing two simultaneous equal events from being
+merged through that heuristic. Multiple candidates receive a new identity rather
+than an arbitrary match. A rebuilt index loses aliases that cannot be recovered
+from the current Apple store.
+
+`read_event`, update, delete and reconciliation resolve historical UID aliases.
+Recurring changes require an explicit `occurrenceStart` and native scope;
+`read_event` accepts that selector too. One-sided time edits are checked against
+the live unchanged boundary before journaling, and EventKit checks effective
+boundaries again. The index publishes metadata, deletions and its completed-sync
+marker atomically before optional embeddings. Confirmation never treats a partial
+or pre-write sync as evidence of deletion. See [the audit register](docs/readme-code-audit.md)
+for implemented safeguards and remaining integration limits.
 
 ### Contacts Search And Recipient Resolution
 
@@ -1141,6 +1229,50 @@ The wiki is a different retrieval layer from raw-source search:
 
 The agent can use both layers in one turn. A question about an established project decision may be answered from the wiki; a request for the exact latest email should query the mail mirror and open the source.
 
+### Source Import Destination And Collision Semantics
+
+`wiki-add` is explicit user-driven snapshot import, separate from read-only
+document tools and automatic mail promotion. One input opens a native Save As
+panel; multiple inputs choose a shared folder, optionally after selecting files
+from folders. Cancellation or a destination outside `raw/sources/` stops the
+copy. `--root` provides a noninteractive structure-preserving path. Hidden files,
+known build/junk directories, unsupported types and files above 100 MiB are
+skipped during collection; wiki import supports more source types than Documents
+MCP and still depends on downstream parser support.
+
+The project-root `.llmwiki-added.json` maps origin paths to source destinations.
+For tracked origins, an ordinary re-add updates the recorded destination. An
+explicit panel or `--root` destination relocates the tracked snapshot: the new
+copy and manifest are published before the previous copy is removed. A snapshot
+still referenced by another deduplicated origin is preserved; a changed shared
+origin receives its own copy. Losing the
+manifest loses that origin-to-destination continuity; identical content can
+still be skipped by hash, but a changed source can be treated as an unrelated
+collision instead of an update.
+
+`packages/source-collision` shares the decision algorithm between Node and wiki
+frontend import paths:
+
+| Destination state | Import decision |
+|---|---|
+| Missing | Write the source. |
+| Same SHA-256 content hash | Skip duplicate bytes and retain tracking. |
+| Different bytes, known tracked origin | Overwrite its recorded snapshot. |
+| Different bytes, unrelated origin | Find `name (2).ext`, then the next available suffix. |
+
+The helper decides; the Node importer serializes writers with a per-project
+`.llmwiki-added.lock` and publishes the manifest by atomic rename. Unrelated
+copies use exclusive creation with collision retries; tracked replacements use a
+temporary file and rename. Destination ancestors are canonicalized, symlink
+escapes and traversal are rejected, and collection does not follow symlinks.
+A crash after manifest publication can leave the old copy orphaned, but the
+manifest points to the published new copy. Stale locks fail closed: verify no
+writer remains before removing one. These CLI safeguards do not turn other wiki
+frontend import paths into a global filesystem transaction. After changed copies, the CLI attempts an API rescan and
+reports `rescanned`; a successful copy with an unavailable API remains a valid
+source snapshot awaiting wiki discovery/indexing. See [wiki-add](apps/wiki-add/README.md)
+for commands and Finder Quick Actions.
+
 ### Local File Search And Safe Command Execution
 
 `apps/shell-mcp` separates file discovery from command execution. Its read-only runner accepts familiar shell-like pipelines but does not invoke a general shell:
@@ -1152,6 +1284,70 @@ The agent can use both layers in one turn. A question about an established proje
 - file-mutating commands use a separate gated tool.
 
 This retains useful operations such as sorting or inspecting local files without giving model-generated text the authority of `sh -c`.
+
+### Bounded Document Reading And Search
+
+Document tools operate on one explicitly selected local file. The workflow is
+`find_files` or attachment save/upload → `document_info`/`document_search` →
+`document_read` on selected cursors. They do not create a persistent whole-disk
+document index or automatically ingest the file into the wiki.
+
+| Tool | Result and continuation contract |
+|---|---|
+| `document_info(path)` | Name, canonical path, format, size/mtime, total extracted pages/characters, warnings and up to 50 heading entries with cursors. No full body is returned. |
+| `document_read(path, page? / cursor?, max_chars?, max_pages?)` | Default 6,000 characters and one page; hard caps 12,000 and three pages. Returns selection/stats plus `navigation.hasMore` and `navigation.nextCursor`. `page` and `cursor` are mutually exclusive. |
+| `document_search(path, query, max_results?, context_chars?)` | Default five excerpts of 300 characters; maxima ten results and 800 context characters, plus ellipsis markers. Each match carries page, offset and a cursor usable by `document_read`. |
+
+Extraction preserves PDF pages and PPTX slide numbers. Plain text, stripped
+HTML/RTF, DOCX raw text and ODT text are represented as a single logical page;
+these page counts are not equivalent to an Office print layout. HTML scripts and
+styles are removed rather than executed. PDFs use their text layer; an image-only
+PDF returns `no_extractable_text`, without automatic OCR or a vision call.
+
+Before extraction, the connector requires an absolute path, checks shared
+sensitive-path policy, canonicalizes symlinks, checks the resolved path again,
+and requires a regular file with an allowed extension. Default input size is
+25 MiB (`DOCUMENT_MAX_BYTES`, capped at 100 MiB). Extraction runs in a dedicated
+worker; a 15-second timeout (`DOCUMENT_EXTRACT_TIMEOUT_MS`, clamped to 1–60 s)
+terminates that worker, including synchronous parser execution. Its V8 old heap
+defaults to 256 MiB (`DOCUMENT_WORKER_HEAP_MB`, 64–512). Extracted output is
+limited to eight million characters (`DOCUMENT_MAX_EXTRACTED_CHARS`, maximum
+32 million). Office ZIP directories are checked before inflation: default 64 MiB
+of declared decompressed content (`DOCUMENT_ARCHIVE_MAX_BYTES`, maximum 256 MiB)
+and 10,000 entries; ZIP64/multipart archives are rejected. These are resource
+controls, not an OS sandbox or a bound on all native/external memory allocations.
+
+Extracted documents use an eight-entry process-local LRU with an estimated
+aggregate text/chunk/vector budget of 64 MiB (`DOCUMENT_CACHE_MAX_BYTES`, maximum
+256 MiB). Entries are evicted after extraction and after vectors are added. The
+key is canonical path, byte size and mtime; restart discards the cache. Cursors
+include a fingerprint of that key and stale/unversioned cursors are rejected.
+Extraction also rejects files changed while the worker ran. This detects normal
+edits, not adversarial replacement preserving identical stat metadata; cursors
+are continuation tokens rather than immutable citations.
+
+Search splits every page into nominal 1,800-character chunks with 200-character
+overlap, preferring nearby sentence/newline boundaries. Lexical ranking covers
+all extracted chunks, normalizes case/diacritics and rewards phrase matches and
+bounded term counts. It retains at most 50 candidates. Semantic search uses at
+most 256 evenly sampled chunks, embeds them in batches of 64, and compares the
+query vector by cosine similarity against valid same-dimension vectors. It also
+retains at most 50 candidates; RRF merges the two rankings.
+
+The response reports `search.semantic` as `disabled`, `unavailable`, `full`,
+`sampled` or `partial`, with selected and successfully embedded chunk counts.
+`full` requires valid vectors for every selected chunk and no sampling; `partial`
+reports missing vectors explicitly. Large files warn about sampling while lexical
+search covers all extracted text. Failed vectors are retried on a later search;
+endpoint/model/dimension changes invalidate cached vectors. Embedding failure
+continues to yield bounded lexical results, and the initial parser still reads
+the supported file in full.
+
+Default embeddings use gateway `local-embed`, attributed as
+`documents-mcp / search-embed`. `DOCUMENT_EMBED_ENDPOINT=off` disables them;
+model, endpoint, dimension and API key have separate document overrides. Tool
+calls use normal host Usage/Audit wrappers; cached extraction itself is not a
+persistent document store. See [Documents MCP](apps/documents-mcp/README.md).
 
 ## Approval And Write Reliability
 
@@ -1165,7 +1361,7 @@ Every Pi tool definition is wrapped by the host before being exposed to the agen
 - `gate` — emit an approval request and wait;
 - `deny` — return a blocked result without asking.
 
-The default is `gate`. Known mail/calendar/contact/wiki/train reads and safe file operations are explicitly allow-listed. Generic read-only watch creation and stopping are automatic. `create_agent_watch` is gated because a rule can grant a registered future capability. At execution time the headless policy enables only tools granted by the matched rules; a second deterministic guard checks every argument against generic field constraints, and a durable claim prevents retries from repeating the action. Unknown tools and unconstrained write fields are rejected. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
+The default is `gate`, not unconditional rejection: an unfamiliar interactive tool normally requires approval. Known mail/calendar/contact/wiki/document/train reads and write-journal review tools and selected safe operations are explicitly allow-listed. Generic read-only watch creation and stopping are automatic. `create_agent_watch` is gated because a rule can grant a registered future capability. At execution time the headless policy enables only tools granted by the matched rules; a second deterministic guard checks every argument against generic field constraints, and a durable claim prevents retries from repeating the action. In those background turns, unknown/ungranted tools and unconstrained write fields are rejected. Deny prefixes can disable whole namespaces. This policy is ordinary TypeScript code, not a sentence in the system prompt, so prompt injection cannot redefine it.
 
 ### Approval Lifecycle
 
@@ -1185,7 +1381,9 @@ stateDiagram-v2
     Executing --> [*]: tool result
 ```
 
-The approval card carries the proposed tool and arguments. The user can approve them unchanged, replace individual arguments, deny with a note or ask the agent to revise the proposal. Approve-with-edit is enforced in the gate: the connector receives the edited input, not the model's original input.
+The approval card carries the proposed tool and arguments. The user can approve them unchanged, replace individual arguments, deny with a note or ask the agent to revise the proposal. Approve-with-edit is enforced in the gate: the connector receives the edited input, not the model's original input. For tools that provide `preflightInput`, the gate validates/normalizes the proposal before approval and validates edited arguments again afterwards; other tools still rely on connector validation. The effective execution input is recorded in the host tool card/transcript, so reopening a chat does not display the superseded proposal as the executed request. Optional fields left absent in the editor remain absent rather than becoming invented empty values.
+
+Blocked results distinguish explicit rejection from timeout, unrecognized voice intent and channel failure. All prevent execution, but only the explicit rejection is described to the agent as “denied by user”.
 
 Pending approvals live in the chat's `Session` and expire after `APPROVAL_TIMEOUT_MS`. A timeout resolves to denial. The headless `/quick-send` runner has no attached client; if it reaches a gated write, the approval request has nowhere to go and safely times out rather than executing unattended.
 
@@ -1251,23 +1449,76 @@ Approval answers “may this be attempted?” It does not prove that Mail.app or
 ```mermaid
 flowchart LR
     A[Approved input] --> B[Journal operation before execution]
-    B --> C[Run AppleScript]
-    C --> D{Immediate outcome}
+    B --> C[Run Mail AppleScript or Calendar backend]
+    C --> D{Immediate backend outcome}
     D -->|Returned| E[script_returned]
     D -->|Ambiguous / error| F[unknown or failed]
     E --> G[Scheduler confirmation]
     F --> G
     G -->|Observed in mirror/index| H[confirmed]
-    G -->|Not observed, retryable| I[retrying]
-    I --> C
-    G -->|Attempt limit reached| J[retry_exhausted]
+    G -->|Mail evidence limit reached| I[needs_review: explicit new send required]
+    G -->|Calendar check limit reached| J[retry_exhausted]
 ```
 
-The journal stores operation kind, sanitized input, expected observable outcome, attempts, confirmation attempts, timestamps and terminal result/error. Mail confirmation reads the mail mirror; calendar confirmation reads the synchronized calendar view. This makes retries evidence-based and reduces the risk of treating an AppleScript return value as proof.
+The journal stores operation kind, **executable input**, expected observable outcome, attempts, confirmation attempts, timestamps and result/error. Inputs are not audit-redacted: scheduled mail needs its complete body and attachments, and calendar confirmation needs expected fields. The separately emitted Audit copy is redacted. Treat `write-ops/ops.db` as primary sensitive operational state.
 
-Scheduled mail adds another state: the operation is recorded with `scheduled_for` and is not sent until `write-ops-send-due` claims it. The scheduler then executes and confirms it through the same lifecycle.
+Mail confirmation reads the mail mirror; Calendar confirmation reads the synchronized index. `script_returned` means the backend returned, not that reconciliation has confirmed success. The same journal state is used after an EventKit response even though the historical name mentions a script.
+
+Scheduled mail adds `scheduled` and `scheduled_for`. Before each external send,
+`write-ops-send-due` atomically claims the due row: only a still-due `scheduled`
+row can become `started`, with an incremented attempt count and `attempted_at`.
+Other scheduler processes cannot claim it again. A crash after claiming, whether
+before or after Mail sends, goes through confirmation and eventually review;
+it never automatically requeues the send. This favors avoiding duplicates and
+can require explicit user recovery of an unsent message. There is no end-to-end
+exactly-once guarantee across SQLite and Mail.app.
 
 The write journal is also an operational source for the audit trail, but the two stores have different roles: `write-ops` drives correctness and retry state; `audit-log` provides a redacted human-readable history.
+
+### Confirmation Evidence And Retry Boundaries
+
+Reconciliation reads up to 100 eligible operations per pass, including
+`script_returned`, uncertain/failed states, retry states and `started` operations
+unchanged for at least 60 seconds. This recovers journal entries whose caller
+crashed before recording a response. It cannot atomically observe the external
+system together with the journal.
+
+**Mail:** confirmation requires an active message in the matching account's
+Sent-role mailbox, an owned sender matching any explicit `from`, the expected
+subject, exact normalized To/CC recipient sets and full normalized outgoing body.
+Replies also require linkage to the original message. The matching window starts
+one minute before the actual attempt and ends 24 hours later, so scheduled sends
+use their execution time rather than enqueue time. Multiple matches are ambiguous.
+BCC and reply-all cases without sufficient recipient evidence remain unconfirmed;
+Mail-added signatures or altered body representations can also require review.
+
+No reconciliation path automatically resends or restarts Mail. Failed, unknown,
+returned-but-unconfirmed and interrupted legacy retry states only seek evidence.
+After 12 checks by default, Mail becomes `needs_review`. `list_write_operations`
+returns bounded review summaries; `read_write_operation(operationId)` exposes the
+stored evidence. A new send requires an explicit user request and normal approval,
+not inference from an unconfirmed operation.
+
+**Calendar:** confirmation resolves UID aliases and compares expected supplied
+fields: calendar selector, title, location, description, URL, effective times,
+all-day state and normalized alarms. Timed values use instants; all-day boundaries
+use local civil dates across DST. Canonical native RRULE comparison normalizes
+interval and ordered BY-components and requires one supported rule; presence
+alone is insufficient. Recurring or future-scope operations require native
+read-back evidence, including the selected occurrence. This checks observable
+state, not every future expanded instance or provider-side invitation delivery.
+
+Index evidence requires a completed source sync that **started after** backend
+completion, recorded with millisecond precision. Legacy second-resolution records
+use a conservative extra-second barrier. Delete also requires a pre-write target
+baseline before absence can confirm it. Native read-back can supply fresh evidence
+without waiting for the sidecar. Errors remain bounded confirmation attempts.
+
+A create without a returned UID requires exactly one matching candidate from a
+bounded set. A failed create without usable identity can exhaust immediately;
+other Calendar operations normally exhaust at 12 checks. Calendar reconciliation
+never re-executes writes. Exhaustion or review means “not confirmed”, not rollback;
+inspect the source application before explicitly requesting another mutation.
 
 ## Proactive And Background Processing
 
@@ -1329,13 +1580,50 @@ The scanner also has deliberate backlog and thread semantics:
 
 Handled actions are sticky. Repeated scans do not resurrect a `done` or `dismissed` item unless a genuinely newer message arrives on that same source thread.
 
+### Action Settings And Calendar Reminders
+
+The Action scanner has two producers with shared persistence but different
+analysis paths. Mail uses prefilters, flow retrieval and LLM planning. Calendar
+reads the existing sidecar directly and creates reminders without an LLM call.
+The latter scans events whose **start** is between now and three days ahead,
+excludes status `3`, and stores source key `calendar:<refId>` (UID fallback) with source
+fields and the sidecar reference in the payload. A missing Calendar index produces no reminders rather
+than stopping the mail scanner. A uniquely identifiable legacy UID/start reminder is migrated through UID aliases
+to the stable key, preserving its review status. Moving the event or a recognized
+UID change updates that reminder. Ambiguous legacy duplicates are not merged
+arbitrarily. The scan still reads indexed rows, not expanded recurring instances.
+
+Settings live in `actions.db` metadata and are available through authenticated
+`GET`/`POST /settings/actions`:
+
+| Field | Default | Processing effect |
+|---|---|---|
+| `enabled` | `true` | Master switch. False skips both producers; false→true records a new Unix-second `enabledAt`. |
+| `calendarEnabled` | `true` | Calendar-only switch. Re-enable records `calendarEnabledAt`; search/sync remain independent. |
+| `textLanguage` | `default` | Display-language guidance for mail planning/revision and deterministic Calendar labels. Accepted values: `default`, `en`, `it`. |
+| `enabledAt`, `calendarEnabledAt`, `updatedAt` | `null` until changed | Persisted metadata returned with settings; not caller-supplied cutoffs. |
+
+POST accepts a partial update of the three editable fields and rejects supplied
+invalid values. It is a direct authenticated user setting, not a model tool
+approval. On a global re-enable, mail uses ingestion time and Calendar compares
+Apple `last_modified` converted to CoreData time against the later of the global
+and Calendar-specific cutoffs. Re-enabling only Calendar therefore admits newly
+modified eligible entries without resetting the mail cutoff.
+
+Language changes guide later generation and revision. They do not rewrite all
+stored Actions. LLM display-language selection is prompt guidance, not a
+deterministic translation validator. Email subjects/bodies, recipients, calendar
+arguments, quoted facts and source identifiers must retain their appropriate
+meaning and language. The System setting is independent from UI locale,
+notification language and Whisper transcription language.
+
 ### Scheduler Semantics
 
 `apps/scheduler` is intentionally thin. It launches existing application CLIs instead of duplicating their business logic. Each job has:
 
 - a configurable interval;
 - a per-run timeout;
-- no overlap with another instance of the same job;
+- no overlap with another run of the same job within that scheduler process;
 - isolated error handling, so one failed pipeline does not stop unrelated work;
 - structured JSONL logging in the packaged flow.
 
@@ -1346,7 +1634,7 @@ The resulting consistency timeline for a newly arrived email can look like:
 ```text
 T+0       Apple Mail writes .emlx
 T+seconds watcher ingests it, if the watcher is enabled
-T+0–10m   reconcile guarantees mirror convergence
+T+0–10m   reconcile normally discovers changes, subject to run duration/failures
 T+0–15m   embedding job adds semantic retrieval
 T+0–15m   mail-distill evaluates durable memory
 T+0–10m   Action Center evaluates unresolved work
@@ -1359,7 +1647,7 @@ These pipelines are independent. An email may be:
 - promoted to long-term memory without generating an action;
 - actionable without being durable enough for the wiki.
 
-No ordering assumption between independent jobs is required for correctness. Source hashes, seen ledgers and idempotent upserts make repeated runs safe.
+Source hashes, seen ledgers and upserts suppress repeated analysis and indexing work. Independent jobs have no dependency barrier: confirmation can observe an index from the previous cycle, and a skipped or failed reconcile delays downstream freshness. The intervals above are nominal scheduling windows, not delivery SLAs or exactly-once guarantees for external writes.
 
 ### Generic Watch Engine Internals
 
@@ -1373,15 +1661,15 @@ four source-neutral contracts:
 | `DomainEvent` | Stable resource-relative `key`, semantic `type`, timestamp, structured `data`, previous/current state, deterministic `fallbackText`, and optional localized notification title/domain guidance. |
 | `WatchAdapter` | A source name plus `snapshot`, `events`, `defaultExpiry` and `isTerminal` implementations. |
 
-A representative train watch is data, not new scheduler code:
+A representative `create_agent_watch` input is data, not new scheduler code (replace the opaque `trainRef` and exact recipient using current tool results):
 
 ```json
 {
   "source": "train",
   "resourceRef": "vt1_...",
-  "instruction": "Avvisami a ogni fermata, scrivi a mia sorella 30 minuti prima e chiamami alle ultime due fermate",
+  "instruction": "Avvisami alla partenza, scrivi a mia sorella 30 minuti prima e chiamami alle ultime due fermate",
   "rules": [
-    { "id": "every-stop", "event": "train.stop_arrived" },
+    { "id": "departed", "event": "train.departed", "once": true },
     {
       "id": "mail-30m",
       "trigger": { "kind": "before_time", "field": "estimatedArrivalMs", "minutes": 30 },
@@ -1407,7 +1695,7 @@ A representative train watch is data, not new scheduler code:
       "event": "train.stop_arrived",
       "where": { "positionRelativeToDestination": -1 },
       "once": true,
-      "grants": [{ "tool": "mcp__voice__call_start", "maxInvocations": 1 }],
+      "grants": [{ "tool": "mcp__voice__call_start" }],
       "continuation": {
         "outcomes": ["not_answered", "busy"],
         "afterMinutes": 1,
@@ -1419,7 +1707,7 @@ A representative train watch is data, not new scheduler code:
       "event": "train.stop_arrived",
       "where": { "positionRelativeToDestination": 0 },
       "once": true,
-      "grants": [{ "tool": "mcp__voice__call_start", "maxInvocations": 1 }]
+      "grants": [{ "tool": "mcp__voice__call_start" }]
     }
   ]
 }
@@ -1446,21 +1734,21 @@ and child-watch keys prevent duplicated calls after a crash.
 
 Rule matching first requires an exact event type. Every `where` entry is then
 compared for deep equality against `event.data`; dot-separated keys can address
-nested fields. `once` is stronger than delivery status: as soon as any event row
-exists for that watch/rule pair, the rule will not enqueue another event. This
+nested fields. `once` is stronger than delivery status: as soon as `watch_event_rules` records participation for that watch/rule pair, the rule will not enqueue another event. This
 prevents a one-shot milestone from repeating while its first notification is
 still pending or being retried.
 
-The SQLite database uses WAL mode and two tables:
+The SQLite database uses WAL mode and four tables:
 
 | Table | Important columns | Role |
 |---|---|---|
-| `watches` | `source`, `resource_ref`, JSON `rules`, `instruction`, `chat_id`, JSON `authorized_tools`, `status`, JSON `snapshot`, expiry/check/error timestamps | Authoritative lifecycle, scoped authority and last observed state. |
-| `watch_events` | unique `event_key`, `watch_id`, `rule_id`, JSON rule/event, composed notification text, `status`, `attempts`, delivery/error timestamps | Durable queue, retry payload and delivery/deduplication history. |
+| `watches` | `source`, `resource_ref`, JSON `rules`, `instruction`, `chat_id`, legacy JSON `authorized_tools`, `status`, JSON `snapshot`, expiry/check/error timestamps | Authoritative lifecycle, scoped authority and last observed state. |
+| `watch_events` | unique `event_key`, `watch_id`, compatibility `rule_id`/rule, JSON `matched_rules`/event, notification text, status, attempts and delivery/error timestamps | One queued turn for all rules matched by one domain event. |
+| `watch_event_rules` | `event_id`, `watch_id`, `rule_id`; primary key `(event_id, rule_id)` | Records each participating rule, including `once` rules whose event is still pending. |
+| `watch_action_runs` | unique `action_key`, event/rule/tool, claim status and start/finish/error fields | Durable claim before a granted action; prevents re-execution of that event/rule/tool on delivery retry. |
 
 The database-level event key is
-`<watchId>:<ruleId>:<adapterEventKey>`. `INSERT OR IGNORE` makes replaying the
-same semantic transition harmless across polls and process restarts. Adapter
+`<watchId>:<adapterEventKey>`. The enqueue transaction inserts the event with all matched rules and records their participation in `watch_event_rules`. `INSERT OR IGNORE` suppresses the same transition across polls/restarts without producing one message per rule. Action claims use a separate `<eventId>:<ruleId>:<tool>` key; a claim is not proof that the external effect completed. Adapter
 event keys include the state that makes a transition distinct—for example a
 platform value/status, new delay, or stop plus actual timestamp.
 
@@ -1500,7 +1788,7 @@ The train adapter maps snapshot transitions as follows:
 | `train.eta_changed` | Estimated arrival timestamp differs | Previous/new ETA and the refreshed train state. |
 | `train.stop_arrived`, `train.stop_departed` | A stop gains the corresponding actual timestamp | Station ID/name/index, next stop and relative destination position. |
 
-Train watches are terminal when the requested train is arrived or cancelled.
+Train watches are terminal on cancellation or an actual arrival timestamp at the **final route stop**, not merely arrival at the requested segment destination. `train.arrived` still describes that requested destination; stopping the watch and emitting that event are different decisions.
 Default expiry is two hours after scheduled arrival, or scheduled departure
 when arrival is absent; if neither exists, the fallback effectively keeps the
 watch for eight hours from creation.
@@ -1518,7 +1806,7 @@ rules.
 
 ### LLM Gateway Request Lifecycle
 
-Every model call crosses `apps/llm-gateway`, even when the underlying model is local:
+Steward service calls use `apps/llm-gateway` by default, including local embeddings. Endpoint overrides, the wiki’s independent provider configuration and the offline model-replay tool can bypass it:
 
 ```mermaid
 flowchart LR
@@ -1535,12 +1823,25 @@ Callers choose capability, not vendor:
 
 - the host can request `tier-5` without knowing which DeepSeek model implements it;
 - background classification can choose a cheaper tier;
-- embeddings always use `local-embed`;
+- embeddings default to `local-embed`, with explicit endpoint/model overrides;
 - provider keys, base URLs and fallback behavior stay inside one service.
 
 For non-streaming calls, a failed target can escalate and then sweep compatible lower paid rungs. Streaming is more constrained: the gateway can retry only before response bytes reach the client. It may fall back from a failed native stream to a non-streaming response re-emitted as synthetic SSE, but it never switches providers in the middle of visible output.
 
-The gateway preserves provider usage fields and exposes current rates. Callers add `x-usage-service` and `x-usage-action` so cost can be attributed to, for example, `mail-promoter / triage` instead of only “tier-5.” Missing attribution is recorded as `unknown` and surfaced in the Usage page; it is never silently dropped.
+Repeated aliases for the same provider/model/host/key collapse to one target.
+All targets and response bodies share `GATEWAY_REQUEST_TIMEOUT_MS` (120 seconds
+by default). Separate provider-attempt diagnostics record request correlation,
+status, stream mode and time to headers; they do not double-count terminal usage
+or infer upstream billing for failed attempts. A committed stream ends on failure
+rather than replaying through another target.
+
+Explicit `GATEWAY_API_KEY` configuration enforces Bearer authentication on model
+POST routes; unset retains local unauthenticated compatibility. Diagnostic GETs
+remain public. The wiki custom provider needs the key configured separately;
+internal helpers reuse a shared key only for the loopback gateway endpoint, never
+implicitly for a remote endpoint override.
+
+The gateway preserves provider usage fields and exposes code-configured rates. Callers add `x-usage-service` and `x-usage-action` so cost can be attributed to, for example, `mail-promoter / triage` instead of only “tier-5.” Missing attribution is recorded as `unknown` and surfaced in the Usage page; it is never silently dropped.
 
 ## Data Ownership And Rebuildability
 
@@ -1550,9 +1851,9 @@ Not every SQLite database has the same authority. Some are disposable indexes ov
 |---|---|---|---|
 | Mail messages | Apple Mail EMLX store | `mail-mirror/mail.db` | Yes, via backfill/reconcile; promotion and embedding state can be regenerated. |
 | Mail attachments | EMLX/Mail.app | Content-addressed mirror blobs | Yes when the original remains available. |
-| Calendar events | Apple Calendar CoreData store | `calendar-index.sqlitedb` | Yes, via calendar sync. |
+| Calendar events | Apple Calendar CoreData store | `calendar-index.sqlitedb`, local identity/UID aliases | Event/search data can be rebuilt; deleting the index loses historical alias mappings. |
 | Contacts | AddressBook stores | `contacts-index.sqlitedb` | Yes, via contacts index. |
-| Long-term memory | Wiki Markdown sources/pages | Wiki vector and graph indexes | Markdown is primary; indexes are rebuildable. |
+| Long-term memory | Wiki Markdown sources/pages | Wiki vector and graph indexes | Markdown is primary; indexes are rebuildable, though regenerating LLM caches can cost tokens. |
 | Action items | Steward analysis and user state | `action-center/actions.db` | No; status and review history are primary Steward state. |
 | Write operations | Attempt/confirmation lifecycle | `write-ops/ops.db` | No; required for safe confirmation and retry. |
 | Chats | User/assistant/tool transcript | `steward-chats/chats.db` and session files | No; this is primary conversation state. |
@@ -1560,7 +1861,47 @@ Not every SQLite database has the same authority. Some are disposable indexes ov
 | Usage | Gateway and tool-call accounting | `steward-usage/usage.db` | Not fully; provider history may not be available later. |
 | Audit | Redacted event stream | `steward-audit/audit.db` | No; the redacted record is intentionally primary. |
 
-This distinction guides recovery. Deleting a search index costs time; deleting the write journal can remove the evidence needed to decide whether a side effect should be retried.
+This distinction guides recovery. Deleting a search index costs time and can remove local identity continuity; deleting the write journal can remove the evidence needed to decide whether a side effect should be retried.
+
+### Backup Boundaries
+
+Before native cutover, the operational backup includes all ten known Steward
+SQLite stores: chats, watches, Audit, Usage, Actions, write journal, mail mirror,
+promotion state, Calendar and Contacts indexes. Each uses SQLite's online backup
+API. Agent sessions (including external session references), deployment
+`config.env`, persistent Steward settings and wiki application settings are copied
+alongside them. Configured path overrides in `config.env` are honored. Payload
+files, temporary bridge/call state and managed code/runtime releases are separate.
+
+```sh
+npm run backup:operational -- --output=/PATH/TO/NEW/operational-backup
+npm run backup:full -- --output=/PATH/TO/NEW/full-backup --wiki=/PATH/TO/VAULT
+```
+
+Full backup adds the wiki vault, external configured source directory, uploads and
+Mail blobs. `--wiki` can be omitted when configured/persisted project selection
+identifies the vault. The default output is a timestamped directory under
+`Steward/backups/`; deployment uses `deploy/backups/RELEASE_ID/`. A manifest
+records source mappings, file/database SHA-256 hashes and absent optional sources.
+Directories are mode `0700`, regular files `0600`; a staging directory is renamed
+to its final name only after success. Failure leaves an explicitly incomplete
+`.pending-*` directory and prevents cutover. Copies preserve symlinks without
+exporting their external targets; protect the resulting sensitive backup.
+
+SQLite consistency is per database, not one global transaction. Quit writers for
+a common operational point in time and stable session/content copies. Keychain,
+Apple's authoritative Mail/Calendar/Contacts stores and external symlink targets
+remain outside this backup. Rollback switches code and never silently restores
+older state; restore is an explicit recovery operation using the manifest paths.
+
+The wiki's optional six-hour Git backup is separate and defaults off. Before
+staging or pushing, it requires an identifiable `github.com` HTTPS/SSH remote
+and `gh api` verification that the repository is private; missing authentication,
+public visibility or an unverifiable remote aborts the backup. Git credentials
+still perform the push. Sources/pages/schema and valuable ingest/caption caches
+are included; vector/transient caches and `app-state.json` are excluded. This
+remote snapshot does not preserve Steward operational authority or Keychain.
+Privacy can change after verification; it is not a permanent visibility guarantee.
 
 ## Failure Modes And Graceful Degradation
 
@@ -1572,16 +1913,17 @@ Steward is designed to retain narrower functionality when a dependent service is
 | Embedding endpoint disabled | Mail, calendar and contact indexes operate in keyword-only mode. No vector results are mixed into ranking. |
 | One embedding input poisons a batch | Failed members are retried individually; healthy members still advance. |
 | Vector dimension changes | Incompatible vector state is reset rather than queried with mixed dimensions. |
-| `.partial.emlx` body | The available text is indexed and a read attempts a scoped AppleScript fallback. |
+| `.partial.emlx` body | Available text is indexed. Individual reads attempt live fallback only when the non-full mirrored body has fewer than 20 trimmed characters. |
 | Mail watcher misses an event | Periodic reconcile discovers the path/mtime difference. |
 | Message disappears from one Gmail mailbox | Its path is removed; the logical message survives while another path remains. |
 | Full Disk Access missing | Local Apple database reads return actionable permission errors rather than silently empty results. |
-| Automation permission denied | Reads remain available; AppleScript writes fail without bypassing policy. |
+| Automation permission denied | Database reads remain available when FDA is granted; AppleScript compatibility writes fail. EventKit uses its separate Calendar Full Access grant. |
+| Calendar Full Access denied or bridge unavailable | EventKit reports an error/uncertain timeout; there is no blind backend switch after dispatch. The user must fix permissions/runtime and inspect uncertain effects. |
 | Mail-promoter triage returns invalid JSON | The thread is deferred without terminal promotion state, so it can be retried; no malformed wiki note is committed. |
 | Action Center planning fails | The scan records deferred diagnostics. Thrown planner failures remain unseen for retry; ordinary no-action outcomes are recorded in the seen ledger. |
-| Wiki API unavailable | Promotion is deferred while the mail mirror remains usable. |
+| Wiki API unavailable | Filesystem promotion can still write sources; the final rescan is reported unavailable and must be requested later. API-backed promotion can defer on API failure. |
 | No UI is attached to a gated request | Approval times out to deny. Quick Send cannot silently execute writes. |
-| AppleScript returns but the change is not observed | The write remains unconfirmed and enters bounded confirmation/retry handling. |
+| Mail/EventKit/AppleScript returns but the change is not observed | The operation remains unconfirmed. Mail reaches manual review without automatic resend; Calendar confirms or exhausts without replay. |
 | Push subscription is expired | The dead subscription is pruned and the per-send delivery report records the failure; an all-failed watch or Action notification remains eligible for retry. The underlying chat/Action remains available in the UI. |
 | ViaggiaTreno is unavailable or has no live board result | Train tools return an explicit error; existing watches retain their last snapshot and record the polling error for a later retry. |
 | LLM notification generation repeatedly fails | The durable event remains pending during bounded retries, then Steward sends the adapter's deterministic fallback message. |
@@ -1610,13 +1952,14 @@ Local-first does not mean unbounded. Several limits keep cold starts, model cont
 | Voice recovery | One network retry before answer; one media-interruption callback after connection | Repairs transient transport failures without turning recovery into an unbounded call loop. |
 | Voice network readiness | SIP TLS probes every second for at most 20 s after exit-node selection | Accommodates asynchronous macOS route convergence while bounding call startup. |
 | Trigram search | Up to 500 candidates per field | Substring filters drive selection without scanning all inline bodies. |
-| Unranked mail browse | 500-row window; final API limit max 100 | Supports sorting/pagination without materializing the entire archive. |
+| Unranked mail browse | 500-row window; internal limit max 100, public MCP page max 12 | Supports sorting/pagination without materializing the entire archive. |
 | Action-planner mail page | Up to 6 compact results; threads and large bodies expose continuation offsets | Avoids full-message context by default. |
 | Action-planner calendar/contact/wiki pages | Up to 10 events, 8 contacts and 5 wiki results; wiki file pages max 5,000 characters | Keeps read-tool context proportional to the decision while allowing explicit continuation. |
+| Documents | Read caps 12,000 characters/3 pages; search 10 excerpts; 256 semantic chunks; eight cached files | Bounds returned context, selected vector work, parser lifetime/heap, declared Office expansion and estimated cache bytes. |
 | Action Center list | `list_actions` defaults to 20 and is capped at 100 in both MCP schema and SQLite store; full payloads are opt-in | Prevents large context snapshots from producing unbounded memory or model-context growth. |
 | Mail embedding input | First 2,000 characters by default | Bounds embedding cost and latency while retaining subject and leading body context. |
 | Embedding batches | 32 by default, with per-item recovery | Amortizes gateway overhead without allowing one input to poison the queue. |
-| Mail promotion | Thread hashes plus worker pool, concurrency 8 by default | Avoids unchanged work and overlaps I/O-bound model/wiki requests. |
+| Mail promotion | Thread hashes plus worker pool; CLI concurrency 10, direct runner default 8 | Avoids unchanged work and overlaps I/O-bound model/wiki requests. |
 | Action Center | Recent window 14 days, query pool 300, process limit 50 by default | Focuses background attention on new actionable mail and bounds model calls. |
 | Triage bodies | Cleaned/truncated single messages; larger chronological thread representation | Prevents quoted-history explosions while preserving multi-message decisions. |
 | Scheduler | Per-job timeout and no-overlap set | Applies backpressure when a prior run is still active. |
@@ -1691,16 +2034,16 @@ Steward assumes model output, email content, document content and tool arguments
 | Boundary | Enforcement |
 |---|---|
 | Model → tools | Host-side allow/gate/deny policy wraps every tool definition. |
-| Read → write | Read-only tools are explicitly allow-listed; side effects are gated by default. |
+| Read → sensitive operation | Known safe operations are allow-listed; unlisted interactive tools are gated by default. Background jobs and pre-authorized watches have their own configured authority. |
 | Proposed → authorized arguments | Approve-with-edit can replace model-generated input before execution. |
 | Attempted → confirmed side effect | Write journal plus mirror/index confirmation. |
 | Filesystem discovery → mutation | Separate read/write tools and sensitive-path guards. |
-| Host → model provider | Local gateway isolates provider credentials and routing. |
+| Host → model provider | Default gateway isolates provider credentials and routing; endpoint overrides and wiki provider settings are separate configuration boundaries. |
 | Browser → local data | Auth token on WebSocket/data routes; tokenized file registry instead of arbitrary paths. |
 | Spoken response → tool execution | Host-owned exact-command parser resolves the original pending approval; the agent never interprets its own authorization. |
 | Watch rule → future side effect | Registered capability schema, exact/template/set/range/relative-time constraints, rule-scoped tool exposure and durable invocation claims. |
 | Steward → system network route | Call-scoped journaled lease restores the previous Tailscale route and refuses to overwrite a later manual route choice. |
-| Raw event → persisted audit | Secret/body redaction occurs before the payload is written to disk. |
+| Event payload → persisted audit | Bounded heuristic redaction precedes payload insertion; summary/source strings are redacted too; audit writes are best-effort. |
 
 An email can contain text that tries to instruct the agent to send data or run a command. That content may influence the model's reasoning, but it cannot change `tool-policy.ts`, approve its own write or turn a denied tool into an allowed one. The user still needs to assess the proposed action and recipient.
 
@@ -1708,12 +2051,12 @@ The model can also produce a factually wrong answer without calling a dangerous 
 
 ### What The Security Model Does Not Promise
 
-- A user-approved harmful action is still authorized.
+- A user-approved harmful action is still authorized, including a harmful argument constrained in a future watch grant.
 - Full Disk Access gives the Steward process broad read capability; OS account security remains important.
 - A configured remote model provider receives the prompt/context sent through the gateway.
 - Tailscale/private HTTPS reduces exposure but does not replace token hygiene.
 - Local SQLite and Markdown stores are not encrypted by Steward; disk encryption and macOS account protection remain the storage boundary.
-- Audit redaction minimizes persisted sensitive content but is not a substitute for reviewing what external providers receive.
+- Audit payload redaction is heuristic and best-effort. Primary transcripts/journals retain operational text; unrecognized sensitive prose can survive audit heuristics. It does not control what configured external services receive.
 
 ## Engineering Decisions And Trade-Offs
 
@@ -1754,7 +2097,7 @@ Callers express required capability while the gateway owns provider choice. This
 
 ### Why Confirm Writes Against Mirrors?
 
-AppleScript completion is not the same as externally observable success. Confirmation turns “the script returned” into “the expected mail/event exists,” which is the invariant users care about.
+A successful AppleScript/EventKit return is not the same as an observed source-system effect. Confirmation adds mirror evidence before marking the operation confirmed. Its matching/freshness limitations remain explicit; Sent-folder evidence does not prove transport delivery, and native rule/occurrence evidence does not prove every future instance.
 
 ### Why Is Policy Outside The Prompt?
 
@@ -1821,19 +2164,20 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 | [apps/mail-mcp](apps/mail-mcp/) | Mail MCP connector. Searches, reads, resolves threads, opens mail URLs, saves attachments and performs approved send/reply/scheduled-send through AppleScript and write journaling. |
 | [apps/mail-promoter](apps/mail-promoter/) | Mail-to-wiki pipeline. Triage, distillation, note generation, selected attachment sync and promotion state. |
 | [apps/action-center](apps/action-center/) | Scans recent mail into actionable items with LLM-prepared proposals. Exposes bounded CLI/MCP list and detail surfaces, filter-aware counts, and persists status in SQLite. |
-| [apps/calendar-mcp](apps/calendar-mcp/) | Calendar connector. Reads Calendar data, builds hybrid search index and performs approved event writes through AppleScript/write-ops. |
+| [apps/calendar-mcp](apps/calendar-mcp/) | Calendar connector. Reads Apple data, maintains hybrid search and UID aliases, dispatches approved EventKit/AppleScript writes and journals them for confirmation. |
 | [apps/contacts-mcp](apps/contacts-mcp/) | Contacts connector. Reads AddressBook data, deduplicates, labels, indexes and resolves recipients. |
 | [apps/documents-mcp](apps/documents-mcp/) | Read-only document connector. Extracts common text/PDF/Office formats and provides bounded cursor reads plus hybrid lexical/semantic search. |
 | [apps/shell-mcp](apps/shell-mcp/) | Safe shell/files connector. Finds files, runs constrained read-only commands, and gates write commands. |
 | [apps/train-mcp](apps/train-mcp/) | Read-only live Italian train connector. Resolves dictated station names, finds the next direct service and refreshes route, delay and platform state through an opaque `trainRef`. |
 | [apps/scheduler](apps/scheduler/) | Background daemon. Runs periodic CLI jobs with no-overlap scheduling, timeouts and isolated errors. |
 | [packages/watch-engine](packages/watch-engine/) | Generic persistent event-monitor engine. Stores resource snapshots and rules, matches semantic adapter events, deduplicates them and maintains a durable delivery queue. |
-| [packages/write-ops](packages/write-ops/) | Journal and confirm/retry state machine for AppleScript writes such as mail sends/replies/scheduled sends and calendar CRUD. |
+| [packages/write-ops](packages/write-ops/) | Executable journal for mail send/reply/scheduling and Calendar CRUD. Mail uses confirmation/manual review; Calendar uses confirmation/exhaustion. Neither automatically re-executes uncertain writes. |
 | [packages/audit-log](packages/audit-log/) | Shared, redacted SQLite audit ledger used by the host, write-ops, action-center and mail-promoter; queried by the host's `/audit` endpoint and the web Audit page. |
 | [packages/usage-ledger](packages/usage-ledger/) | Per-turn usage ledger. Stores tokens, cost, per-tier cost attribution and tool timings/errors for the Usage page. |
 | [packages/embedding](packages/embedding/) | Shared embedding client with batching and retry. |
 | [packages/search](packages/search/) | Shared hybrid-search helpers: reciprocal rank fusion and sqlite-vec vector store primitives. |
 | [packages/applescript](packages/applescript/) | Shared `osascript` runner with escaping, timeouts and transient-error handling. |
+| [packages/source-collision](packages/source-collision/) | Shared pure/Node collision decisions: skip identical bytes, update tracked sources, rename unrelated same-name content. Used by wiki import paths. |
 | [packages/sensitive-path](packages/sensitive-path/) | Shared path guard for secrets and sensitive filesystem locations. |
 | [apps/wiki-add](apps/wiki-add/) | CLI and Finder Quick Actions for adding files/folders to LLM Wiki sources. |
 | [apps/mac-launcher](apps/mac-launcher/) | SwiftPM menu-bar app. Opens a WebKit window behind a localized native startup/status overlay, registers `Command+Shift+Space`, checks/starts services, packages a self-contained `.app`, and reads production overrides from `~/Library/Application Support/Steward/config.env`. |
@@ -1842,7 +2186,7 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 
 ## LLM Gateway And Models
 
-All services call the same local gateway instead of each app knowing provider details.
+Steward services default to the same local gateway. Wiki providers and explicitly overridden endpoints can route independently.
 
 The public model names are capability tiers:
 
@@ -1880,13 +2224,14 @@ Most Steward data lives under `~/Library/Application Support/`:
 | `Steward/voice-call-settings.json` | Ephemeral per-call speech-rate override; cleared at call start/end. |
 | `Steward/voice-network.json` | User-selected call-only Tailscale fallback and stable exit-node peer ID. |
 | `Steward/voice-network.json.journal` | Write-ahead record of a temporary route change; normally absent and consumed during release/startup recovery. |
-| `Steward/watches.db` | Persistent generic watch definitions, resource snapshots and queued/delivered events. |
+| `Steward/watches.db` | Persistent watch definitions, snapshots, aggregated event queue, rule participation and action claims. |
+| `Steward/calendar-bridge/` | Launcher EventKit IPC requests, processing claims and responses; timeout does not imply cancellation. |
 | `mail-mirror/mail.db` and `mail-mirror/blobs/` | Mirrored mail messages, threads, indexes, embedding state and attachment blobs. |
 | `mail-promoter/` | Mail promotion state and note tracking. |
 | `action-center/actions.db` | Action items, explicit reusable flows, seen ledger and scan metadata. |
 | `steward/calendar-index.sqlitedb` | Calendar search index. |
 | `steward/contacts-index.sqlitedb` | Contacts search index. |
-| `write-ops/ops.db` | Journal for AppleScript writes and confirmation/retry status. |
+| `write-ops/ops.db` | Executable Mail/Calendar inputs, scheduled sends, backend results and confirmation/retry status; sensitive primary state. |
 | `steward-chats/chats.db` | Chat list and transcripts. |
 | `steward-chats/` session files | Per-chat agent session state. |
 | `steward-usage/usage.db` | Token/cost/tool usage ledger. |
@@ -1903,7 +2248,7 @@ Read sources include:
 - the chosen LLM Wiki project directory;
 - user-selected local files/folders.
 
-On macOS these require the right privacy permissions. The process running Steward needs Full Disk Access for local data reads. AppleScript writes require Automation permission for Mail, Calendar and Contacts.
+On macOS these require the right privacy permissions. The process running Steward needs Full Disk Access for local data reads. EventKit writes require Calendar Full Access; AppleScript writes require Automation for Mail, Calendar and Contacts.
 
 ## Background Jobs
 
@@ -1912,7 +2257,7 @@ On macOS these require the right privacy permissions. The process running Stewar
 | Job | Default interval | What it does |
 |---|---:|---|
 | `mail-reconcile` | 10 min | Ingest new/changed/deleted Apple Mail `.emlx` files into the mirror. |
-| `write-ops-mail` | 10 min | Confirm and safely retry mail writes against the mail mirror. |
+| `write-ops-mail` | 10 min | Confirm mail writes against the mirror or require explicit manual review; never automatically resend. |
 | `write-ops-send-due` | 2 min | Send scheduled emails whose time has arrived. |
 | `mail-embed` | 15 min | Embed mirrored mail that does not yet have vectors. |
 | `mail-distill` | 15 min | Run mail-promoter to triage and distill new threads into wiki notes. |
@@ -1926,18 +2271,18 @@ Intervals are controlled by `SCHED_*_MIN` environment variables. Scheduler logs 
 
 Steward is designed so trust is structural, not based on the model behaving perfectly.
 
-- **Default-deny tools** — [apps/host/src/core/tool-policy.ts](apps/host/src/core/tool-policy.ts) classifies tool calls. Read-only tools are allow-listed. Sensitive writes are gated. Unknown or disallowed tools are denied.
-- **Human approval for writes** — the agent can request an action, but the host turns it into an approval card before execution.
+- **Default-gated interactive tools** — [apps/host/src/core/tool-policy.ts](apps/host/src/core/tool-policy.ts) applies exact rules, then deny prefixes, then the `gate` default. Known safe tools are allow-listed; explicitly denied tools never run. Watch turns additionally use a deny-by-default grant policy.
+- **Human approval for sensitive interactive tools** — the host requires approval; an explicitly approved agent watch can later execute only its constrained grants. Background indexing and promotion follow their configured automation rules.
 - **Host-owned spoken approval** — phone approvals use exact localized commands against the original pending request; ambiguous speech fails closed and the agent never interprets consent.
 - **Scoped future authority** — automatic watch actions are limited to registered capabilities, constrained arguments, matched rules and durable invocation counts.
-- **Write journal** — AppleScript writes are recorded before they run and confirmed afterwards against local mirrors.
-- **Audit trail** — chat messages, tool policy/approval decisions, write-ops and Action Center events are recorded in a redacted SQLite ledger ([packages/audit-log](packages/audit-log/)); secrets and full email/document bodies are never persisted, only short snippets.
+- **Write journal** — mail/calendar writes are recorded before execution and checked against local mirrors; Calendar uses EventKit or AppleScript. Shell, Contacts and wiki writes do not share this confirmation state machine.
+- **Audit trail** — [packages/audit-log](packages/audit-log/) records events best-effort with bounded payload redaction. It is distinct from full chat and operational data storage, and does not guarantee detection of every secret in arbitrary text.
 - **No raw shell** — shell-like commands are parsed and executed with explicit binaries/argv. Dangerous shell features are rejected.
 - **Sensitive path blocking** — path guards protect secrets such as `.env`, SSH keys and other private locations.
 - **Token-gated data routes** — data HTTP routes and WebSocket connections require the host auth token.
 - **Local-first services** — host/gateway default to local listeners. Mobile access is opt-in.
 - **Opaque file serving** — files are exposed to the UI through registered tokens, not arbitrary open paths.
-- **Provider isolation** — model keys live behind the gateway. The host talks to the gateway, not directly to every provider.
+- **Provider routing** — host model calls use the gateway by default. Setting `GATEWAY_API_KEY` on the gateway enforces bearer authentication on model POST routes. Without it, loopback compatibility mode remains unauthenticated. Diagnostic GET routes remain public. Wiki providers can be configured independently.
 - **External voice credentials** — the SIP password lives in macOS Keychain, not Ringback's environment file, command line or Steward release directories.
 - **Reversible network fallback** — a write-ahead lease limits Tailscale exit-node changes to a call and preserves later manual route choices.
 
@@ -1945,8 +2290,8 @@ Steward is designed so trust is structural, not based on the model behaving perf
 
 ### Prerequisites
 
-- macOS.
-- Node.js 20 or newer.
+- macOS; the Swift launcher requires macOS 14 or newer. Managed native deployment targets Apple Silicon.
+- Node.js **22.19 or newer** for the current Pi dependency (the Vite toolchain also has a newer minimum than generic Node 20).
 - npm.
 - Xcode Command Line Tools for the Swift launcher/package flow.
 - Ollama with required local models:
@@ -1959,7 +2304,7 @@ ollama pull llama3.2:1b
 - A DeepSeek API key for paid tiers, placed in `apps/llm-gateway/.env` using [apps/llm-gateway/.env.example](apps/llm-gateway/.env.example).
 - Optional per-project overrides (e.g. Whisper language) go in `apps/host/.env`, same convention — see [apps/host/.env.example](apps/host/.env.example).
 - Full Disk Access for the terminal, launcher or packaged app running Steward.
-- Automation permissions when macOS prompts for Mail/Calendar/Contacts writes.
+- Calendar Full Access for launcher-backed EventKit writes; Automation for Mail/Contacts and Calendar’s AppleScript compatibility path. Full Disk Access remains separately required for direct local database reads.
 - Optional phone calls require Linphone/SIP, native ARM Homebrew at
   `/opt/homebrew`, and the external Ringback setup described in
   [Voice calls](docs/voice-calls.md). Docker remains an explicit fallback, not
@@ -1968,7 +2313,13 @@ ollama pull llama3.2:1b
 ### Development Run
 
 ```sh
-npm install
+npm ci
+
+# The vendored wiki has its own frontend lockfile/toolchain.
+npm ci --prefix apps/llm-wiki
+
+# Build the entrypoint that the host uses for wiki MCP.
+npm run mcp:build -w llm-wiki
 
 # Start the model gateway.
 npm run dev -w @steward/llm-gateway
@@ -1979,15 +2330,15 @@ npm run dev -w @steward/llm-gateway
 # Start the host.
 npm run dev -w @steward/host
 
-# Start the web UI.
-npm run dev -w @steward/web
+# Start the web UI with an explicit host WebSocket URL.
+VITE_HOST_URL=ws://127.0.0.1:4317 npm run dev -w @steward/web
 ```
 
-Then open:
+Run these long-lived services in separate terminals. Start the wiki desktop runtime with `npm run tauri -w llm-wiki -- dev` when developing it; that path also needs Rust and the Tauri build prerequisites. In wiki Settings → API + MCP, enable the local API and MCP access and configure an API token. Pass the matching `LLM_WIKI_API_TOKEN` to the host and scheduler, separately from `STEWARD_AUTH_TOKEN`. Opting into unauthenticated wiki access is an alternative explicit local configuration, not the default.
 
-```text
-http://localhost:5173
-```
+Configure the wiki’s chat/embedding providers separately if its model work should use Steward’s gateway. Enabling MCP alone does not reroute wiki providers.
+
+Then open `http://localhost:5173` and pair with the host token. Vite does not inject that token; the host-served UI auto-pairs loopback clients. Set `VITE_HOST_URL` before starting/building Vite; without it, the client targets the page’s own origin. Use the System pairing UI or enter the token locally; do not commit token values into frontend build configuration.
 
 One-time mail bootstrap:
 
@@ -2027,7 +2378,9 @@ The launcher:
 - starts Ollama when possible;
 - checks for `bge-m3`;
 - starts the gateway and host if needed;
-- uses Vite during development when no built web UI exists.
+- uses Vite during development when no built web UI exists; configure its host URL and pair the browser as described above.
+- supervises only services it starts itself; already-running external services are not adopted.
+- runs the private Calendar EventKit bridge and guides packaged-app privacy onboarding.
 
 ### Packaged App
 
@@ -2097,20 +2450,45 @@ identity. `--stage-only` can do expensive build work while Steward runs;
 activation refuses to switch while an existing host still responds.
 
 Cutover first creates SQLite-consistent backups of chats, watches, Audit, Usage
-and Action Center under `deploy/backups/<release-id>/`, then changes the app
+and Action Center under `deploy/backups/<release-id>/` and copies `config.env`, then changes the app
 symlink atomically and launches the candidate. If its health smoke test fails,
 the deployer asks it to quit, waits for the host to stop and rolls the symlink
 back. The first managed install preserves an existing ordinary app bundle as a
 legacy release. Rollback intentionally does not restore data snapshots, because
 that would erase conversations and events created after the update; database
 migrations must therefore remain backward-compatible unless an explicit data
-recovery is planned.
+recovery is planned. Operational snapshots include all known Steward databases, sessions and persistent settings. Wiki content, uploads and blobs require the separate full backup; Keychain remains external. See [Backup boundaries](#backup-boundaries).
 
 A weekly ARM macOS workflow rehearses a clean package, install, update and
 rollback without SIP credentials. CI proves build/deployment mechanics, not
 real Linphone reachability, Tailscale routing or macOS privacy prompts; those
 remain release checks on the target devices. See
 [Native installation and updates](docs/native-deployment.md).
+
+### Launcher Supervision And Privacy Onboarding
+
+The launcher owns only processes it starts. It checks for existing Ollama,
+gateway and host services; an externally running instance remains externally
+managed. Managed children are restarted on exit with exponential delays of
+1, 2, 4, … seconds, capped at 60. A runtime of at least 60 seconds resets that
+exit-backoff history. Services with an HTTP endpoint are checked every 15 seconds
+after their initial grace period; three consecutive failures terminate the
+managed process, with a five-second forced-stop fallback. The scheduler has no
+HTTP endpoint and is monitored by process exit only. Liveness is not proof that
+every scheduled job or MCP connector is healthy.
+
+Intentional quit cancels supervision timers and pending restart work, stops the
+Calendar bridge and terminates managed children. Closing the WebKit window only
+hides it; it does not stop background work. The localized startup overlay and
+the System page serve different purposes: launch progress versus runtime
+service/tool diagnostics.
+
+Packaged startup proactively requests EventKit Full Access and offers a one-time
+Full Disk Access explanation/deep link. The user must enable FDA manually and
+restart as needed; displaying onboarding does not verify permission was granted.
+Standalone development processes do not inherit the packaged app’s privacy
+identity. Calendar’s AppleScript fallback still needs Automation permission,
+separately from EventKit access. Logs remain under `~/Library/Logs/Steward/`.
 
 ## Important Environment Variables
 
@@ -2123,14 +2501,25 @@ remain release checks on the target devices. See
 | `STEWARD_TLS_PORT` | HTTPS listener port, default `HOST_PORT + 1`. |
 | `GATEWAY_BASE_URL` | Host-to-gateway base URL, default `http://127.0.0.1:4000/v1`. |
 | `HOST_TIER` | Agent model tier, default `tier-5`. |
-| `GATEWAY_API_KEY` | Local gateway API key expected by clients, default `sk-local`. |
+| `GATEWAY_API_KEY` | Shared model-route bearer key when explicitly configured on gateway and callers; unset gateway retains unauthenticated loopback compatibility. Host client fallback is `sk-local`. |
 | `DEEPSEEK_API_KEY` | Gateway provider key for paid tiers. |
 | `GATEWAY_PORT` | Gateway port, default `4000`. |
-| `GATEWAY_REQUEST_TIMEOUT_MS` | Gateway request timeout. |
+| `GATEWAY_REQUEST_TIMEOUT_MS` | Shared upstream request/body deadline across fallback attempts, default `120000` ms. |
 | `MAIL_EMBED_ENDPOINT` | Mail embedding endpoint; defaults to gateway, set `off` to disable. |
 | `MAIL_CLASSIFY_ENDPOINT` | Mail role classification endpoint; defaults to gateway, set `off` to disable. |
-| `MAIL_PROMOTER_LLM_ENDPOINT` | Mail-promoter LLM endpoint; defaults to gateway. |
-| `APPROVAL_TIMEOUT_MS` | Approval timeout for gated actions. |
+| `MAIL_PROMOTER_LLM_ENDPOINT` | Full chat-completions endpoint; defaults to `http://127.0.0.1:4000/v1/chat/completions`. |
+| `MAIL_PROMOTER_CONCURRENCY` | Backfill CLI workers, default `10`; direct `runBatch()` default is `8`. |
+| `APPROVAL_TIMEOUT_MS` | Approval timeout for gated actions, default `300000` ms. |
+| `VITE_HOST_URL` | Build/dev-time web WebSocket URL override; use `ws://127.0.0.1:4317` with Vite. |
+| `LLM_WIKI_API_BASE_URL` / `LLM_WIKI_API_TOKEN` | Independent wiki API endpoint/token for MCP and API clients; default base `http://127.0.0.1:19828`. |
+| `STEWARD_CALENDAR_BRIDGE_DIR` | Private launcher bridge root passed to its child services; setting it alone does not start a bridge. |
+| `ACTION_CENTER_CALENDAR_DAYS` | Calendar reminder lookahead, default `3` days. |
+| `CALENDAR_INDEX_DB` / `CONTACTS_INDEX_DB` | Override the respective local search index paths. |
+| `DOCUMENT_MAX_BYTES` / `DOCUMENT_EXTRACT_TIMEOUT_MS` | Document input size and extraction wait limits; defaults 25 MiB and 15 s. |
+| `DOCUMENT_EMBED_ENDPOINT` / `DOCUMENT_EMBED_MODEL` / `DOCUMENT_EMBED_API_KEY` / `DOCUMENT_EMBED_DIM` | Independent document embedding overrides; endpoint `off` disables semantics. |
+| `DOCUMENT_WORKER_HEAP_MB` / `DOCUMENT_MAX_EXTRACTED_CHARS` | Parser V8 old heap (256 MiB) and output character budget (8 million). |
+| `DOCUMENT_ARCHIVE_MAX_BYTES` / `DOCUMENT_CACHE_MAX_BYTES` | Declared Office expansion and estimated aggregate cache budgets; each defaults to 64 MiB, capped at 256 MiB. |
+| `WRITE_OP_MAIL_MAX_CONFIRM_ATTEMPTS` / `WRITE_OP_CALENDAR_MAX_CONFIRM_ATTEMPTS` | Confirmation limits, each default `12`; Mail then requires review and neither domain automatically re-executes writes. |
 | `STEWARD_PUSH_CONTACT` | VAPID contact URI for Web Push. |
 | `STEWARD_WHISPER_BIN` | Path to `whisper.cpp` binary for transcription. |
 | `STEWARD_WHISPER_MODEL` | Path to local Whisper model file. |
@@ -2157,10 +2546,10 @@ remain release checks on the target devices. See
 - Workspaces use TypeScript ESM.
 - Most CLIs run with `node --import tsx`.
 - Tests use Node's built-in test runner or Vitest depending on the app.
-- Run a workspace test with `npm test -w @steward/<workspace>`.
-- Run a workspace typecheck with `npm run typecheck -w @steward/<workspace>`.
+- Run tests only where a `test` script exists: e.g. `npm test -w @steward/host`. Web and MCP bridge do not currently expose that script; host tests cover bridge behavior. Web’s pure helper tests can be run with `node --import tsx --test apps/web/test/*.test.ts`.
+- Run a workspace typecheck where available, e.g. `npm run typecheck -w @steward/host`.
 - `npm run build:web-host` builds the web UI and typechecks the host.
-- The LLM Wiki fork has its own Vite/Tauri/Vitest toolchain under [apps/llm-wiki](apps/llm-wiki/).
+- The LLM Wiki fork has its own Vite/Tauri/Vitest toolchain under [apps/llm-wiki](apps/llm-wiki/). Use `npm run test:mocks -w llm-wiki` for its deterministic frontend suite; its generic `npm test` also runs opt-in real-LLM tests.
 
 Train and watch verification is split between deterministic tests and an
 explicit live smoke flow:
@@ -2221,7 +2610,33 @@ Useful workspace names include:
 - `@steward/watch-engine`
 - `@steward/scheduler`
 - `@steward/wiki-add`
-- `@steward/llm-wiki`
+- `llm-wiki` (vendored workspace; no `@steward/` prefix)
+
+### Offline Local-Model Replay
+
+`tools/steward-local-model-eval.mjs` is an opt-in developer tool, separate from
+normal chat and deterministic CI. `catalog` reads local Pi session JSONL and
+collects historical DeepSeek Flash decision points plus current tool schemas;
+`run` sends selected histories to an OpenAI-compatible endpoint and compares
+captured tool-call outputs with the historical sequence. It never executes the
+model’s proposed tool calls.
+
+```sh
+node --import tsx tools/steward-local-model-eval.mjs catalog --output /private/tmp/steward-eval
+node --import tsx tools/steward-local-model-eval.mjs run --output /private/tmp/steward-eval --base-url http://127.0.0.1:18123/v1 --model YOUR_LOCAL_MODEL --limit 12
+```
+
+Catalog generation loads host configuration and starts MCP clients for schema
+discovery, so it can initialize ordinary local service state. Artifacts contain
+private transcript context, not anonymized fixtures. The default endpoint is
+loopback, but a custom URL receives those histories directly and bypasses gateway
+accounting. Sequence agreement measures replay similarity, not complete task
+correctness or authorization safety. Keep artifacts outside tracked files; the
+script’s default `.local-evals/` directory is not currently excluded by the root
+`.gitignore`.
+
+The documentation/code comparison and residual limitations are tracked in
+[README/code audit](docs/readme-code-audit.md).
 
 ## Project Direction
 
@@ -2236,4 +2651,4 @@ The host speaks a small channel protocol. Tools are MCP servers. Models are hidd
 - long-running workflows and follow-ups;
 - deeper structured memory over the wiki and local indexes.
 
-The core idea stays the same: keep private context local, keep memory inspectable, make useful actions easy, and require explicit approval for anything that changes the outside world.
+The core idea stays the same: own private context locally, keep memory inspectable, and make external actions subject to explicit interactive approval or previously approved, narrowly constrained authority.

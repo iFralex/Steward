@@ -144,12 +144,12 @@ only while a call is in progress.
 
 Ringback preserves the final SIP status and maps failures to stable outcomes:
 `no_answer`, `rejected`, `busy`, `unreachable`, `timeout`, `auth_failed`,
-`server_error`, `media_error`, or `network_error`. The coordinator records the
+`server_error`, `media_error`, `media_stalled`, `media_interrupted` or `network_error`. The coordinator records the
 outcome, SIP status, and duration in both the Audit event and the dedicated
 Voice calls section of Usage. A protocol-level MCP success containing a terminal
 `[CALL FAILED]` result is counted as an error rather than a successful tool call.
 
-Only the authenticated `/voice/call` endpoint automatically authorizes dialing.
+The authenticated `/voice/call` and `/quick-call` endpoints explicitly authorize dialing; approved watch rules can grant a future call.
 In ordinary chat, `call_start` still produces an approval card. Once connected,
 the harmless voice lifecycle tools may continue without one approval per turn.
 Every tool follows the same policy as the PWA. A gated action pauses the agent;
@@ -186,9 +186,12 @@ such as the expected arrival time can be answered during the call. Unrelated
 writes use the normal voice approval flow. If another rule matched the same
 event and explicitly granted a registered constrained action, that action is
 available inside the same scoped phone turn; its deterministic argument guard
-is unchanged. A
-failed or interrupted call falls back to Web Push, and the fallback is
-persisted before dialing so a host restart never redials the same event. A rule
+is unchanged. A failed watch call falls back to Web Push only when **every**
+matched voice rule explicitly sets `voiceFallback: "push"`; a call-only rule
+vetoes that fallback. Busy admission leaves the event pending rather than
+falling back. A durable action claim is persisted before dialing, preventing a
+host restart/delivery retry from redialing that same event; it is the claim,
+not a precomposed fallback, that guards execution. A rule
 may explicitly pre-authorize a bounded continuation for structured outcomes
 such as `not_answered` or `busy`. In that case the host creates a durable
 one-shot time watcher for the next attempt, preserving the original event
@@ -209,3 +212,18 @@ implemented. Its adapter should implement the same coordinator contract while:
 
 Ringback and StreamCore can coexist later: Ringback/Linphone can remain the
 ringing SIP endpoint while StreamCore owns the low-latency media session.
+
+## Permissions and retained data
+
+Call tools share host policy and connector backends with PWA chat. Calendar
+writes prefer the launcher-owned EventKit bridge when configured/representable,
+requiring Calendar Full Access; database reads still need FDA and compatibility
+AppleScript writes still need Automation. A spoken approval cannot supply an OS
+privacy grant. See [Calendar internals](../README.md#calendar-write-transport-and-identity).
+
+Audio recordings are not retained by the host approval flow, but transcribed
+conversation text and effective tool inputs persist in the ordinary chat/session
+stores. Audit is a best-effort event stream with heuristic payload redaction,
+not the retention policy for the whole conversation. Manual HTTP call initiation
+is an explicit authenticated channel action; subsequent sensitive tools still
+use the host's spoken approval protocol.

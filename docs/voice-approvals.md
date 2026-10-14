@@ -34,11 +34,31 @@ does not create a second per-tool allowlist and does not support approve-with-ed
 ## Ringback integration
 
 The agent is paused while `requestApproval` awaits a decision, so it cannot run
-the approval conversation itself. `VoiceCallCoordinator` should intercept the
-`approval_request`, use the active Ringback MCP connection directly for a
-short speak/listen exchange, and then call `Session.resolveApproval`. This
+the approval conversation itself. `VoiceCallCoordinator` intercepts the
+`approval_request`, uses the active Ringback MCP connection directly for a
+short speak/listen exchange, and then calls `Session.resolveApproval`. This
 keeps the model outside the authorization decision and preserves the existing
 permission gate, Usage accounting and Audit trail.
 
 Approvals are serialized because Ringback owns one active call. The normal
 session timeout remains authoritative and each request is resolved at most once.
+
+## Persistence and failure interpretation
+
+Voice approval resolves the same pending request as the desktop gate. It does
+not edit arguments or bypass connector validation. Tools with host preflight
+normalize before the immutable request is rendered. The executed input is
+persisted in the tool transcript; Audit records a separately bounded/redacted
+copy best-effort. No stored recording does not mean no speech-derived text is
+retained in the chat or audit metadata.
+
+Explicit rejection differs from timeout, unrecognized speech and channel/media
+failure. Every negative outcome prevents execution; only explicit rejection is
+reported as a user refusal. A media-recovery call must request an interrupted
+approval again rather than assuming the previous speech granted authority.
+
+Calendar changes during calls use the same EventKit/AppleScript backend
+selection and later confirmation as PWA tools. Spoken approval does not grant
+Calendar Full Access, Full Disk Access or Automation permission. Watch grants
+can pre-authorize registered arguments, but do not make backend effects atomic
+with their durable claims. See [write reliability](../README.md#approval-and-write-reliability).

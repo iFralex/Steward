@@ -1,6 +1,6 @@
 # Native installation and updates (Apple Silicon)
 
-Steward and Ringback run natively on ARM Homebrew; Docker is not required.
+Managed deployment targets Apple Silicon, macOS 14+ and Node 22.19+ for the current Pi dependency. Steward and Ringback run natively on ARM Homebrew; Docker is not required.
 The deployment command keeps immutable application and Ringback releases under
 `~/Library/Application Support/Steward/deploy/releases/`, and exposes the active
 app at `/Applications/Steward.app`. The first cutover preserves an existing
@@ -26,21 +26,56 @@ in their existing locations, outside the release directories.
    smoke test asks the new app to quit and rolls back automatically once it has
    stopped. A release is never switched while an existing host is responding.
 
-Before switching, the installer makes SQLite-consistent snapshots of the
-known chats, watcher, audit, usage and Action Center databases under
-`deploy/backups/RELEASE_ID/`. Rollback does **not** silently restore those files:
-that would discard events created after the update. Database schema changes
-must remain backward-compatible; restoring a snapshot is an explicit recovery
-operation to be planned if a future migration is not reversible.
+Before switching, the installer runs the operational backup under
+`deploy/backups/RELEASE_ID/`: ten known Steward databases (chats, watches, Audit,
+Usage, Actions, write journal, Mail, promotion, Calendar and Contacts), session
+files including externally referenced sessions, configuration and persistent
+Steward/wiki settings. SQLite uses its online backup API per database. The
+manifest records source paths, checksums and missing optional sources; publication
+uses staging plus rename, directories `0700`, regular files `0600`. A backup
+failure prevents cutover. Configuration and sessions contain sensitive data.
+
+Use `npm run backup:full -- --output=/PATH/TO/NEW/BACKUP --wiki=/PATH/TO/VAULT`
+to additionally preserve wiki content, external configured sources, uploads and
+Mail blobs. `npm run backup:operational -- --output=/PATH/TO/NEW/BACKUP` creates
+an operational snapshot independently. Keychain and Apple authoritative stores
+remain external; symlinks are preserved without copying their external targets.
+Stop writers for stable content and a shared cross-store point in time: individual
+SQLite consistency is not one transaction across the entire application.
+
+Rollback never silently restores older data. Schema changes must remain backward
+compatible; an explicit restore uses the manifest mappings after stopping writers.
 
 The installer verifies the app bundle structure, ARM launcher, Ringback
 runtime, and the pinned Whisper model checksum. The app packaging also checks
 the bundled Whisper model checksum. A weekly ARM macOS workflow builds a clean
 bundle and rehearses installation, update and rollback without SIP credentials.
-The workflow cannot test an actual Linphone call or phone permissions; those
-remain release smoke tests on the real devices.
+The rehearsal uses `--no-launch` for the install/update cycle; it exercises
+packaging, layout, verification and rollback mechanics, not successful live host
+startup. It cannot test an actual Linphone call, Tailscale route convergence or
+privacy prompts; those remain release smoke tests on the real devices.
+
+The packaged launcher requests Calendar Full Access for EventKit and guides Full
+Disk Access for database reads. Mail/Contacts and Calendar's AppleScript
+compatibility path additionally need Automation. Launch progress and health
+checks do not prove all those permissions were granted. Only managed children
+are supervised; externally running services remain outside launcher ownership.
 
 Set `STEWARD_VOICE_EXIT_NODE_ID` in
 `~/Library/Application Support/Steward/config.env` to the Tailscale peer ID of
-your iPhone. That identity is no longer tied to the app build; if the phone is
-re-registered and its peer ID changes, update this one setting.
+an online peer advertising exit-node capability, or choose it in System voice
+network settings. An arbitrary tailnet phone is not necessarily an eligible
+exit node. The peer ID is independent of the app build; if that peer is
+re-registered, update the saved choice/override. This is a call-scoped fallback,
+not a requirement for ordinary phone PWA access.
+
+## Vault backup versus code rollback
+
+The wiki's optional Git backup is separate from deployment snapshots. It runs
+every six hours while the wiki process stays alive and sends the current vault
+to its configured remote after `gh api` verifies that it is a private GitHub
+repository. Missing CLI/auth, public visibility or unverifiable remotes abort
+before staging/push. It does not back up Steward's operational stores.
+Rollback switches code/runtime references and intentionally retains newer data.
+See [backup boundaries](../README.md#backup-boundaries) before planning a full
+recovery, particularly for the write journal and durable watch action claims.

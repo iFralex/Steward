@@ -19,23 +19,27 @@ System Settings → Privacy & Security → Automation.
 Run this once (and again whenever your contacts change significantly):
 
 ```
-contacts-mcp index
+node --import tsx apps/contacts-mcp/src/cli.ts index
 ```
 
 This syncs all contacts into a local SQLite index at
-`~/Library/Application Support/llm-wiki/contacts-index.sqlitedb` and generates
-semantic embeddings via the gateway `local-embed` model.
+`~/Library/Application Support/steward/contacts-index.sqlitedb` and generates
+semantic embeddings via the gateway `local-embed` model. Run the commands below
+from the monorepo root. `CONTACTS_INDEX_DB` overrides the sidecar path; a legacy
+`llm-wiki/contacts-index.sqlitedb` is migrated best-effort if no current file exists.
+There is no periodic Contacts sync job in the default scheduler: refresh the
+index explicitly when contacts change. Writes do not synchronously refresh it.
 
 To disable embeddings (keyword-only FTS search):
 
 ```
-MAIL_EMBED_ENDPOINT=off contacts-mcp index
+MAIL_EMBED_ENDPOINT=off node --import tsx apps/contacts-mcp/src/cli.ts index
 ```
 
 Check index status:
 
 ```
-contacts-mcp status
+node --import tsx apps/contacts-mcp/src/cli.ts status
 ```
 
 ## Deduplication
@@ -115,9 +119,15 @@ Update fields of an existing contact. **`personId` is the Contacts app id
 
 ## Write safety
 
-Destructive write operations (`create_contact`, `update_contact`) are gated by
-the host's **PreToolUse approval hook**. The agent must receive explicit user
-confirmation before any write is executed.
+Writes (`create_contact`, `update_contact`) are gated by the host's deterministic
+**tool execution wrapper**. Direct MCP invocations outside the host must supply
+their own authorization policy. A previously approved agent-watch grant may
+permit a constrained future write without another interactive approval.
+
+Contacts writes are not part of the Mail/Calendar `write-ops` confirmation loop;
+a returned AppleScript result is not independently confirmed against a refreshed
+Contacts index. Do not equate a sidecar UID with a native person ID or assume
+index search reflects an immediately preceding write.
 
 ## Live test (manual only)
 
@@ -127,3 +137,15 @@ confirmation before any write is executed.
 ```
 node --import tsx apps/contacts-mcp/realtest.mts
 ```
+
+## Validation and embedding configuration
+
+```sh
+npm test -w @steward/contacts-mcp
+```
+
+`MAIL_EMBED_ENDPOINT`, `MAIL_EMBED_MODEL`, `MAIL_EMBED_API_KEY` and `MAIL_EMBED_DIM`
+are shared embedding settings, defaulting to gateway `local-embed`. Calls carry
+`contacts-mcp / embed` attribution. An overridden direct endpoint bypasses gateway
+metering. Recipient resolution returns ranked email-bearing candidates rather
+than selecting or authorizing one automatically.

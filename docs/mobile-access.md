@@ -14,7 +14,7 @@ Developer account. The agent stays on the Mac; the phone is a client.
 - **Auth = a shared token**: the WS + data routes require it. The Mac's own
   browser auto-pairs; the phone pairs once by scanning a QR.
 - **Push = standard Web Push (VAPID)**: the host pings the phone when an
-  action-center proposal needs approval — works even with the app closed, as long
+  Action is created, a chat replies or an approval is waiting — works even with the app closed, as long
   as the Mac is awake and online.
 
 ## One-time setup
@@ -43,8 +43,10 @@ Developer account. The agent stays on the Mac; the phone is a client.
    `127.0.0.1` on HTTP — nothing is exposed unless TLS is configured.
 
    Same-origin requests are accepted automatically, so you do **not** need to
-   list the tailnet address anywhere. (To pin it further you still can, via
-   `HOST_ALLOWED_ORIGINS`.)
+   list the tailnet address anywhere. `HOST_ALLOWED_ORIGINS` adds extra origins;
+   it does not narrow the automatic same-origin rule or restrict the HTTPS bind
+   to Tailscale. The HTTPS listener binds all interfaces, so actual network
+   reachability depends on your Mac/network configuration as well as the token.
 
 3. **On the phone**, open `https://<mac-tailnet-name>:4318` in Safari/Chrome
    unless you set a custom `STEWARD_TLS_PORT`. The app loads and shows a
@@ -59,8 +61,11 @@ Developer account. The agent stays on the Mac; the phone is a client.
 
 6. **Enable notifications**: System page → **Attiva notifiche** (must be a tap —
    iOS requires a user gesture, and the app must be launched from the Home
-   screen, iOS 16.4+). You'll now get a push when a proposal needs approval;
-   tapping it opens Steward on that proposal.
+   screen, iOS 16.4+). Push links can open the relevant chat or Action;
+   approval notifications require the live host session to still be waiting.
+   With no existing app window, the service worker currently opens `/` without
+   forwarding the click payload, so choose the referenced Action/chat manually
+   if it opens the home view.
 
 ## Keeping it reachable
 
@@ -78,9 +83,17 @@ Developer account. The agent stays on the Mac; the phone is a client.
 - The static app shell and `/health` are open; every **data** route and the
   WebSocket require the auth token. A device that isn't paired (no token) can't
   drive the agent even on your tailnet.
-- The token lives only on your paired devices (localStorage on the phone, a file
-  in the Steward config dir on the Mac). Re-pair to rotate it (delete
-  `~/Library/Application Support/Steward/auth-token` to force a new one).
-- Content the agent reasons over still goes to the LLM gateway/DeepSeek as usual
-  — Tailscale secures the *transport to your Mac*, not what the agent sends
-  onward.
+- The shared token is stored in browser localStorage and, by default, in
+  `~/Library/Application Support/Steward/auth-token` on the Mac. Re-pairing does
+  not rotate it. To rotate the generated file token, stop the host, remove that
+  file and restart, then pair every client again. If `STEWARD_AUTH_TOKEN` is set,
+  change that override instead; deleting the file does not supersede it. Existing
+  push registrations have a separate lifecycle from pairing-token storage.
+- Chat context goes to the configured gateway/provider. Wiki provider settings,
+  web research, cloud document parsing and optional Git backup can contact
+  independently configured services. Tailscale protects the client transport;
+  it does not impose a model/data-egress policy.
+- The gateway on port 4000 is separate from the authenticated host. Explicitly
+  configuring `GATEWAY_API_KEY` on gateway and callers protects model POST routes;
+  unset retains unauthenticated loopback compatibility. Diagnostic GET routes
+  remain public. Host pairing tokens never authenticate gateway requests.
