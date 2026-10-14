@@ -10,7 +10,10 @@ import { hybridSearch } from "./search.ts";
 import { loadEmbedConfig } from "./embed-config.ts";
 import { embedText } from "@steward/search";
 import { createEvent, updateEvent, deleteEvent } from "./applescript.ts";
-import { parseSearchArgs, parseCreateArgs, parseUpdateArgs, requireString } from "./args.ts";
+import {
+  createEventKit, deleteEventKit, eventKitBridgeAvailable, eventKitCanRepresent, updateEventKit,
+} from "./eventkit-client.ts";
+import { parseSearchArgs, parseCreateArgs, parseDeleteArgs, parseUpdateArgs, requireString } from "./args.ts";
 import { applePath, indexDbPath } from "./paths.ts";
 import { WriteOpsStore } from "@steward/write-ops";
 import { buildEventSearchPage } from "./event-page.ts";
@@ -53,15 +56,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     { name: "read_event", description: `Read one event by uid. Returned start/end use this Mac's ${localTimeZone} wall-clock time with an explicit offset; do not reinterpret them as UTC.`, inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
     { name: "create_event", description: "Create a calendar event. Prefer the stable calendarId from list_calendars; a duplicate calendar title without calendarId is rejected.", inputSchema: { type: "object", properties: {
       calendarId: { type: "string" }, calendar: { type: "string", description: "Legacy title selector; accepted only when unique." }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
-      allDay: { type: "boolean", description: "Marks an all-day event. Pass start/end at local midnight with an explicit offset so the civil dates remain unambiguous." }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
+      allDay: { type: "boolean", description: "Marks an all-day event. Pass start/end at local midnight with an explicit offset so the civil dates remain unambiguous." }, location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string", description: "RFC 5545 RRULE. EventKit natively supports DAILY/WEEKLY/MONTHLY/YEARLY plus INTERVAL, COUNT/UNTIL, BYDAY, BYMONTHDAY, BYMONTH, BYWEEKNO, BYYEARDAY and BYSETPOS." },
       alarms: { type: "array", items: { type: "number" }, description: "alerts in minutes before the event, e.g. [15, 1440] = 15 min + 1 day before" } },
       required: ["summary", "start", "end"], additionalProperties: false } },
     { name: "update_event", description: "Update fields of an event by uid.", inputSchema: { type: "object", properties: {
       uid: { type: "string" }, summary: { type: "string" }, start: { type: "string", description: instantDescription }, end: { type: "string", description: instantDescription },
-      location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string" },
+      location: { type: "string" }, description: { type: "string" }, url: { type: "string" }, recurrence: { type: "string", description: "RFC 5545 RRULE; fields outside EventKit's native subset use the compatibility fallback." },
+      scope: { type: "string", enum: ["thisEvent", "futureEvents"], description: "For a recurring event, update only this occurrence or this and all future occurrences." },
       alarms: { type: "array", items: { type: "number" }, description: "replaces the event's alerts; minutes before start; [] clears all" } },
       required: ["uid"], additionalProperties: false } },
-    { name: "delete_event", description: "Delete an event by uid.", inputSchema: { type: "object", properties: { uid: { type: "string" } }, required: ["uid"], additionalProperties: false } },
+    { name: "delete_event", description: "Delete an event by uid.", inputSchema: { type: "object", properties: {
+      uid: { type: "string" }, scope: { type: "string", enum: ["thisEvent", "futureEvents"], description: "For a recurring event, delete only this occurrence or this and all future occurrences." },
+    }, required: ["uid"], additionalProperties: false } },
   ],
 }));
 
@@ -110,7 +116,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         return ok(buildEventSearchPage(events.map(eventForTool), a.limit, a.offset));
       }
       case "read_event": {
-        const event = requireStore().getEvent(requireString(raw, "uid"));
+        const requestedUid = requireString(raw, "uid");
+        const event = requireStore().getEvent(index?.resolveUid(requestedUid) ?? requestedUid);
         return ok(event ? eventForTool(event) : null);
       }
       case "create_event": {
@@ -130,7 +137,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           expected: args as unknown as Record<string, unknown>,
         });
         try {
-          const uid = await createEvent(args);
+          const useEventKit = eventKitBridgeAvailable() && eventKitCanRepresent(args.recurrence);
+          let uid: string;
+          if (useEventKit) {
+            uid = await createEventKit(args);
+          } else {
+            const calendars = requireStore().listCalendars();
+            const selected = calendars.find((calendar) => calendar.id === args.calendarId);
+            if (!selected) throw new Error(`Calendar id "${args.calendarId}" was not found`);
+            if (calendars.filter((calendar) => calendar.title === selected.title).length !== 1) {
+              throw new Error(`Calendar "${selected.title}" is not unique, and this recurrence cannot be represented by EventKit safely`);
+            }
+            // Calendar.app exposes calendarIdentifier in its scripting
+            // dictionary but returns -10000 for it on current macOS. The
+            // compatibility path can therefore select only a unique title.
+            uid = await createEvent({ ...args, calendar: selected.title, calendarId: undefined });
+          }
           writeOps.scriptReturned(operationId, { uid });
           return ok({ uid, operationId });
         } catch (err) {
@@ -140,13 +162,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       case "update_event": {
         const args = parseUpdateArgs(raw);
+        args.uid = index?.resolveUid(args.uid) ?? args.uid;
         const operationId = writeOps.start({
           kind: "calendar.update",
           input: args as unknown as Record<string, unknown>,
           expected: args as unknown as Record<string, unknown>,
         });
         try {
-          await updateEvent(args);
+          if (eventKitBridgeAvailable() && eventKitCanRepresent(args.recurrence)) await updateEventKit(args);
+          else await updateEvent(args);
           writeOps.scriptReturned(operationId, { uid: args.uid });
           return ok({ ok: true, operationId });
         } catch (err) {
@@ -155,19 +179,23 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
       }
       case "delete_event": {
-        const uid = requireString(raw, "uid");
+        const parsed = parseDeleteArgs(raw);
+        const requestedUid = parsed.uid;
+        const uid = index?.resolveUid(requestedUid) ?? requestedUid;
+        const scope = parsed.scope;
         const operationId = writeOps.start({
           kind: "calendar.delete",
           input: { uid },
           expected: { uid },
         });
         try {
-          await deleteEvent(uid);
-          // deleteEvent verifies the event is absent from Calendar.app before
-          // returning, so this write can be confirmed immediately instead of
-          // exposing a misleading `ok` while reconciliation is still pending.
-          writeOps.markConfirmed(operationId, { uid });
-          return ok({ ok: true, status: "deleted", uid, operationId });
+          if (eventKitBridgeAvailable()) await deleteEventKit(uid, scope);
+          else if (scope === "thisEvent") await deleteEvent(uid);
+          else throw new Error('Deleting "this and future" occurrences requires the Steward EventKit bridge');
+          // Always hand deletion to reconciliation. EventKit commits locally,
+          // but the SQLite mirror can lag behind the framework response.
+          writeOps.scriptReturned(operationId, { uid });
+          return ok({ ok: true, status: "pending_confirmation", uid, operationId });
         } catch (err) {
           writeOps.failed(operationId, err);
           throw err;

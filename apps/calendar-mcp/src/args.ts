@@ -30,6 +30,13 @@ function optMinutesArray(raw: Raw, field: string): number[] | undefined {
   return (v as number[]).map((minutes) => Math.round(minutes));
 }
 
+function optScope(raw: Raw): "thisEvent" | "futureEvents" | undefined {
+  const value = raw.scope;
+  if (value === undefined || value === null) return undefined;
+  if (value !== "thisEvent" && value !== "futureEvents") throw new Error('"scope" must be "thisEvent" or "futureEvents"');
+  return value;
+}
+
 function validIso(raw: Raw, field: string, required: boolean): string | undefined {
   const v = optString(raw, field);
   if (v === undefined) { if (required) throw new Error(`"${field}" is required (RFC 3339 date-time with an explicit timezone)`); return undefined; }
@@ -83,6 +90,7 @@ export function parseUpdateArgs(raw: Raw): UpdateArgs {
     description: optString(raw, "description"),
     url: optString(raw, "url"),
     recurrence: optString(raw, "recurrence"),
+    scope: optScope(raw),
     alarms: optMinutesArray(raw, "alarms"),
   };
   const hasEffectiveChange = [
@@ -99,4 +107,8 @@ export function parseUpdateArgs(raw: Raw): UpdateArgs {
     throw new Error('"update_event" requires at least one field to update besides "uid"');
   }
   return parsed;
+}
+
+export function parseDeleteArgs(raw: Raw): { uid: string; scope: "thisEvent" | "futureEvents" } {
+  return { uid: requireString(raw, "uid"), scope: optScope(raw) ?? "thisEvent" };
 }

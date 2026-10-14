@@ -186,6 +186,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private var statusItem: NSStatusItem?
     private var hotKeyRef: EventHotKeyRef?
     private var managedServices: [String: ManagedService] = [:]
+    private let calendarBridge = CalendarEventKitBridge()
     private var serviceSupervisorTimer: Timer?
     private var isTerminating = false
     private let appURL: URL
@@ -227,6 +228,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         makeWindow()
         registerGlobalHotKey()
         startServiceSupervisor()
+        calendarBridge.start()
         showWindow()
         presentInitialPermissionOnboardingIfNeeded()
         bootstrap()
@@ -236,6 +238,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         isTerminating = true
         serviceSupervisorTimer?.invalidate()
         serviceSupervisorTimer = nil
+        calendarBridge.stop()
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
         }
@@ -418,41 +421,13 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
 
     private func presentInitialPermissionOnboardingIfNeeded() {
-        guard
-            shouldStartServices,
-            Bundle.main.bundleIdentifier == "com.steward.launcher"
-        else { return }
+        let validationRequest = ProcessInfo.processInfo.environment["STEWARD_CALENDAR_BRIDGE_REQUEST_ACCESS"] == "1"
+        guard (shouldStartServices && Bundle.main.bundleIdentifier == "com.steward.launcher") || validationRequest else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self else { return }
-            self.requestCalendarAutomationPermission()
+            self.calendarBridge.requestAccess()
             self.presentFullDiskAccessOnboardingIfNeeded()
-        }
-    }
-
-    /// Ask for the same Calendar Automation grant used by create/update/delete
-    /// tools while the user is present during onboarding. Wildcards request the
-    /// app-level grant without sending an event or modifying calendar data.
-    private func requestCalendarAutomationPermission() {
-        var target = AEAddressDesc()
-        let calendarBundleID = "com.apple.iCal"
-        let createStatus = calendarBundleID.withCString { pointer in
-            AECreateDesc(
-                DescType(typeApplicationBundleID),
-                pointer,
-                calendarBundleID.utf8.count,
-                &target
-            )
-        }
-        guard createStatus == noErr else {
-            NSLog("Could not create Calendar automation target: OSStatus %d", createStatus)
-            return
-        }
-        defer { AEDisposeDesc(&target) }
-
-        let status = AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, true)
-        if status != noErr {
-            NSLog("Calendar automation permission was not granted: OSStatus %d", status)
         }
     }
 
@@ -486,8 +461,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     }
 
     private func openFullDiskAccessSettings() {
-        // Apple has kept this preference-pane route compatible across the
-        // System Preferences -> System Settings transition in macOS 13.
+        // Open the Calendar-era System Settings privacy pane directly.
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
            NSWorkspace.shared.open(url) {
             return
@@ -888,6 +862,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     private func processEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
+        env["STEWARD_CALENDAR_BRIDGE_DIR"] = calendarBridge.root.path
         let defaultPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if let existing = env["PATH"], !existing.isEmpty {
             env["PATH"] = "\(defaultPath):\(existing)"

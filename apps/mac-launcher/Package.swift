@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "StewardLauncher",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .executable(name: "StewardLauncher", targets: ["StewardLauncher"]),
     ],

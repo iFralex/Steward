@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseSearchArgs, parseCreateArgs, parseUpdateArgs } from "../src/args.ts";
+import { parseSearchArgs, parseCreateArgs, parseDeleteArgs, parseUpdateArgs } from "../src/args.ts";
 
 test("parseSearchArgs defaults the range and limit", () => {
   const a = parseSearchArgs({ query: "dentist" });
@@ -56,6 +56,14 @@ test("parseUpdateArgs rejects an update with only an uid", () => {
 test("parseUpdateArgs treats an empty alarms array as an explicit update", () => {
   const value = parseUpdateArgs({ uid: "U1", alarms: [] });
   assert.deepEqual(value.alarms, []);
+});
+
+test("recurring update and delete scopes are validated", () => {
+  assert.equal(parseUpdateArgs({ uid: "U1", summary: "x", scope: "futureEvents" }).scope, "futureEvents");
+  assert.deepEqual(parseDeleteArgs({ uid: "U1" }), { uid: "U1", scope: "thisEvent" });
+  assert.deepEqual(parseDeleteArgs({ uid: "U1", scope: "futureEvents" }), { uid: "U1", scope: "futureEvents" });
+  assert.throws(() => parseUpdateArgs({ uid: "U1", summary: "x", scope: "allEvents" }), /scope/);
+  assert.throws(() => parseDeleteArgs({ uid: "U1", scope: "allEvents" }), /scope/);
 });
 
 test("calendar date inputs are normalized to UTC", () => {

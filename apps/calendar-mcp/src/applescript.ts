@@ -9,6 +9,7 @@ export interface CreateArgs {
 export interface UpdateArgs {
   uid: string; summary?: string; start?: string; end?: string;
   location?: string; description?: string; url?: string; recurrence?: string;
+  scope?: "thisEvent" | "futureEvents";
   /** Replaces the event's alerts; minutes BEFORE start. Pass [] to clear all alerts. */
   alarms?: number[];
 }
