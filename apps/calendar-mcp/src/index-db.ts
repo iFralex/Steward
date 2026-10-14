@@ -256,5 +256,5 @@ export class IndexDb {
     return rows.map((row) => this.getEvent(row.uid)).filter((event): event is CalEvent => event !== null);
   }
 
-  close(): void { this.raw.close(); }
+  close(): void { this.vectors.close(); this.raw.close(); }
 }

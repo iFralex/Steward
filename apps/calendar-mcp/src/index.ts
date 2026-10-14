@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { SearchPreparationRequestSchema, prepareOnce } from "@steward/search";
 import { existsSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -46,6 +47,8 @@ const server = new Server({ name: "calendar", version: "0.0.0" }, { capabilities
 
 const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const instantDescription = `RFC 3339 date-time with explicit timezone (Z or ±HH:MM). User-facing wall-clock times are in this Mac's ${localTimeZone} timezone; inputs are normalized internally and event outputs include the date-specific local offset.`;
+
+server.setRequestHandler(SearchPreparationRequestSchema, prepareOnce(() => index ? index.vectors.prepare() : Promise.resolve({skipped:"No search index is available"})));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [

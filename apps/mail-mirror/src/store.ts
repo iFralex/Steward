@@ -357,6 +357,16 @@ export class Store {
     ).run(messageId, messageId);
   }
 
+  async knnAsync(queryVector: number[], k: number): Promise<{messageId: string; distance: number}[]> {
+    const hits = await this.vec.knnAsync(queryVector, k);
+    return hits.flatMap(hit => {
+      const row = this.raw.prepare('SELECT message_id FROM messages WHERE rowid=? AND deleted=0').get(hit.rowid) as {message_id:string}|undefined;
+      return row ? [{messageId:row.message_id,distance:hit.distance}] : [];
+    });
+  }
+
+  prepareSearch(): Promise<{skipped?: string}> { return this.vec.prepare(); }
+
   knn(queryVector: number[], k: number): { messageId: string; distance: number }[] {
     const rows = this.raw
       .prepare(`SELECT m.message_id as messageId, v.distance as distance
@@ -427,6 +437,7 @@ export class Store {
   }
 
   close(): void {
+    this.vec.close();
     this.raw.close();
   }
 }

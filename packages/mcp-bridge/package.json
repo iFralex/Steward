@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.2",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@steward/search": "*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

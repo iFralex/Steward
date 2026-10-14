@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { SearchPreparationRequestSchema, prepareOnce } from "@steward/search";
 import { existsSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -37,6 +38,8 @@ const embedQuery = embedCfg ? (t: string) => embedText(t, embedCfg) : undefined;
 const search = (q: string, limit: number) => index ? hybridSearch({ index, embedQuery }, q, limit) : Promise.resolve([]);
 
 const server = new Server({ name: "contacts", version: "0.0.0" }, { capabilities: { tools: {} } });
+
+server.setRequestHandler(SearchPreparationRequestSchema, prepareOnce(() => index ? index.vectors.prepare() : Promise.resolve({skipped:"No search index is available"})));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [

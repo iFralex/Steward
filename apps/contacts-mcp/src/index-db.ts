@@ -97,5 +97,5 @@ export class IndexDb {
     return (this.raw.prepare("SELECT uid FROM contacts WHERE rowid=?").get(rowid) as { uid: string } | undefined)?.uid;
   }
 
-  close(): void { this.raw.close(); }
+  close(): void { this.vectors.close(); this.raw.close(); }
 }

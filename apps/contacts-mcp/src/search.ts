@@ -24,7 +24,7 @@ export async function hybridSearch(deps: SearchDeps, query: string, limit: numbe
     const dim = Number(deps.index.getState("vec_contacts_dim") ?? 0);
     if (qv && qv.length === dim && dim > 0) {
       deps.index.vectors.enable();
-      const hits = deps.index.vectors.knn(qv, CANDIDATE_POOL);
+      const hits = await deps.index.vectors.knnAsync(qv, CANDIDATE_POOL);
       vecIds = hits.map((h) => deps.index.rowidToUid(h.rowid)).filter((u): u is string => !!u);
     }
   }

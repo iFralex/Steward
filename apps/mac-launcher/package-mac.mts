@@ -34,6 +34,7 @@ const debugPackage = process.env.PACKAGE_DEBUG === "1";
 const skipLLMWikiBuild = process.env.PACKAGE_SKIP_LLM_WIKI_BUILD === "1";
 
 const entries: Record<string, string> = {
+  "workers/vector-worker.js": "packages/search/src/vector-worker.ts",
   "host/index.js": "apps/host/src/index.ts",
   "llm-gateway/gateway.js": "apps/llm-gateway/src/gateway.ts",
   "scheduler/index.js": "apps/scheduler/src/index.ts",

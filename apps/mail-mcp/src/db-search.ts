@@ -88,7 +88,7 @@ export async function searchDb(
       const qv = await embedQuery(args.query);
       const vecDim = Number(store.getState("vec_dim") ?? 0);
       if (qv && qv.length === vecDim) {
-        const hits = store.knn(qv, CANDIDATES).map((h) => h.messageId);
+        const hits = (await store.knnAsync(qv, CANDIDATES)).map((h) => h.messageId);
         if (hits.length) {
           // keep only those passing the filters, preserving knn order
           const placeholders = hits.map(() => "?").join(",");

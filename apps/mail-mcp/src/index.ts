@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { SearchPreparationRequestSchema, prepareOnce } from "@steward/search";
 import { existsSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -36,22 +37,11 @@ const embedQuery = embedCfg ? (text: string) => embedText(text, embedCfg) : unde
 const writeOps = WriteOpsStore.open();
 const mail = new Mail({ store, embedQuery, writeOps });
 
-// Warm the cold paths once at startup so the first real query isn't slow: the
-// knn over the (~280MB) vector table and the trigram index each pay a one-time
-// cold-cache cost (measured ~8s for the first semantic search). Fire-and-forget.
-if (dbReady) {
-  void (async () => {
-    try {
-      const dim = Number(store.getState("vec_dim") ?? 0);
-      if (dim > 0) store.knn(new Array(dim).fill(0), 1);
-      store.searchTrig("from_name", "warmup", 1);
-    } catch { /* best-effort warm-up */ }
-  })();
-}
-
 const server = new Server({ name: "mail", version: "0.0.0" }, { capabilities: { tools: {} } });
 
 const STRINGS = (description: string) => ({ type: "array", items: { type: "string" }, description });
+
+server.setRequestHandler(SearchPreparationRequestSchema, prepareOnce(() => store.prepareSearch()));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
