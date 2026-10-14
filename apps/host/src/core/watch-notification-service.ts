@@ -20,6 +20,8 @@ export async function pollAndDeliverWatchEvents(args: {
   runAgentTurn(chatId: string, prompt: string, pending: PendingWatchEvent): Promise<TurnResult>;
   runVoiceTurn(chatId: string, prompt: string, eventId: string, pending: PendingWatchEvent): Promise<VoiceCallSummary>;
   isVoiceBusy?: () => boolean;
+  /** Override persisted user language for deterministic callers such as tests. */
+  language?: NotificationLang;
 }): Promise<void> {
   if (running) {
     rerunArgs = args;
@@ -36,7 +38,7 @@ export async function pollAndDeliverWatchEvents(args: {
       // pending event will be picked up by the next poll.
       if (isRunning(chatId)) continue;
       const startedAt = Date.now();
-      const language = getNotificationLang();
+      const language = args.language ?? getNotificationLang();
       let body = pending.notificationText;
       let mode: "agent" | "voice" | "cached" | "fallback" = body ? "cached" : "agent";
       const voice = voiceAuthorized(pending);

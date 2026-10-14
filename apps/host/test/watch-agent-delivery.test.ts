@@ -239,6 +239,7 @@ test("a read-only watch resumes the same chat and pushes the agent response", as
   await pollAndDeliverWatchEvents({
     engine: fx.engine,
     push: new PushRegistry(join(testRoot, "agent-push.json"), async () => {}),
+    language: "it",
     runAgentTurn: async (chatId, prompt) => {
       seenChat = chatId;
       assert.match(prompt, /stessa chat/i);
