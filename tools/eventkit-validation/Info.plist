@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Steward EventKit Validation</string>
+  <key>CFBundleDisplayName</key><string>Steward EventKit Validation</string>
+  <key>CFBundleExecutable</key><string>EventKitValidation</string>
+  <key>CFBundleIdentifier</key><string>com.steward.eventkit-validation</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Steward validates Calendar behavior using temporary events that are removed after the test.</string>
+</dict></plist>
