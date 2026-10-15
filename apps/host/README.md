@@ -128,6 +128,11 @@ with real queries. Worker read deadlines are 30 s; failures do not block stdio.
 `GET /system/preparation` requires the host token and returns connector/task
 states. The web client displays preparation/failure status; `/system/status`
 inspects these same processes rather than spawning duplicate MCP probes.
+Calendar diagnostics also call private `steward/calendarStatus`: database
+readability, EventKit bridge reachability and Calendar Full Access are separate
+checks. The native probe neither requests permission nor mutates events. Its
+2 s IPC / 5 s MCP deadlines bound the wait; unsupported/unreachable diagnostics
+leave access unverified and a connected Calendar service in `warning` state.
 Local model preparation respects embedding overrides/disable settings, sends only
 fixed generic text to enabled loopback local-embed endpoints, and records
 `host / startup-embedding` Usage. It never warms a remote provider automatically.

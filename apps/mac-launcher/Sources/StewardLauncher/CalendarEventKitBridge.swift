@@ -99,10 +99,24 @@ final class CalendarEventKitBridge {
     }
 
     private func execute(_ request: [String: Any]) throws -> [String: Any] {
+        guard let method = request["method"] as? String else { throw BridgeError("Missing Calendar bridge method") }
+        // Read-only diagnostics must work before access is granted and must not
+        // display an authorization prompt or read event/calendar contents.
+        if method == "status" {
+            let authorization: String
+            switch EKEventStore.authorizationStatus(for: .event) {
+            case .notDetermined: authorization = "notDetermined"
+            case .restricted: authorization = "restricted"
+            case .denied: authorization = "denied"
+            case .writeOnly: authorization = "writeOnly"
+            case .fullAccess: authorization = "fullAccess"
+            @unknown default: authorization = "unknown"
+            }
+            return ["authorization": authorization]
+        }
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
             throw BridgeError("[CALENDAR_FULL_ACCESS_REQUIRED] Calendar full access is not granted. Allow Steward in System Settings → Privacy & Security → Calendars. Full Disk Access is a separate permission. No write was executed.")
         }
-        guard let method = request["method"] as? String else { throw BridgeError("Missing Calendar bridge method") }
         if let expiry = request["expiresAtMs"] as? NSNumber,
            Date().timeIntervalSince1970 * 1000 >= expiry.doubleValue {
             throw BridgeError("Calendar request expired before execution; no write was executed")

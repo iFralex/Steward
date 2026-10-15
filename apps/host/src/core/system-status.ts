@@ -12,6 +12,7 @@ import { decideTool, type ToolDecision } from "./tool-policy.ts";
 import type { VoiceChannelStatus } from "./voice-channel.ts";
 import { sharedWatchEngine, watchDbPath } from "./watch-runtime.ts";
 import { watchActivityStatus } from "./watch-observability.ts";
+import {calendarHealthChecks} from './calendar-health.ts';
 
 type ServiceState = "ok" | "warning" | "error" | "unknown";
 
@@ -280,11 +281,22 @@ async function mcpStatus(
   const preparation = startupPreparationSnapshot().tasks[id];
   const names = connector?.tools.length ? connector.tools : bundledToolNames[id] ?? [];
   const toolDetails = names.map(name => toolStatus(id,name,config,usage));
+  const checks:SystemServiceCheck[]=[{name:'host connection',ok:connector?.state==='ready',verified:!!connector}];
+  if(id==='calendar'&&connector?.state==='ready') {
+    try {
+      const bridge=currentMcpBridge();
+      if(!bridge?.calendarStatus)throw new Error('Calendar diagnostics are not supported by this runtime');
+      checks.push(...calendarHealthChecks(await bridge.calendarStatus()));
+    } catch(error) {
+      checks.push({name:'Calendar diagnostics',ok:false,verified:false,detail:errorText(error)});
+    }
+  }
+  const degraded=checks.some(check=>!check.ok);
   return { id: `mcp-${id}`, label,
-    state: connector?.state === 'ready' ? 'ok' : connector?.state === 'error' ? 'error' : 'unknown',
-    detail: connector?.error ?? (connector?.state === 'ready' ? `${connector.tools.length} tools; connected host runtime` : 'Connector is preparing'),
+    state: connector?.state === 'ready' ? (degraded?'warning':'ok') : connector?.state === 'error' ? 'error' : 'unknown',
+    detail: connector?.error ?? (connector?.state === 'ready' ? `${connector.tools.length} tools; connected host runtime${degraded?'; Calendar access checks need attention':''}` : 'Connector is preparing'),
     preparation, tools: toolDetails.length, toolDetails,
-    checks: [{name:'host connection',ok:connector?.state==='ready',verified:!!connector}],
+    checks,
     updatedAt:Date.now() };
 }
 

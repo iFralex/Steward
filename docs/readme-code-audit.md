@@ -313,3 +313,53 @@ cover changed local links, tables and whitespace.
 - [Post-change initial report](benchmarks/2026-10-14-prepared-initial.json).
 - [Reproducible harness](../tools/steward-benchmark.mts).
 - [README results](../README.md#measured-local-benchmarks).
+
+## Calendar connector environment and diagnostics — 2026-10-15
+
+The latest failed Calendar creation supplied the correct stable calendar ID and
+no recurrence, yet reached the duplicate-title AppleScript failure. Inspection
+showed that `packages/mcp-bridge/src/index.ts` constructed `StdioClientTransport`
+without an explicit environment. The SDK inherits only standard OS variables;
+the launcher's `STEWARD_CALENDAR_BRIDGE_DIR` was therefore absent in the Calendar
+child. The failure happened before the backend mutation. Reading calendars after
+granting Full Disk Access did not establish that native writes were available.
+
+The transport now adds explicit per-service allowlists from
+`packages/mcp-bridge/src/environment.ts` and supports `McpServerSpec.env`
+overrides. Calendar receives its bridge/index/journal configuration and embedding
+settings; other services receive their own wiki API, database, embedding, parser,
+train or managed voice settings. Empty and `off` values remain intact. Host
+pairing tokens and provider credentials are not inherited automatically. This
+fix applies to shared bridge callers, including standalone host and CLI use;
+separately launched jobs still load their own environments.
+
+Calendar creation now distinguishes missing bridge configuration
+(`CALENDAR_EVENTKIT_UNAVAILABLE`) from unsupported native recurrence on a
+duplicate-title destination (`CALENDAR_RRULE_UNSUPPORTED`). The Swift bridge
+identifies insufficient native permission as `CALENDAR_FULL_ACCESS_REQUIRED`,
+with guidance for Calendars rather than Full Disk Access. Unique-title AppleScript
+compatibility remains available. Configured native writes never fall back to
+AppleScript after an error or uncertain effect. Identifier-based EventKit
+creation accepts duplicate titles without inventing a recurrence limitation.
+
+The private `steward/calendarStatus` MCP method reports Apple database
+readability, bridge reachability and native authorization independently. Its
+native `status` request works before authorization, does not prompt, and reads
+neither events nor calendar contents. IPC and MCP waits are bounded to 2 s and
+5 s respectively. The System page uses the existing connector, reports failed
+access checks as `warning`, and leaves unavailable/unsupported authorization
+unverified. Full Access does not guarantee that a particular calendar is writable
+or replace the approval gate. These probes add no agent-facing tool.
+
+Validation: **196 host tests and 68 Calendar tests passed**; one opt-in live host
+test remained skipped. Tests launch real MCP subprocesses with synthetic
+configuration to verify environment propagation and isolation, distinguish
+permission/bridge states, and exercise private diagnostics against a simulated
+native bridge. A separate simulated creation checks preservation of `calendarId`.
+Temporary homes, indexes and journals isolate these fixtures from personal data.
+Host, Calendar and MCP bridge TypeScript checks and the native EventKit bridge
+Swift typecheck passed. No live Calendar write or permission request was made.
+
+This revision changes source and documentation; applying it to an existing
+installed application requires rebuilding and reinstalling Steward's launcher
+and services. LLM Wiki does not require recompilation for these changes.

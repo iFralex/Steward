@@ -21,6 +21,8 @@ import { WriteOpsStore } from "@steward/write-ops";
 import { buildEventSearchPage } from "./event-page.ts";
 import { eventForTool } from "./tool-event.ts";
 import { calendarCreateRoute } from './create-route.ts';
+import {CalendarStatusRequestSchema} from '@steward/mcp-bridge/calendar-status';
+import {eventKitBridgeStatus} from './eventkit-client.ts';
 
 let store: AppleStore | null = null;
 let storeError: string | null = null;
@@ -50,6 +52,12 @@ const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const instantDescription = `RFC 3339 date-time with explicit timezone (Z or ±HH:MM). User-facing wall-clock times are in this Mac's ${localTimeZone} timezone; inputs are normalized internally and event outputs include the date-specific local offset.`;
 
 server.setRequestHandler(SearchPreparationRequestSchema, prepareOnce(() => index ? index.vectors.prepare() : Promise.resolve({skipped:"No search index is available"})));
+server.setRequestHandler(CalendarStatusRequestSchema, async()=>{
+  let appleStore:{readable:boolean;error?:string};
+  try {requireStore().listCalendars();appleStore={readable:true};}
+  catch(error){appleStore={readable:false,error:error instanceof Error?error.message:String(error)};}
+  return {appleStore,bridge:await eventKitBridgeStatus()};
+});
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [

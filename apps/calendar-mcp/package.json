@@ -9,6 +9,7 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
+    "@steward/mcp-bridge": "*",
     "@steward/applescript": "*",
     "@steward/embedding": "*",
     "@steward/protocol": "*",

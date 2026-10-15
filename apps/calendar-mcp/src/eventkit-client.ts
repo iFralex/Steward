@@ -4,10 +4,11 @@ import { randomUUID } from "node:crypto";
 import type { CalEvent } from "./types.ts";
 import { parseEventKitRecurrence } from "./rrule.ts";
 import type { CreateArgs, UpdateArgs } from "./applescript.ts";
+import {CalendarAuthorizationSchema,type CalendarDiagnostics} from '@steward/mcp-bridge/calendar-status';
 
 interface BridgeResponse {
   ok: boolean;
-  result?: { uid?: string; event?: CalEvent | null; events?: CalEvent[] };
+  result?: { uid?: string; event?: CalEvent | null; events?: CalEvent[]; authorization?:string };
   error?: string;
   outcomeUnknown?: boolean;
 }
@@ -83,6 +84,17 @@ export async function deleteEventKit(uid: string, scope: "thisEvent" | "futureEv
 
 export async function pingEventKitBridge(timeoutMs = 3_000): Promise<boolean> {
   try { await callBridge("ping", {}, timeoutMs); return true; } catch { return false; }
+}
+
+export async function eventKitBridgeStatus(timeoutMs=2_000):Promise<CalendarDiagnostics['bridge']> {
+  if(!eventKitBridgeAvailable())return {configured:false,reachable:false,error:'EventKit bridge is not configured in the Calendar connector. Check launcher-to-connector configuration.'};
+  try {
+    const response=await callBridge('status',{},timeoutMs);
+    const authorization=CalendarAuthorizationSchema.parse(response.authorization);
+    return {configured:true,reachable:true,authorization};
+  } catch(error) {
+    return {configured:true,reachable:false,error:error instanceof Error?error.message:String(error)};
+  }
 }
 
 export async function searchEventKit(params: { start: string; end: string; account?: string; calendar?: string }): Promise<CalEvent[]> {

@@ -5,6 +5,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { SearchPreparationResultSchema } from '@steward/search';
 import { connectorEnvironment } from './environment.ts';
+import {CalendarStatusResultSchema,type CalendarDiagnostics} from './calendar-status.ts';
 export { connectorEnvironment } from './environment.ts';
 
 export interface McpServerSpec {
@@ -26,6 +27,7 @@ export interface McpBridge {
   connectorStates?():Record<string,ConnectorState>;
   waitForServer?(server:string):Promise<void>;
   prepareSearch?(server:string):Promise<{skipped?:string}>;
+  calendarStatus?():Promise<CalendarDiagnostics>;
   activeCalls?:number;
   firstReady?:Promise<void>;
   settled?:Promise<void>;
@@ -98,6 +100,13 @@ export function startMcpBridge(specs:Record<string,McpServerSpec>):McpBridge {
         if((error as {code?:number}).code===ErrorCode.MethodNotFound)return {skipped:'Connector does not support search preparation'};
         throw error;
       }
+    },
+    calendarStatus:async()=>{
+      const client=clients.get('calendar');
+      if(!client||states.calendar?.state!=='ready')throw new Error('Calendar connector is not ready');
+      activeCalls++;
+      try {return await client.request({method:'steward/calendarStatus'},CalendarStatusResultSchema,{timeout:5_000});}
+      finally {activeCalls--;}
     },
     close:async()=>{
       closed=true;

@@ -22,6 +22,20 @@ presence selects bridge-capable dispatch; it is not a liveness probe. A failed
 bridge write is returned to reconciliation, never blindly retried through
 AppleScript after an uncertain native effect.
 
+The host's MCP bridge forwards this variable explicitly through its per-service
+environment allowlist, together with Calendar index/journal paths and shared
+embedding settings. The SDK's default stdio environment alone does not inherit
+these application settings.
+
+System diagnostics call the private `steward/calendarStatus` method on the running
+connector; it is not advertised as an agent tool. It probes database readability
+and uses the native `status` IPC method to report bridge reachability and Calendar
+authorization separately. `status` works without Full Access, does not prompt or
+read events, and waits up to 2 s (the host bounds the whole request to 5 s).
+Missing/unresponsive/older bridges leave authorization unverified. A ready MCP
+catalog is not proof of write access; failed access checks produce a System-page
+warning. Full Access still does not make a read-only calendar writable.
+
 ## CLI and index
 
 From the monorepo root:
@@ -89,6 +103,13 @@ that ID and rejects duplicate titles: Calendar's scripting identifier selector
 is unreliable on current macOS. Update/delete resolve known old UIDs before
 backend dispatch.
 
+Duplicate-title compatibility failures distinguish `CALENDAR_EVENTKIT_UNAVAILABLE`
+(bridge configuration missing) from `CALENDAR_RRULE_UNSUPPORTED` (native recurrence
+representation unavailable). The former can occur for a nonrecurring event and
+must not be described as a recurrence error. Native permission failures use
+`CALENDAR_FULL_ACCESS_REQUIRED`; they require the Calendars permission rather than
+Full Disk Access. All three reject before executing the mutation.
+
 EventKit supports `scope: thisEvent` (default) or `futureEvents`; recurring
 updates/deletes require an explicit `occurrenceStart`. AppleScript updates reject
 recurring targets and `futureEvents`; compatibility deletion rejects future scope. Create/update choose EventKit
@@ -109,7 +130,8 @@ The default IPC root is
 UUID request JSON is published by rename; Swift polls every 100 ms and claims it
 by moving it to `processing/`. Node polls responses every 50 ms for up to 30 s
 and removes the consumed response. Swift serializes operations and commits via
-EventKit. It checks Full Access before executing, including `ping`.
+EventKit. It checks Full Access before executing, including `ping`; the read-only
+`status` authorization probe is the exception and returns no calendar contents.
 
 Restarted processing requests get `outcomeUnknown` without replay. Requests
 carry an expiry checked before execution. On timeout an unclaimed request is

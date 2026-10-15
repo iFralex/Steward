@@ -448,6 +448,17 @@ services. `GET /system/status` builds one bounded snapshot in parallel from:
   plus queued/running/completed search preparation. Diagnostics do not spawn
   duplicate connectors or trigger Mail AppleScript smoke calls.
 
+Calendar additionally uses the private `steward/calendarStatus` request on its
+existing MCP connection. It independently checks a read of the Apple Calendar
+database, whether the launcher EventKit bridge responds, and native Calendar
+authorization (`notDetermined`, `restricted`, `denied`, `writeOnly`, `fullAccess`
+or `unknown`). The native `status` operation works before Full Access is granted;
+it never prompts, reads event contents or performs a write. Its IPC wait is bounded
+to 2 s, inside a 5 s MCP request deadline. Missing/unresponsive/older bridges leave
+authorization unverified. A connected Calendar catalog with failed access checks
+is shown as `warning`, rather than implying write availability. Full Access does
+not make every calendar writable or bypass the approval gate.
+
 Each MCP tool is shown with its fully qualified name, source, scope
 (`chat`/`call`/`watch`/`all`), current deterministic policy decision, call/error
 totals and most recent result from the Usage ledger. The live catalog is
@@ -1137,6 +1148,13 @@ host without that environment uses AppleScript. A configured but unresponsive
 bridge is an error, not permission to switch backends and repeat an uncertain
 write.
 
+The host's MCP transport explicitly forwards per-connector configuration through
+`packages/mcp-bridge/src/environment.ts`; the SDK's default environment does not
+inherit application variables. Calendar receives its bridge directory, index path,
+write-journal path and embedding configuration, including disabled settings. Host
+pairing/provider credentials are not inherited automatically. Explicit
+`McpServerSpec.env` values override the allowlist.
+
 ```mermaid
 sequenceDiagram
     participant Gate as Host Approval Gate
@@ -1180,6 +1198,14 @@ operation already running.
 | Create | Available bridge and representable recurrence; select calendar by stable `calendarId`. | Without a usable representation or configured bridge, resolve the ID and require a unique calendar title before AppleScript creation. Duplicate titles fail. |
 | Update | Available bridge and representable recurrence; resolve historical UID aliases before dispatch. `scope` selects `thisEvent` or `futureEvents`. | Nonrecurring updates by UID only; recurring updates and `futureEvents` fail before dispatch when EventKit cannot be used. |
 | Delete | Available bridge; `thisEvent` default or `futureEvents`. Result reports `pending_confirmation`. | `thisEvent` only; `futureEvents` is explicitly rejected. |
+
+For duplicate-title creation, `CALENDAR_EVENTKIT_UNAVAILABLE` identifies missing
+bridge configuration, while `CALENDAR_RRULE_UNSUPPORTED` identifies a configured
+bridge whose native RRULE subset cannot represent the request. Neither error
+executes a write. `CALENDAR_FULL_ACCESS_REQUIRED` is returned by the native bridge
+before mutation when Calendar authorization is insufficient; it is separate from
+Full Disk Access needed for SQLite reads. A nonrecurring event with a valid
+`calendarId` can use EventKit even when another calendar has the same title.
 
 The RRULE parser accepts `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`, `INTERVAL`,
 `COUNT` or `UNTIL`, `BYDAY` (including ordinals), `BYMONTHDAY`, `BYMONTH`,
