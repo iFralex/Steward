@@ -52,6 +52,16 @@ values. Copy [the example](.env.example) for host overrides. The packaged
 launcher reads `~/Library/Application Support/Steward/config.env` and passes
 settings to its children; a standalone host does not load that file itself.
 
+MCP children receive the SDK's standard OS environment plus explicit per-service
+allowlists in `packages/mcp-bridge/src/environment.ts`. These forward connector
+database paths, relevant embedding settings (including empty/`off` values), the
+Calendar EventKit bridge directory, wiki API settings and managed voice launcher
+settings. `McpServerSpec.env` supplies explicit overrides. The host pairing token
+and provider credentials are not inherited automatically; gateway/wiki credentials
+go only to the services that use them. Adding a connector setting requires updating
+its allowlist. Separately launched scheduler/CLI jobs retain their own environment
+loading rules.
+
 | Setting | Default / meaning |
 |---|---|
 | `HOST_PORT` | `4317`, HTTP listener on `127.0.0.1`. |

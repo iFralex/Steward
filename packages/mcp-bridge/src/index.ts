@@ -4,11 +4,15 @@ import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { SearchPreparationResultSchema } from '@steward/search';
+import { connectorEnvironment } from './environment.ts';
+export { connectorEnvironment } from './environment.ts';
 
 export interface McpServerSpec {
   command:string;
   args:string[];
   callTimeoutMs?:number;
+  /** Explicit connector-specific overrides, applied after Steward's allowlist. */
+  env?:Record<string,string>;
 }
 export interface ConnectorState {
   state:'connecting'|'ready'|'error'|'closed';
@@ -58,7 +62,8 @@ export function startMcpBridge(specs:Record<string,McpServerSpec>):McpBridge {
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(new Error('Connector startup timed out')),10_000);
       try {
-        await client.connect(new StdioClientTransport({command:spec.command,args:spec.args}),{signal:controller.signal});
+        await client.connect(new StdioClientTransport({command:spec.command,args:spec.args,
+          env:{...connectorEnvironment(server),...spec.env}}),{signal:controller.signal});
         const result=await client.listTools(undefined,{signal:controller.signal});
         if(closed)return;
         for(const tool of result.tools) {
