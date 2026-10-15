@@ -94,16 +94,23 @@ async function documentFixture(caseName: string, directory: string) {
   const line='Generic project planning and document retrieval. benchmarktarget marks a synthetic fact.\n';
   const path=join(directory,'synthetic.txt');writeFileSync(path,line.repeat(Math.ceil(size/line.length)).slice(0,size));return path;
 }
-async function measure(run:()=>Promise<Observation>|Observation, repetitions:number, warmup?:()=>Promise<unknown>|unknown) {
+async function measure(run:()=>Promise<Observation>|Observation, repetitions:number, warmup?:()=>Promise<unknown>|unknown, observeLoop=false) {
+  const preparationStart=performance.now();
   await warmup?.();
+  const preparationMs=warmup?performance.now()-preparationStart:undefined;
   const samples:number[]=[],counts:number[]=[];let detail:Observation={count:0};
+  let firstEventLoop: {intervalMs:number;ticks:number;maxGapMs:number}|undefined;
   for(let i=0;i<repetitions;i++) {
-    const start=performance.now();detail=await run();samples.push(performance.now()-start);counts.push(detail.count);
+    const start=performance.now();let last=start,ticks=0,maxGapMs=0;
+    const timer=observeLoop&&i===0?setInterval(()=>{const now=performance.now();maxGapMs=Math.max(maxGapMs,now-last);last=now;ticks++;},10):undefined;
+    try {detail=await run();samples.push(performance.now()-start);counts.push(detail.count);}
+    finally {if(timer){clearInterval(timer);firstEventLoop={intervalMs:10,ticks,maxGapMs:Math.max(maxGapMs,performance.now()-last)};}}
   }
-  return {...summarize(samples), count:detail.count, counts, ...Object.fromEntries(Object.entries(detail).filter(([key])=>key!=='count'))};
+  return {...summarize(samples), preparationMs, firstEventLoop, count:detail.count, counts, ...Object.fromEntries(Object.entries(detail).filter(([key])=>key!=='count'))};
 }
 async function child(caseName:string, working:string) {
   let db:Database.Database|undefined;
+  let mailStore:Store|undefined;
   try {
     if(caseName==='gateway.embed')return await measure(async()=>({count:(await embed()).length}),EMBED_SAMPLES);
     if(caseName.startsWith('documents.')) {
@@ -124,7 +131,7 @@ async function child(caseName:string, working:string) {
     db=readonly(paths[kind]);
     const count=(sql:string,...params:unknown[])=>({count:db!.prepare(sql).all(...params).length});
     if(kind==='mail') {
-      const store=new Store(db,{readonly:true});
+      const store=mailStore=new Store(db,{readonly:true});
       if(caseName==='mail.fts')return await measure(()=>count('SELECT m.message_id FROM messages_fts f JOIN messages m ON m.rowid=f.rowid WHERE messages_fts MATCH ? AND m.deleted=0 ORDER BY rank LIMIT 50',`"${QUERY}"`),SQL_SAMPLES);
       if(caseName==='mail.trigram.subject'||caseName==='mail.trigram.body') {
         const field=caseName.endsWith('subject')?'subject':'body_text';
@@ -135,14 +142,17 @@ async function child(caseName:string, working:string) {
       if(caseName==='mail.negative.like')return await measure(()=>count('SELECT message_id FROM messages WHERE body_text LIKE ? LIMIT 1',`%${ABSENT}%`),SQL_SAMPLES);
       if(caseName==='mail.lexical')return await measure(async()=>({count:(await searchDb(store,{query:QUERY,limit:12,perMessage:true})).length}),SQL_SAMPLES);
       if(caseName==='mail.substring')return await measure(async()=>({count:(await searchDb(store,{bodyContains:QUERY,limit:12,perMessage:true})).length}),SQL_SAMPLES);
-      if(caseName==='mail.knn'||caseName==='mail.hybrid'||caseName==='mail.hybrid.cached-vector') {
+      if(caseName.startsWith('mail.knn')||caseName==='mail.hybrid'||caseName==='mail.hybrid.cached-vector'||caseName==='mail.hybrid.unprepared.cached-vector') {
         assert.ok(store.enableVectors(),'sqlite-vec is unavailable');
         const vector=JSON.parse(readFileSync(join(working,'query-vector.json'),'utf8')) as number[];
         assert.equal(vector.length,Number(store.getState('vec_dim')),'Query/index dimension mismatch');
-        if(caseName==='mail.knn')return await measure(()=>({count:store.knn(vector,50).length}),SQL_SAMPLES);
+        if(caseName==='mail.knn')return await measure(()=>({count:store.knn(vector,50).length}),SQL_SAMPLES,undefined,true);
+        if(caseName.startsWith('mail.knn.worker.'))return await measure(async()=>({count:(await store.knnAsync(vector,50)).length}),SQL_SAMPLES,
+          caseName.endsWith('.prepared')?()=>store.prepareSearch():undefined,true);
         // Isolate query embedding cost from the same production retrieval path.
         const queryEmbed=caseName.endsWith('cached-vector')?async()=>vector:embed;
-        return await measure(async()=>({count:(await searchDb(store,{query:QUERY,limit:12,perMessage:true},queryEmbed)).length}),caseName.endsWith('cached-vector')?SQL_SAMPLES:EMBED_SAMPLES,()=>store.knnAsync(vector,50));
+        return await measure(async()=>({count:(await searchDb(store,{query:QUERY,limit:12,perMessage:true},queryEmbed)).length}),caseName.endsWith('cached-vector')?SQL_SAMPLES:EMBED_SAMPLES,
+          caseName.includes('.unprepared.')?undefined:()=>store.prepareSearch());
       }
     } else {
       const table=kind==='calendar'?'events':'contacts', limit=kind==='calendar'?500:200;
@@ -159,7 +169,7 @@ async function child(caseName:string, working:string) {
       }
     }
     throw new Error(`Unknown benchmark case: ${caseName}`);
-  } finally {db?.close();clearDocumentCache();}
+  } finally {if(mailStore)mailStore.close();else db?.close();clearDocumentCache();}
 }
 function dataset(kind:keyof typeof paths) {
   if(!existsSync(paths[kind]))return {available:false};
@@ -216,7 +226,7 @@ async function main() {
       // Only fixed generic text reaches the local model. Query vectors stay temporary.
       writeFileSync(join(workspace,'query-vector.json'),JSON.stringify(await embed()),{mode:0o600});
       cases.unshift('gateway.embed');
-      if(existsSync(paths.mail))cases.push('mail.knn','mail.hybrid.cached-vector','mail.hybrid');
+      if(existsSync(paths.mail))cases.push('mail.knn','mail.knn.worker.unprepared','mail.knn.worker.prepared','mail.hybrid.unprepared.cached-vector','mail.hybrid.cached-vector','mail.hybrid');
       for(const kind of ['calendar','contacts'] as const)if(existsSync(paths[kind]))cases.push(`${kind}.knn`);
     }
     if(!documentsOnly&&existsSync(paths.contacts))cases.push('contacts.fts.match');
@@ -229,13 +239,15 @@ async function main() {
         results[name]=JSON.parse(stdout.trim());
       } catch(error) {failures[name]=(error as Error).message.split('\n')[0];console.error(`Failed: ${name}`);}
     }
-    const report={version:1,benchmarkSha256:createHash('sha256').update(readFileSync(script)).digest('hex'),startedAt:started,finishedAt:new Date().toISOString(),revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),
+    const report={version:2,benchmarkSha256:createHash('sha256').update(readFileSync(script)).digest('hex'),startedAt:started,finishedAt:new Date().toISOString(),revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),
       system:{cpu:cpus()[0]?.model,memoryBytes:totalmem(),arch:process.arch,node:process.version,platform:platform(),kernel:release(),
         osVersion:platform()==='darwin'?execFileSync('sw_vers',['-productVersion'],{encoding:'utf8'}).trim():undefined},
       method:{sqlSamples:SQL_SAMPLES,documentExtractionSamples:DOCUMENT_SAMPLES,embeddingSamples:EMBED_SAMPLES,
         first:'First timed operation in a fresh child process; OS page cache is not flushed; process/import/connect overhead excluded.',
         warmP95:'Nearest-rank empirical p95 of samples after the first; 10-sample extraction/embedding tails are descriptive only.',
         queries:{mail:QUERY,calendar:'meeting',contactsMiss:'university',contactsMatch:'università',absent:ABSENT},
+        preparation:'Prepared worker/hybrid cases await production Store.prepareSearch(); preparationMs is reported separately. Unprepared cases include worker startup in the first timed query. Raw mail.knn remains synchronous for comparison.',
+        responsiveness:'Mail KNN first-operation heartbeat uses a 10 ms interval; ticks and maximum observed gap include the final partial interval, exclude preparation, and are descriptive rather than an event-loop percentile.',
         localEmbeddings:full&&!documentsOnly,modelPriming:'When local embeddings are enabled, an untimed generic embedding validates the query vector before measured cases; no model-cold claim.',documents:'Disposable synthetic files; semantic case uses fixed synthetic vectors and does not measure model latency or relevance.',
         privacy:'Read-only/query-only databases; output contains counts/times only. Local gateway requests add benchmark/readonly-embedding usage records.',
         concurrency:'Existing background services were not stopped. Each case is sequential, with one fresh process per case; no forced OS-cold claim.'},

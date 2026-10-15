@@ -2015,23 +2015,27 @@ ordinary interactive work can still overlap an already-running preparation.
 
 ### Measured Local Benchmarks
 
-Rerun on **2026-10-14**, after the audit fixes, using
-[`tools/steward-benchmark.mts`](tools/steward-benchmark.mts). The repeat pass below
-completed **26 cases without errors**; an initial 25-case pass established the
-same workload before adding a positive Contacts query. Both reports retain every
-timing sample and aggregate result count:
+Rerun on **2026-10-14**, after persistent vector workers and startup preparation,
+using [`tools/steward-benchmark.mts`](tools/steward-benchmark.mts). The expanded
+suite adds prepared/unprepared production worker queries and unprepared hybrid
+retrieval. Reports retain every timing sample, aggregate result count, measured
+preparation cost and first-query heartbeat observations. Both post-change passes
+completed **29 cases without errors**:
 
-- [Repeat pass, used in the tables](docs/benchmarks/2026-10-14.json).
-- [Initial pass, retained for startup variability](docs/benchmarks/2026-10-14-initial.json).
+- [Post-change repeat pass, used in the tables](docs/benchmarks/2026-10-14-prepared.json).
+- [Post-change initial pass](docs/benchmarks/2026-10-14-prepared-initial.json).
+- [Pre-change repeat pass](docs/benchmarks/2026-10-14.json).
+- [Pre-change initial pass](docs/benchmarks/2026-10-14-initial.json).
 - [Historical 2026-08-19 measurements](docs/benchmarks/2026-08-19.md).
 
 #### Method And Reproduction
 
 The system was an Apple M4 with 16 GiB RAM, arm64, macOS 26.3.1 and Node
-24.13.0. The measured repository revision was `a5cc1c3`; the benchmark
-harness is introduced with these results. Existing packaged services and Ollama
-`bge-m3` stayed running. The gateway was measured as that already-running local
-service, not rebuilt or redeployed for the run.
+24.13.0. The measured application revision was `295e614`; the report also hashes
+the expanded harness used for this run. The updated installed Steward services
+and Ollama `bge-m3` stayed running. The gateway was measured as that already-running
+local service. The harness runs current repository search code against existing
+indexes; it does not send search requests through the app UI.
 
 ```sh
 # SQLite/search plus disposable synthetic document fixtures; no model requests:
@@ -2061,14 +2065,19 @@ subsequent samples. Median excludes the first; p95 uses the nearest-rank empiric
 percentile. With only ten subsequent observations, p95 is the maximum observed
 sample and is descriptive, not a reliable production-tail estimate.
 
-“First query” excludes child bootstrap, module imports, database connection and
-extension loading. The OS page cache is **not flushed**, and background services
+“First query” excludes child bootstrap, module imports, and the calling process's
+database connection/extension loading. Worker startup is included only in
+unprepared worker cases. The OS page cache is **not flushed**, and background services
 are not paused; it is not a disk-cold or full MCP startup measurement. The local
-embedding model is primed by one untimed generic-vector check. Hybrid cases
-explicitly warm KNN before timing to represent an established connector process.
-These recorded measurements predate automatic startup preparation and asynchronous
-vector workers; they remain a baseline, not measured post-change startup latency.
-The current harness warms the asynchronous retrieval connection for new hybrid runs.
+embedding model is primed by one untimed generic-vector check. Prepared worker
+and hybrid cases await the production `Store.prepareSearch()` method before timing
+and report that preparation separately. It starts the persistent read-only worker,
+runs a zero-vector query and warms bounded lexical pages. Unprepared cases include
+worker startup in their first timed query; subsequent samples reuse that worker.
+Raw synchronous KNN remains a diagnostic comparison. Cases run in a fixed order,
+without flushing shared OS caches, so this is not a randomized causal experiment.
+Neither pass measures launcher-to-ready time, eager MCP discovery, the startup
+coordinator's scheduling delay or the first request to an unloaded model.
 Text queries are fixed: Mail `project`, Calendar `meeting`, Contacts `università`
 and an absent `university` control. Archive counts are sampled after each pass,
 not frozen in a transaction across all cases.
@@ -2077,8 +2086,8 @@ not frozen in a transaction across all cases.
 
 | Index | Main SQLite file | WAL at sampling | Records | Embedding state / dimension |
 |---|---:|---:|---:|---:|
-| Mail mirror | 3.73 GiB | 4.60 MiB | 78,024 active messages; 45,150 thread rows; 13,857 attachment rows | 78,432 / 1,024 |
-| Calendar | 13.35 MiB | 4.15 MiB | 694 indexed events | 694 / 1,024 |
+| Mail mirror | 3.73 GiB | 4.60 MiB | 78,020 active messages; 45,151 thread rows; 13,857 attachment rows | 78,433 / 1,024 |
+| Calendar | 13.35 MiB | 0 | 694 indexed events | 694 / 1,024 |
 | Contacts | 4.36 MiB | 0 | 771 normalized contacts | 771 / 1,024 |
 
 Mail has 35,857 active `partial`/`none` bodies
@@ -2090,21 +2099,21 @@ sizes exclude auxiliary files other than the separately reported WAL.
 
 | Operation | Returned | First query | Warm median | Warm p95 |
 |---|---:|---:|---:|---:|
-| Mail FTS5 candidates, cap 50 | 50 | 75.79 ms | **1.13 ms** | 1.17 ms |
-| Mail subject trigram candidates, cap 500 | 412 | 81.13 ms | **2.44 ms** | 2.83 ms |
-| Mail body trigram candidates, cap 500 | 500 | 35.71 ms | **4.83 ms** | 5.08 ms |
-| Mail recent unread IDs, cap 20 | 20 | 54.94 ms | **15.85 ms** | 18.92 ms |
-| Mail lexical search + summaries, cap 12 | 12 | 4.70 ms | **1.51 ms** | 1.63 ms |
-| Mail body substring search + summaries, cap 12 | 12 | 20.87 ms | **12.29 ms** | 14.12 ms |
-| Mail vector KNN, cap 50 | 50 | 8,843.00 ms | **38.49 ms** | 47.15 ms |
-| Gateway `local-embed` (returned dimensions) | 1,024 | 36.77 ms | **18.55 ms** | 21.90 ms |
-| Mail hybrid, precomputed query vector | 12 | 167.77 ms | **40.47 ms** | 48.33 ms |
-| Mail hybrid, fresh local query embedding | 12 | 156.75 ms | **73.17 ms** | 133.20 ms |
-| Calendar FTS5 candidates, cap 500 | 58 | 27.06 ms | **0.065 ms** | 0.086 ms |
-| Calendar vector KNN, cap 500 | 500 | 83.45 ms | **1.80 ms** | 2.06 ms |
-| Contacts FTS5 matching query, cap 200 | 10 | 3.92 ms | **0.032 ms** | 0.040 ms |
-| Contacts FTS5 absent query, cap 200 | 0 | 3.82 ms | **0.017 ms** | 0.024 ms |
-| Contacts vector KNN, cap 200 | 200 | 11.34 ms | **0.669 ms** | 0.759 ms |
+| Mail FTS5 candidates, cap 50 | 50 | 51.76 ms | **1.15 ms** | 1.18 ms |
+| Mail subject trigram candidates, cap 500 | 412 | 80.34 ms | **2.51 ms** | 2.67 ms |
+| Mail body trigram candidates, cap 500 | 500 | 55.77 ms | **4.86 ms** | 5.13 ms |
+| Mail recent unread IDs, cap 20 | 20 | 6,425.12 ms | **15.04 ms** | 16.32 ms |
+| Mail lexical search + summaries, cap 12 | 12 | 7.74 ms | **1.53 ms** | 1.63 ms |
+| Mail body substring search + summaries, cap 12 | 12 | 55.70 ms | **12.56 ms** | 13.95 ms |
+| Mail synchronous vector KNN, cap 50 | 50 | 7,983.43 ms | **38.68 ms** | 55.84 ms |
+| Gateway `local-embed` (returned dimensions) | 1,024 | 39.06 ms | **21.29 ms** | 44.35 ms |
+| Mail prepared hybrid, precomputed query vector | 12 | 47.63 ms | **40.95 ms** | 47.00 ms |
+| Mail prepared hybrid, fresh local query embedding | 12 | 166.50 ms | **72.50 ms** | 90.51 ms |
+| Calendar FTS5 candidates, cap 500 | 58 | 22.42 ms | **0.057 ms** | 0.071 ms |
+| Calendar vector KNN, cap 500 | 500 | 79.27 ms | **1.79 ms** | 2.16 ms |
+| Contacts FTS5 matching query, cap 200 | 10 | 5.07 ms | **0.027 ms** | 0.035 ms |
+| Contacts FTS5 absent query, cap 200 | 0 | 2.45 ms | **0.017 ms** | 0.023 ms |
+| Contacts vector KNN, cap 200 | 200 | 11.24 ms | **0.67 ms** | 0.69 ms |
 
 Candidate rows measure bounded SQL retrieval without body materialization.
 The lexical/substring/hybrid response rows call the current production `searchDb`
@@ -2114,12 +2123,58 @@ excluding MCP transport, host wrappers and UI rendering. KNN uses a real generic
 that the complete corpus has only that many matches.
 
 The precomputed-vector hybrid case isolates retrieval and fusion from query
-embedding. Its warm median is 40.47 ms versus
-73.17 ms with a fresh local embedding. The separate embedding median is
-18.55 ms; these separately sampled distributions are not additive components
+embedding. Its warm median is 40.95 ms versus
+72.50 ms with a fresh local embedding. The separate embedding median is
+21.29 ms; these separately sampled distributions are not additive components
 of one instrumented request. Both retrieval and model/HTTP work matter at this
 archive size. Calendar/Contacts KNN are raw candidate queries, not full tool calls
 or Calendar recurrence expansion.
+
+#### Preparation And Main-Process Responsiveness
+
+The following cases use the current production Mail store, the same generic
+query vector and a cap of 50. “Prepared” waits for `Store.prepareSearch()` in a
+fresh child before the first measured query. Preparation time is actual work,
+reported separately rather than subtracted from a request that already started.
+The synchronous row is retained to show how blocking work affects the caller.
+
+| Mail KNN path | Preparation | First query | Warm median | Warm p95 | First-query heartbeat ticks | Largest heartbeat gap |
+|---|---:|---:|---:|---:|---:|---:|
+| Synchronous diagnostic | — | 7,983.43 ms | 38.68 ms | 55.84 ms | 0 | 7,983.54 ms |
+| Worker, unprepared | — | 110.60 ms | 38.41 ms | 45.17 ms | 10 | 11.08 ms |
+| Worker, prepared | 95.91 ms | 39.84 ms | 47.86 ms | 649.07 ms | 3 | 11.09 ms |
+
+A 10 ms interval runs on the calling process during the first query, excluding
+preparation. The largest gap includes the final partial interval; it is a
+heartbeat observation, not an event-loop p95 or a UI frame-rate measurement.
+The synchronous query prevents every tick; the worker lets the caller keep
+processing timers while native SQLite work runs on another thread. The worker
+also configures a read-only connection with a 2 GiB mmap ceiling and 64 MiB SQLite
+cache target. Cache state and these settings also affect timings, so the large
+synchronous/worker difference cannot be attributed to thread isolation alone.
+
+| First-query comparison | Initial pass | Repeat pass |
+|---|---:|---:|
+| Worker KNN, unprepared | 176.29 ms | 110.60 ms |
+| Worker KNN, prepared | 40.07 ms | 39.84 ms |
+| Hybrid, unprepared precomputed vector | 101.97 ms | 245.57 ms |
+| Hybrid, prepared precomputed vector | 47.25 ms | 47.63 ms |
+
+Worker KNN preparation took 90.56–95.91 ms across these passes.
+Prepared first KNN queries stayed around 40 ms; prepared first hybrid queries
+with a precomputed vector stayed around 47–48 ms. Their unprepared counterparts
+include worker setup and vary more. This demonstrates moving setup work ahead
+of the interactive request when preparation has completed, rather than eliminating
+that work. The repeat prepared KNN warm p95 was 649.07 ms, versus
+40.12 ms initially: preparation does not guarantee low tail latency under
+shared-machine load. The prepared hybrid case with a fresh embedding still takes
+166.50 ms on its first query and has a 72.50 ms warm median.
+
+The already-running app and model can warm shared filesystem/model caches, but
+each benchmark child has its own connector store and worker. Automatic startup
+preparation itself is not timed through the launcher or MCP transport. These
+results quantify the query path and preparation mechanism, without claiming an
+end-to-end improvement for every app startup or every model state.
 
 #### Negative Lookup And First-Query Variability
 
@@ -2128,27 +2183,27 @@ returned zero rows on every sample:
 
 | Operation | Returned | First query | Warm median | Warm p95 |
 |---|---:|---:|---:|---:|
-| Absent body substring, trigram | 0 | 217.60 ms | **1.88 ms** | 2.03 ms |
-| Absent body substring, `LIKE` scan | 0 | 653.35 ms | **326.15 ms** | 549.08 ms |
+| Absent body substring, trigram | 0 | 240.81 ms | **1.79 ms** | 2.15 ms |
+| Absent body substring, `LIKE` scan | 0 | 6,616.37 ms | **327.55 ms** | 553.08 ms |
 
 The warm median `LIKE` scan was about
-173× the trigram lookup for this absent query. This
+183× the trigram lookup for this absent query. This
 is the case where an unindexed scan cannot stop at an early positive match;
 it is not a universal speedup for all substrings.
 
-| First operation in a new process | Initial pass | Repeat pass |
-|---|---:|---:|
-| Recent unread IDs | 10,770.32 ms | 54.94 ms |
-| Absent `LIKE` scan | 17,162.81 ms | 653.35 ms |
-| Mail vector KNN | 8,057.89 ms | 8,843.00 ms |
+| First operation in a new process | Pre-change initial | Pre-change repeat | Post-change initial | Post-change repeat |
+|---|---:|---:|---:|---:|
+| Recent unread IDs | 10,770.32 ms | 54.94 ms | 4,746.95 ms | 6,425.12 ms |
+| Absent `LIKE` scan | 17,162.81 ms | 653.35 ms | 11,497.20 ms | 6,616.37 ms |
+| Synchronous Mail vector KNN | 8,057.89 ms | 8,843.00 ms | 7,590.36 ms | 7,983.43 ms |
 
-A new process does not imply a cold filesystem cache: the unread and negative
-scan first samples varied sharply between passes, while Mail KNN still incurred
-roughly eight seconds on its first timed query. Warm KNN medians were about
-38.49 ms in both passes. The measurements support persistent connectors and
-bounded indexed retrieval, while leaving OS cache, memory pressure and background
-activity as uncontrolled factors. They do not isolate the precise cause of every
-first-query stall or establish a performance regression against August.
+A new process does not imply a cold filesystem cache. Unread and negative scan
+first samples vary sharply, while synchronous Mail KNN still takes roughly eight
+seconds on its first timed query. Its warm median remains about 39 ms. These
+raw diagnostic paths have not been replaced by the benchmark; production Mail
+hybrid retrieval uses the persistent worker. OS cache, memory pressure and
+background activity remain uncontrolled. The four passes do not establish a
+controlled regression or speedup against the historical August measurements.
 
 #### Document Extraction, Cache And Search
 
@@ -2162,15 +2217,15 @@ extracted text too and are not file-opening or end-to-end client latency.
 
 | Operation | Returned | First query | Warm median | Warm p95 |
 |---|---:|---:|---:|---:|
-| Uncached text extraction, 100,000 chars | 100,000 | 75.44 ms | **36.40 ms** | 38.03 ms |
-| Uncached text extraction, 2,000,000 chars | 2,000,000 | 41.65 ms | **38.23 ms** | 41.38 ms |
-| Uncached text-layer PDF, 20 pages¹ | 911 | 845.41 ms | **365.42 ms** | 389.04 ms |
-| Uncached PPTX, 20 slides¹ | 44,591 | 106.31 ms | **74.66 ms** | 75.87 ms |
-| Cached extraction lookup, 2,000,000 chars | 2,000,000 | 0.047 ms | **0.021 ms** | 0.030 ms |
-| Read from extracted text, default budget | 6,000 | 0.474 ms | **0.003 ms** | 0.013 ms |
-| Lexical search, 65 chunks | 5 | 6.84 ms | **0.152 ms** | 0.322 ms |
-| Lexical search, 1,284 chunks | 5 | 9.47 ms | **2.62 ms** | 3.45 ms |
-| Fusion, 1,284 chunks / 256 synthetic vectors² | 5 | 10.79 ms | **2.63 ms** | 3.01 ms |
+| Uncached text extraction, 100,000 chars | 100,000 | 37.73 ms | **34.66 ms** | 35.71 ms |
+| Uncached text extraction, 2,000,000 chars | 2,000,000 | 42.10 ms | **36.35 ms** | 39.59 ms |
+| Uncached text-layer PDF, 20 pages¹ | 911 | 865.61 ms | **378.95 ms** | 398.88 ms |
+| Uncached PPTX, 20 slides¹ | 44,591 | 108.78 ms | **78.97 ms** | 82.20 ms |
+| Cached extraction lookup, 2,000,000 chars | 2,000,000 | 0.062 ms | **0.022 ms** | 0.037 ms |
+| Read from extracted text, default budget | 6,000 | 0.65 ms | **0.002 ms** | 0.013 ms |
+| Lexical search, 65 chunks | 5 | 6.42 ms | **0.15 ms** | 0.20 ms |
+| Lexical search, 1,284 chunks | 5 | 8.80 ms | **2.44 ms** | 2.63 ms |
+| Fusion, 1,284 chunks / 256 synthetic vectors² | 5 | 10.36 ms | **2.71 ms** | 3.13 ms |
 
 ¹ The PDF has 6,365 input bytes and yields 911 characters across 20 text-layer
 pages; PPTX has 4,403 compressed input bytes and yields 44,591 characters across

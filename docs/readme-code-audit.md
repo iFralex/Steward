@@ -255,8 +255,61 @@ web/PWA build, benchmark self-checks and compiled vector-worker preparation/quer
 also passed. Live E2E, personal-source mutations, real model preparation,
 installation and deployment were not used for these checks.
 
-The October benchmark samples remain the pre-preparation baseline. The harness
-now primes the asynchronous query connection for future hybrid runs; no historical
-latencies were rewritten or claimed as measured startup improvements. Workers
+The original October benchmark samples remain the pre-preparation baseline. At
+this implementation stage, the harness primed the asynchronous query connection
+for future hybrid runs; no historical latencies were rewritten or claimed as
+measured startup improvements. Workers
 can time out/restart, models can unload and OS caches can evict pages. Preparation
 completion is not a source-permission guarantee or permanent residency promise.
+
+## Post-preparation benchmark rerun — 2026-10-14
+
+Following installation of application revision `295e614`, the user requested
+updated measurements. Two expanded passes completed **29 cases each, without
+errors**, using current repository search code and the already-running local
+gateway/model. The reports preserve the application revision and SHA-256 of the
+expanded benchmark harness. They are separate from the earlier 25/26-case reports;
+historical samples remain unchanged.
+
+The harness now measures the production `Store.prepareSearch()` method separately
+from subsequent queries. Added cases cover unprepared and prepared asynchronous
+Mail KNN, plus hybrid retrieval without preparation. Prepared hybrid cases also
+use that production preparation method instead of an arbitrary preliminary query.
+Stores close their workers explicitly. A 10 ms calling-process heartbeat records
+ticks and maximum gaps during the first synchronous/asynchronous KNN operation,
+excluding preparation and including the final partial interval.
+
+In the repeat pass, unprepared worker KNN took **110.60 ms** on its first query;
+prepared KNN took **39.84 ms** after **95.91 ms** of preparation. The corresponding
+precomputed-vector hybrid first queries took **245.57 ms** and **47.63 ms**;
+hybrid preparation took **101.71 ms**. Initial-pass prepared first queries were
+**40.07 ms** and **47.25 ms**, respectively. This shows setup work moved ahead of
+the measured request when preparation has completed, with its cost still visible.
+
+The synchronous diagnostic first KNN took **7,983.43 ms**, allowing no heartbeat
+ticks. Worker KNN allowed timer ticks, with maximum first-query gaps around
+**11 ms**. The worker's mmap/cache configuration and shared OS caches also affect
+timings; the synchronous/worker difference cannot be attributed to threads alone.
+Prepared worker KNN's repeat warm p95 was **649.07 ms**, versus **40.12 ms** on the
+initial pass. Both are retained: preparation does not guarantee a low tail under
+uncontrolled background load. The benchmark does not identify the outlier's cause.
+
+The README tables, archive counts and interpretation now use the post-change
+repeat report. It explicitly separates query-path measurements from launcher
+startup, eager connector discovery, coordinator scheduling and unloaded-model
+latency, none of which these passes time end to end. The order is fixed, each
+case has a fresh child process, and shared filesystem caches are not flushed.
+The app remains running; archive counts are sampled rather than transactionally
+frozen. SQLite access remains read-only/query-only, fixtures are synthetic, and
+model requests contain only fixed generic text. The local gateway adds ordinary
+benchmark Usage records; no personal source mutation or rescan is requested.
+
+Validation: benchmark self-checks and standalone harness TypeScript checking
+passed. Report checks verify case/sample counts, finite timings, stored summary
+statistics, read-only dataset flags and the harness hash. Documentation checks
+cover changed local links, tables and whitespace.
+
+- [Post-change repeat report](benchmarks/2026-10-14-prepared.json).
+- [Post-change initial report](benchmarks/2026-10-14-prepared-initial.json).
+- [Reproducible harness](../tools/steward-benchmark.mts).
+- [README results](../README.md#measured-local-benchmarks).
