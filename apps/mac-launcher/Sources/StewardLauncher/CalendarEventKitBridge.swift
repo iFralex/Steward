@@ -100,7 +100,7 @@ final class CalendarEventKitBridge {
 
     private func execute(_ request: [String: Any]) throws -> [String: Any] {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
-            throw BridgeError("Calendar full access is not granted. Allow Steward in System Settings → Privacy & Security → Calendars.")
+            throw BridgeError("[CALENDAR_FULL_ACCESS_REQUIRED] Calendar full access is not granted. Allow Steward in System Settings → Privacy & Security → Calendars. Full Disk Access is a separate permission. No write was executed.")
         }
         guard let method = request["method"] as? String else { throw BridgeError("Missing Calendar bridge method") }
         if let expiry = request["expiresAtMs"] as? NSNumber,

@@ -20,6 +20,7 @@ import { applePath, indexDbPath } from "./paths.ts";
 import { WriteOpsStore } from "@steward/write-ops";
 import { buildEventSearchPage } from "./event-page.ts";
 import { eventForTool } from "./tool-event.ts";
+import { calendarCreateRoute } from './create-route.ts';
 
 let store: AppleStore | null = null;
 let storeError: string | null = null;
@@ -151,21 +152,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           expected: args as unknown as Record<string, unknown>,
         });
         try {
-          const useEventKit = eventKitBridgeAvailable() && eventKitCanRepresent(args.recurrence);
+          const route = calendarCreateRoute(args, () => requireStore().listCalendars(), eventKitBridgeAvailable());
           let uid: string;
-          if (useEventKit) {
+          if (route.kind === 'eventkit') {
             uid = await createEventKit(args);
           } else {
-            const calendars = requireStore().listCalendars();
-            const selected = calendars.find((calendar) => calendar.id === args.calendarId);
-            if (!selected) throw new Error(`Calendar id "${args.calendarId}" was not found`);
-            if (calendars.filter((calendar) => calendar.title === selected.title).length !== 1) {
-              throw new Error(`Calendar "${selected.title}" is not unique, and this recurrence cannot be represented by EventKit safely`);
-            }
             // Calendar.app exposes calendarIdentifier in its scripting
             // dictionary but returns -10000 for it on current macOS. The
             // compatibility path can therefore select only a unique title.
-            uid = await createEvent({ ...args, calendar: selected.title, calendarId: undefined });
+            uid = await createEvent({ ...args, calendar: route.calendar, calendarId: undefined });
           }
           writeOps.scriptReturned(operationId, { uid });
           return ok({ uid, operationId });

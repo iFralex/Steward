@@ -23,7 +23,7 @@ export function eventKitCanRepresent(recurrence: string | undefined): boolean {
 
 async function callBridge(method: string, params: Record<string, unknown>, timeoutMs = 30_000): Promise<NonNullable<BridgeResponse["result"]>> {
   const root = process.env.STEWARD_CALENDAR_BRIDGE_DIR;
-  if (!root) throw new Error("Steward Calendar EventKit bridge is not available");
+  if (!root) throw new Error("[CALENDAR_EVENTKIT_UNAVAILABLE] Steward Calendar EventKit bridge is not configured in this connector. Check launcher-to-connector configuration.");
   const requests = join(root, "requests");
   const responses = join(root, "responses");
   await mkdir(requests, { recursive: true, mode: 0o700 });
