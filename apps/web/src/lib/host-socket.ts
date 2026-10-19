@@ -105,6 +105,7 @@ export interface HostSocket {
   markAction: (id: number, status: ActionStatus) => void;
   executeProposal: (id: number, proposalId: string) => void;
   reviseProposal: (id: number, proposalId: string, instruction: string) => void;
+  touchApproval: (requestId: string) => void;
   respondApproval: (
     requestId: string,
     decision: ApprovalDecision,
@@ -405,6 +406,10 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
     [send],
   );
 
+  const touchApproval = useCallback((requestId: string) => {
+    send({ type: "approval_activity", sessionId: sessionRef.current, requestId });
+  }, [send]);
+
   const respondApproval = useCallback(
     (
       requestId: string,
@@ -465,7 +470,7 @@ export function useHostSocket(url: string, token: string | null, onUnauthorized:
     [questions, activeChatId],
   );
 
-  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, historyLoading, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, transcribeAudio, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, respondApproval };
+  return { connected, state, messages, approvals: visibleApprovals, questions: visibleQuestions, usage, actionCenter, chats, activeChatId, historyLoading, createChat, selectChat, renameChat, deleteChat, saveChat, openActionChat, uploadFile, transcribeAudio, sendMessage, stop, respondQuestion, openFile, revealFile, resolveFile, registerPath, refreshActions, markAction, executeProposal, reviseProposal, touchApproval, respondApproval };
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {

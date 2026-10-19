@@ -307,7 +307,7 @@ export function loadConfig(): HostConfig {
     port: Number(process.env.HOST_PORT ?? 4317),
     systemPrompt: [process.env.HOST_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT, voicePrompt].filter(Boolean).join(" "),
     policy: defaultPolicy,
-    approvalTimeoutMs: Number(process.env.APPROVAL_TIMEOUT_MS ?? 5 * 60_000),
+    approvalTimeoutMs: Number(process.env.APPROVAL_TIMEOUT_MS ?? 10 * 60_000),
     authToken: loadAuthToken(),
     vapid,
     gateway: {

@@ -7,6 +7,48 @@ type QReq = Extract<ServerEvent, { type: "question_request" }>;
 type AReq = Extract<ServerEvent, { type: "approval_request" }>;
 const firstQuestion = (events: ServerEvent[]) => events.find((e) => e.type === "question_request") as QReq | undefined;
 
+test("editing renews approval inactivity without affecting other requests", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const events: ServerEvent[] = [];
+  const s = new Session((e) => events.push(e), 600_000);
+  let resolved = false;
+  const pending = s.requestApproval({ tool: "send_email", input: { body: "original" } });
+  void pending.then(() => { resolved = true; });
+  const other = s.requestApproval({ tool: "create_event", input: {} });
+  const requests = events.filter((e) => e.type === "approval_request") as AReq[];
+  t.mock.timers.tick(540_000);
+  assert.equal(s.touchApproval(requests[0].requestId), true);
+  t.mock.timers.tick(60_000);
+  assert.equal((await other).failureKind, "timeout");
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  t.mock.timers.tick(539_999);
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  t.mock.timers.tick(1);
+  assert.equal((await pending).failureKind, "timeout");
+  assert.equal(s.touchApproval(requests[0].requestId), false);
+  assert.equal(s.resolveApproval(requests[0].requestId, { decision: "allow" }), false);
+});
+
+test("renewed approval executes edited input only after an explicit decision", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const events: ServerEvent[] = [];
+  const s = new Session((e) => events.push(e), 600_000);
+  const pending = s.requestApproval({ tool: "send_email", input: { body: "original" } });
+  const req = events[0] as AReq;
+  assert.equal(s.touchApproval("unknown"), false);
+  t.mock.timers.tick(540_000);
+  assert.equal(s.touchApproval(req.requestId), true);
+  t.mock.timers.tick(120_000);
+  const outcome = { decision: "allow" as const, editedInput: { body: "edited" } };
+  assert.equal(s.resolveApproval(req.requestId, outcome), true);
+  assert.deepEqual(await pending, outcome);
+  assert.equal(s.touchApproval(req.requestId), false);
+  t.mock.timers.tick(600_000);
+  assert.equal(s.resolveApproval(req.requestId, outcome), false);
+});
+
 test("approval preview is emitted separately from executable input", async () => {
   const events: ServerEvent[] = [];
   const s = new Session((e) => events.push(e), 60_000);

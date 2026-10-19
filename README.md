@@ -1412,7 +1412,7 @@ The approval card carries the proposed tool and arguments. The user can approve 
 
 Blocked results distinguish explicit rejection from timeout, unrecognized voice intent and channel failure. All prevent execution, but only the explicit rejection is described to the agent as “denied by user”.
 
-Pending approvals live in the chat's `Session` and expire after `APPROVAL_TIMEOUT_MS`. A timeout resolves to denial. The headless `/quick-send` runner has no attached client; if it reaches a gated write, the approval request has nowhere to go and safely times out rather than executing unattended.
+Pending approvals live in the chat's `Session` and expire after `APPROVAL_TIMEOUT_MS` of inactivity (10 minutes by default). Opening an editor, changing a field or JSON arguments, and editing an approval note renew the pending request's timeout. Leaving an editor open without interacting does not renew it, and activity cannot revive an expired request. Closing the editor with Done does not approve or send the action; explicit approval is still required. Editor changes remain local until approval and are not automatically saved as drafts. A timeout resolves to denial. The same configuration sets the timeout for user questions. The headless `/quick-send` runner has no attached client; if it reaches a gated write, the approval request has nowhere to go and safely times out rather than executing unattended.
 
 ### Spoken Approval Is A Host Sub-Protocol
 
@@ -2640,6 +2640,11 @@ npm run package:mac
 open "dist/mac/Steward.app"
 ```
 
+To reuse an existing LLM Wiki app bundle without rebuilding it, run
+`PACKAGE_SKIP_LLM_WIKI_BUILD=1 npm run package:mac`. Packaging looks for an
+existing Tauri bundle in the local build directories, then in the installed
+`/Applications/Steward.app`; it fails if none is available.
+
 The bundle includes:
 
 - Swift launcher;
@@ -2758,7 +2763,7 @@ separately from EventKit access. Logs remain under `~/Library/Logs/Steward/`.
 | `MAIL_CLASSIFY_ENDPOINT` | Mail role classification endpoint; defaults to gateway, set `off` to disable. |
 | `MAIL_PROMOTER_LLM_ENDPOINT` | Full chat-completions endpoint; defaults to `http://127.0.0.1:4000/v1/chat/completions`. |
 | `MAIL_PROMOTER_CONCURRENCY` | Backfill CLI workers, default `10`; direct `runBatch()` default is `8`. |
-| `APPROVAL_TIMEOUT_MS` | Approval timeout for gated actions, default `300000` ms. |
+| `APPROVAL_TIMEOUT_MS` | Approval inactivity timeout for gated actions, default `600000` ms (10 minutes). Opening or editing an approval form renews the timeout; merely leaving it open does not. Also sets the timeout for user questions. |
 | `VITE_HOST_URL` | Build/dev-time web WebSocket URL override; use `ws://127.0.0.1:4317` with Vite. |
 | `LLM_WIKI_API_BASE_URL` / `LLM_WIKI_API_TOKEN` | Independent wiki API endpoint/token for MCP and API clients; default base `http://127.0.0.1:19828`. |
 | `STEWARD_CALENDAR_BRIDGE_DIR` | Private launcher bridge root passed to its child services; setting it alone does not start a bridge. |

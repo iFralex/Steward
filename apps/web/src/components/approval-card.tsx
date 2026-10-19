@@ -178,10 +178,12 @@ function FilesField({ value, onChange, fileApi }: { value: string; onChange: (v:
 export function ApprovalCard({
   approval,
   onDecision,
+  onActivity,
   fileApi,
 }: {
   approval: PendingApproval;
   onDecision: (requestId: string, decision: ApprovalDecision, note?: string, editedInput?: Record<string, unknown>) => void;
+  onActivity: (requestId: string) => void;
   fileApi: FileApi;
 }) {
   const { t } = useTranslation();
@@ -221,7 +223,19 @@ export function ApprovalCard({
   // not have an edit form. They should still render as rich approval cards.
   const card = cardForApproval(approval.tool, displayInput);
   const hasCustomPreview = isClipboardApproval || isFlowApproval || !!card;
-  const set = (key: string, value: string | boolean) => setVals((p) => ({ ...p, [key]: value }));
+  const touch = () => onActivity(approval.requestId);
+  const set = (key: string, value: string | boolean) => {
+    touch();
+    setVals((p) => ({ ...p, [key]: value }));
+  };
+  const editJson = (value: string) => {
+    touch();
+    setJsonDraft(value);
+  };
+  const changeEditing = (open: boolean) => {
+    touch();
+    setEditing(open);
+  };
 
   const approve = async () => {
     setLocalError(null);
@@ -257,7 +271,7 @@ export function ApprovalCard({
           <Badge variant="outline" className="border-amber-500/60 text-amber-600 shrink-0">{t("approval.approvalRequested")}</Badge>
           <span className="min-w-0 flex-1 truncate font-mono">{approval.tool}</span>
           {(fields || hasCustomPreview) && (
-            <button type="button" className="text-muted-foreground hover:text-foreground shrink-0 text-xs underline" onClick={() => setEditing(true)}>
+            <button type="button" className="text-muted-foreground hover:text-foreground shrink-0 text-xs underline" onClick={() => changeEditing(true)}>
               {t("approval.edit")}
             </button>
           )}
@@ -274,13 +288,14 @@ export function ApprovalCard({
           <textarea
             className="border-input bg-muted h-40 w-full resize-y rounded-md border p-3 font-mono text-xs outline-none"
             value={jsonDraft}
-            onChange={(e) => setJsonDraft(e.target.value)}
+            onFocus={touch}
+            onChange={(e) => editJson(e.target.value)}
             spellCheck={false}
           />
         )}
         {jsonError && <p className="text-xs text-red-500">{jsonError}</p>}
         {localError && <p className="text-xs text-red-500">{localError}</p>}
-        <Input placeholder={t("approval.notePlaceholder")} value={note} onChange={(e) => setNote(e.target.value)} />
+        <Input placeholder={t("approval.notePlaceholder")} value={note} onFocus={touch} onChange={(e) => { touch(); setNote(e.target.value); }} />
       </CardContent>
       <CardFooter className="gap-2">
         <Button size="sm" onClick={approve} disabled={approving || (!fields && jsonError !== undefined)}>
@@ -290,8 +305,8 @@ export function ApprovalCard({
       </CardFooter>
 
       {(fields || hasCustomPreview) && (
-        <Dialog open={editing} onOpenChange={setEditing}>
-          <DialogContent className="sm:max-w-lg">
+        <Dialog open={editing} onOpenChange={changeEditing}>
+          <DialogContent className="sm:max-w-lg" onFocusCapture={touch} onPointerDownCapture={touch}>
             <DialogHeader>
               <DialogTitle>{t("approval.editDialogTitle", { name: bareName(approval.tool) })}</DialogTitle>
             </DialogHeader>
@@ -320,13 +335,13 @@ export function ApprovalCard({
               <textarea
                 className="border-input bg-muted min-h-64 w-full resize-y rounded-md border p-3 font-mono text-xs outline-none"
                 value={jsonDraft}
-                onChange={(e) => setJsonDraft(e.target.value)}
+                onChange={(e) => editJson(e.target.value)}
                 spellCheck={false}
               />
             )}
             {!fields && jsonError && <p className="text-xs text-red-500">{jsonError}</p>}
             <div className="flex justify-end">
-              <Button size="sm" onClick={() => setEditing(false)}>{t("approval.confirmDone")}</Button>
+              <Button size="sm" onClick={() => changeEditing(false)}>{t("approval.confirmDone")}</Button>
             </div>
           </DialogContent>
         </Dialog>

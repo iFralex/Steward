@@ -16,7 +16,11 @@ export class Session {
   closed = false;
   /** The chat the connection is currently focused on (per-connection routing). */
   activeChatId: string | null = null;
-  private readonly pending = new Map<string, (outcome: ApprovalOutcome) => void>();
+  private readonly pending = new Map<string, {
+    resolve: (outcome: ApprovalOutcome) => void;
+    timer: ReturnType<typeof setTimeout>;
+    expire: () => void;
+  }>();
   private readonly pendingQuestions = new Map<string, (selected: string[]) => void>();
 
   constructor(
@@ -32,7 +36,7 @@ export class Session {
   readonly requestApproval: RequestApproval = (req: ApprovalRequest) => {
     const requestId = randomUUID();
     return new Promise<ApprovalOutcome>((resolve) => {
-      const timer = setTimeout(() => {
+      const expire = () => {
         if (this.pending.delete(requestId)) {
           recordAudit({
             actor: "host",
@@ -48,12 +52,10 @@ export class Session {
           });
           resolve({ decision: "deny", note: "Approval timed out", failureKind: "timeout" });
         }
-      }, this.approvalTimeoutMs);
+      };
+      const timer = setTimeout(expire, this.approvalTimeoutMs);
 
-      this.pending.set(requestId, (outcome) => {
-        clearTimeout(timer);
-        resolve(outcome);
-      });
+      this.pending.set(requestId, { resolve, timer, expire });
 
       this.emit({
         type: "approval_request",
@@ -78,6 +80,15 @@ export class Session {
     });
   };
 
+  /** User editing activity renews only a still-pending approval, never revives it. */
+  touchApproval(requestId: string): boolean {
+    const pending = this.pending.get(requestId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    pending.timer = setTimeout(pending.expire, this.approvalTimeoutMs);
+    return true;
+  }
+
   /** Deliver a channel decision to a waiting approval. Returns false if unknown. */
   resolveApproval(requestId: string, outcome: ApprovalOutcome): boolean {
     const resolver = this.pending.get(requestId);
@@ -93,7 +104,8 @@ export class Session {
       ok: outcome.decision === "allow",
       payload: outcome,
     });
-    resolver(outcome);
+    clearTimeout(resolver.timer);
+    resolver.resolve(outcome);
     return true;
   }
 

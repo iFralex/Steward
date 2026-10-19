@@ -75,6 +75,12 @@ export type ClientEvent =
   | { type: "action_center_execute"; sessionId: string; id: number; proposalId: string }
   | { type: "action_center_revise"; sessionId: string; id: number; proposalId: string; instruction: string }
   | {
+      /** Renew the inactivity timeout while the user edits a pending action. */
+      type: "approval_activity";
+      sessionId: string;
+      requestId: string;
+    }
+  | {
       type: "approval_decision";
       sessionId: string;
       requestId: string;

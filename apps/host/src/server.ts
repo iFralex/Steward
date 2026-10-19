@@ -1097,6 +1097,9 @@ export function startServer(config: HostConfig): WebSocketServer {
           }
           break;
         }
+        case "approval_activity":
+          session.touchApproval(msg.requestId);
+          break;
         case "approval_decision":
           session.resolveApproval(msg.requestId, {
             decision: msg.decision,
