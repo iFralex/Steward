@@ -214,7 +214,10 @@ Steward does not ask Apple Mail to search everything live each time. It maintain
 - vector indexes through sqlite-vec;
 - embedding state;
 - mailbox role classification;
-- fallback AppleScript reads for non-full messages with insufficient mirrored text.
+- versioned extraction of plain-text and HTML bodies, with both alternatives retained when their content differs;
+- local MIME recovery before fallback AppleScript reads for unavailable or insufficient legacy bodies.
+
+Body extraction uses structural parsing and exact content coverage, independently of sender addresses and compatibility phrases. It does not call an LLM or compare embeddings. Ambiguous alternatives stay inspectable, while image-only content and extraction limits are explicitly reported. See [plain-text and HTML extraction](#plain-text-and-html-body-extraction) and the [1,433-message validation report](docs/benchmarks/2026-10-21-mail-body-extraction.md).
 
 `apps/mail-promoter` then scans mail threads and promotes durable knowledge into the wiki. It filters noise, extracts decisions, commitments, facts, useful documents and selected attachments, then writes source notes with `message://` backlinks so you can inspect the original email.
 
@@ -815,7 +818,8 @@ flowchart TD
     D --> G[Parse EMLX and MIME]
     E --> G
     F --> G
-    G --> H[Normalize message identity and flags]
+    G --> P[Compare plain and HTML representations]
+    P --> H[Normalize message identity and flags]
     H --> I[Resolve thread]
     I --> J[Upsert message and path records]
     J --> K[FTS5 and trigram indexes]
@@ -827,11 +831,11 @@ flowchart TD
 
 The ingestion path in `apps/mail-mirror` performs several non-obvious tasks:
 
-1. **Parse the actual on-disk message.** The EMLX parser separates the RFC/MIME message from Apple's plist trailer, decodes Mail flags, extracts text and attachments, and reads Apple/Gmail thread metadata where available.
+1. **Parse the actual on-disk message.** The EMLX parser separates the RFC/MIME message from Apple's plist trailer, decodes Mail flags, extracts plain-text and HTML representations and attachments, and reads Apple/Gmail thread metadata where available. The body extractor compares the available representations and records its source, quality, version and hashes.
 2. **Choose a stable message identity.** The RFC `Message-ID` is preferred. If it is absent, Steward generates a deterministic local surrogate from the account and path.
 3. **Preserve mailbox specificity.** Gmail can expose the same message in a specific label and in All Mail. An All Mail copy is not allowed to overwrite a row already attributed to a more specific mailbox.
 4. **Track every physical path.** A logical message can have multiple on-disk paths. Reconciliation removes missing paths first and soft-deletes the logical message only when no path remains.
-5. **Classify body availability.** A normal file is `full`; a `.partial.emlx` with some text is `partial`; a partial file without usable text is `none`.
+5. **Separate download state from extraction quality.** A normal file is `full`; a `.partial.emlx` with some text is `partial`; a partial file without extracted text is `none`. Independently, extraction can be usable, ambiguous, limited or unavailable: a full download does not prove that its plain-text part contains the actual message.
 6. **Store attachments by content.** Attachment bytes are hashed with SHA-256 and placed in a blob store, allowing duplicate content to share identity independently of filenames.
 7. **Keep derived indexes rebuildable.** Message rows are the local normalized record; trigram, FTS and vector structures can be regenerated from them.
 
@@ -841,7 +845,7 @@ There are three synchronization modes:
 |---|---|---|
 | `backfill` | Initial import | Enumerates the archive recent-first so current mail becomes useful before old history finishes. |
 | `watch` | Low-latency updates | Uses filesystem events to ingest newly created or changed EMLX paths. Filesystem events are an optimization, not the sole source of truth. |
-| `reconcile` | Periodic convergence | Diffs disk paths and mtimes against the database, ingests new/changed files, removes vanished paths and soft-deletes orphaned logical messages. |
+| `reconcile` | Periodic convergence | Diffs disk paths and mtimes against the database, ingests new/changed files, upgrades up to 50 old extractions even when their files are unchanged, removes vanished paths and soft-deletes orphaned logical messages. |
 
 The packaged scheduler runs reconciliation periodically, so missing one filesystem event does not permanently lose a message.
 
@@ -857,18 +861,34 @@ Apple Mail, Gmail and standard RFC headers do not always agree on conversation i
 
 The thread table tracks normalized subject, participants, first/last activity and message count. Thread identity matters beyond presentation: search collapses duplicate message hits by thread, mail promotion produces one canonical note per thread, and Action Center reasons about the conversation rather than isolated messages.
 
+### Plain Text And HTML Body Extraction
+
+An email can contain a substantive HTML message alongside a plain-text compatibility notice. Steward compares both representations for every MIME import, without matching a sender or a list of known notices. Extraction is deterministic and uses no LLM or embedding similarity; the vector index used for search remains a separate step.
+
+The HTML renderer decodes entities and preserves paragraphs, lists, links, tables and SVG text labels. It excludes scripts, styles, inline-hidden elements and tracking images, and labels image descriptions without treating them as OCR. It does not fetch remote images or browser-view links. Recognizable HTML documents and fragments mislabeled as plain text use the same renderer. Full stylesheet interpretation and image transcription are outside this extractor.
+
+When one version exactly covers the other's ordered text blocks and link destinations, the extractor can keep a single representation. Approximate character overlap is diagnostic only. Otherwise it preserves both versions with explicit labels, instead of choosing by length or smoothing away differences in amounts, dates, codes or negations. `bodyExtraction.alternatives` supplies offsets for jumping directly to either retained version through the existing body pagination.
+
+The mirror persists extraction version, source, quality, reason, issues and hashes separately from download state. Resource limits and image-only content are reported explicitly. Old extractions are upgraded in bounded reconciliation batches and on demand during reads. Changes to body text update lexical indexes and invalidate the embedding; metadata-only upgrades leave embedding freshness unchanged.
+
+To audit older extractions across all senders:
+
+```sh
+node --import tsx tools/eval-mail-body.mts --pending --limit=500
+node --import tsx tools/eval-mail-body.mts --apply-plan=PATH/TO/plan.json
+```
+
+The audit writes private reports and a reviewable plan under ignored `tmp/mail-body-v2-*`. Applying the plan saves previous rows, verifies MIME source hashes and previous bodies, updates indexes and verifies reads. See the [Mail Mirror README](apps/mail-mirror/README.md) for commands and the [extraction design](docs/mail-body-extraction-design.md) for the selection contract and remaining extensions.
+
+The [2026-10-21 real-mail validation](docs/benchmarks/2026-10-21-mail-body-extraction.md) covered 1,333 previously problematic messages and 100 recent controls: 970 usable extractions, 452 with both alternatives retained, and 11 flagged for graphical content without transcription. All 1,433 database reads and source identities were verified; 93 mirror tests and 120 reader tests passed. These are corpus measurements, not a guarantee that every future message is fully readable. Packaged installations need the updated app bundle installed before their scheduled imports use the new extractor.
+
 ### Body Completeness And Live Fallback
 
-Apple Mail may keep only a `.partial.emlx` until a message is opened or downloaded. Steward does not pretend a partial body is complete:
+Apple Mail may keep only a `.partial.emlx` until a message is opened or downloaded. Individual reads expose `bodyState` and, when available, `bodyExtraction`; compact search pages do not expose these details. Download state alone does not establish whether readable content was extracted.
 
-- individual message reads expose `bodyState`; compact search pages do not;
-- a useful partial body remains searchable;
-- a non-`full` body with fewer than 20 trimmed characters triggers a live AppleScript read; a useful partial body is served directly;
-- usable live content is returned only when longer than the mirrored body; this read does not persist the replacement into the mirror;
-- if AppleScript fails, the connector returns the best mirrored body instead of failing the entire read;
-- opening a `message://` deep link remains available for inspecting the source in Mail.app.
+For an old extraction or an inconsistent text hash, the reader first reparses the local EMLX source and checks its message identity. A usable local result is persisted when the store is writable; a read-only connection returns it without changing the mirror. The reader then attempts a live AppleScript read only when fewer than 20 trimmed characters remain and the body is empty, explicitly unavailable, or an insufficient legacy extraction from a non-full file. Confirmed short replies and known image-only bodies do not trigger repeated live reads.
 
-The live finder first tries a usable numeric Mail ID, then may scan globally by RFC message ID; “targeted” describes the selected message, not a guarantee of a cheap account-scoped lookup. A failed or poorer live read keeps the mirrored result and its original body state.
+Usable live content replaces the response body only when it is richer; this AppleScript replacement is not persisted. Failure or a poorer result keeps the mirrored body. The live finder first tries a usable numeric Mail ID, then may scan globally by RFC message ID, so a targeted read is not necessarily a cheap account-scoped lookup. A `message://` deep link remains available for inspecting the original in Mail.app.
 
 ### Email Embedding Lifecycle
 

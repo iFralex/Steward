@@ -75,13 +75,51 @@ embedding worker when enabled; `backfill` does not automatically drain vectors.
 
 ## Body completeness and reads
 
-`body_state` describes what was ingested: `full`, `partial` or `none`. A partial
-EMLX download flag does not prove its extracted text is truncated. Mail MCP
-serves useful mirrored bodies directly; only a non-full body with fewer than
-20 trimmed characters attempts a live AppleScript read. It adopts only a richer
-usable result for that response, without persisting it back into the mirror.
-Failure keeps the available mirrored text. Compact search pages do not expose
-body state; individual reads do.
+`body_state` describes download state: `full`, `partial` or `none`. Extraction
+quality is recorded independently. A full download can have no readable text;
+a partial EMLX file can already contain the useful message body. Individual
+reads expose `bodyState` and available `bodyExtraction` metadata; compact search
+pages do not.
+
+The reader first recovers old or inconsistent extractions from the local MIME
+source. A live AppleScript read is attempted only when fewer than 20 trimmed
+characters remain and the body is empty, explicitly unavailable, or an
+insufficient legacy extraction from a non-full file. Confirmed short replies
+and known image-only bodies do not trigger repeated live reads. A richer usable
+live result replaces the response body without persisting that AppleScript
+replacement; failure keeps the available mirrored text.
+
+MIME import compares the original plain and HTML representations without sender
+rules, known compatibility phrases, LLM calls or embedding similarity. The HTML
+renderer preserves text, paragraphs, links, tables and SVG labels, excludes
+scripts, styles, hidden elements and tracking images, and labels image alt text.
+It does not fetch remote resources or pretend to perform OCR. Mislabeled plain
+HTML documents and fragments use the same renderer.
+
+Only exact, ordered block coverage and compatible link destinations allow an
+alternative to be suppressed. Otherwise both versions are retained and labelled;
+read responses include offsets to jump to either version through body pagination.
+Approximate overlap is diagnostic only. Resource limits and image-only bodies are
+explicitly flagged. `body_extraction` stores version, source, quality, reason and
+hashes of the MIME source and extracted text, independently of `body_state`.
+
+Reconciliation upgrades up to 50 old extractions per pass even when file mtimes
+have not changed. Reads also try the local MIME source before a live read when
+extraction is old or its text hash is inconsistent. Writable reads persist the
+result; read-only connections return it without changing the database.
+
+To audit a batch across all senders, run
+`node --import tsx tools/eval-mail-body.mts --pending --limit=500`.
+To test a previous repair corpus plus 100 recent controls, use
+`--reference=PATH/TO/before.json --controls=100` instead. Reports and plans are
+private files under `tmp/mail-body-v2-*`. Apply a reviewed plan with
+`node --import tsx tools/eval-mail-body.mts --apply-plan=PATH/TO/plan.json`.
+This saves prior rows, verifies unchanged MIME source hashes and previous bodies,
+updates search indexes and verifies reads. Changed bodies invalidate embeddings
+for the regular worker; metadata-only upgrades do not. Unavailable sources and
+low comparison coverage are reported for review. The old `repair-mail-html.mts`
+entry point now delegates to the versioned audit; old phrase-based plans cannot
+be applied as versioned extraction results.
 
 Mail.app's download settings can improve local coverage. The historical
 benchmark in the root README is a dated dataset measurement, not a promise that
