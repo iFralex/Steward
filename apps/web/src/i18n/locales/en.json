@@ -122,6 +122,42 @@
     }
   },
   "system": {
+      "permissions": {
+        "title": "macOS data access",
+        "calendarService": "Calendar",
+        "mail": "Apple Mail",
+        "calendar": "Calendar",
+        "readSucceeded": "Local data read succeeded",
+        "readDenied": "Local data access denied. Check Steward Full Disk Access and restart if macOS requires it.",
+        "readUnverified": "Local data could not be verified ({{code}}); data may be absent.",
+        "readableCount": "{{readable}}/{{total}} readable",
+        "calendarDegraded": "{{count}} tools; connected to the app; Calendar permissions need attention",
+        "calendarConnected": "{{count}} tools; connected to the app",
+        "calendarStore": "Apple Calendar store (Full Disk Access)",
+        "calendarStoreReadable": "Calendar database is readable.",
+        "calendarStoreDenied": "Calendar data is unavailable. Check Full Disk Access for Steward and restart if required.",
+        "eventKitBridge": "EventKit bridge",
+        "bridgeResponded": "The app’s Calendar bridge responded.",
+        "bridgeUnavailable": "The app’s Calendar bridge is unavailable. Check that Steward is running.",
+        "calendarFullAccess": "Calendar Full Access",
+        "calendarGranted": "Granted. Individual calendars may still be read-only; writes require approval.",
+        "calendarUnverified": "Not verified because the app’s Calendar bridge did not respond.",
+        "calendarAuthorization": {
+          "notDetermined": "Calendar permission has not been requested yet. Open Steward to grant it.",
+          "restricted": "Calendar access is restricted by system or organization policy.",
+          "denied": "Calendar access denied. Enable Steward in Privacy & Security → Calendars. Full Disk Access is separate.",
+          "writeOnly": "Only Calendar write access is granted. Enable full access for Steward in Privacy & Security → Calendars.",
+          "fullAccess": "Full Calendar access granted.",
+          "unknown": "Calendar authorization could not be determined. Check permissions in System Settings."
+        },
+        "states": {
+          "ok": "OK",
+          "warning": "Needs attention",
+          "error": "Error",
+          "unknown": "Not verified"
+        },
+        "hostConnection": "Connection to the app"
+      },
     "preparation": {
       "queued": "Search preparation queued",
       "running": "Preparing search",

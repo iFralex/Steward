@@ -53,9 +53,11 @@ LLM_WIKI_LAUNCHER_START_SERVICES=0 npm run launcher:mac
 
 ## Package
 
-Build a local production app bundle:
+Create the persistent local signing identity once (macOS may ask for Keychain
+authorization), then build a local production app bundle:
 
 ```sh
+npm run signing:setup
 npm run package:mac
 open "dist/mac/Steward.app"
 ```
@@ -78,16 +80,52 @@ forced kill. Only processes the launcher starts are supervised: it does not
 adopt an externally running host/gateway/Ollama. Process/HTTP liveness is not a
 proof that every background job or MCP tool works.
 
-On the first packaged launch, Steward explains why local Mail, Calendar, and
-document tools need Full Disk Access and offers a button that opens System
-Settings directly on **Privacy & Security → Full Disk Access**. macOS requires
-the user to grant this permission explicitly, so the launcher cannot enable it
-itself. The launcher also proactively asks for full Calendar access through
-EventKit. Calendar writes run inside the launcher and the Node calendar service
-uses a private per-user bridge. Requesting permission during onboarding reduces
-unattended prompting, but it cannot guarantee the user granted access. Full Disk
-Access remains separate from Calendar Full Access. The AppleScript Calendar
-compatibility path still needs Automation, as do Mail/Contacts writes.
+Native menus, startup text and permission alerts use keyed English/Italian
+`Localizable.strings` catalogs. `InfoPlist.strings` also localizes macOS Calendar
+and Automation prompts. An explicit app language (including English on an Italian
+Mac) takes precedence for app-owned text. Permission diagnostics in the web UI
+use its i18next catalogs.
+
+Every packaged launch checks Calendar authorization and attempts real local-data
+reads. Calendar requests finish before a Full Disk Access guide appears. A denied
+Calendar request offers **Privacy & Security → Calendars**; restricted access is
+reported separately. Full Disk Access guidance appears when local reads fail with
+a permission error. Missing data or other I/O errors are reported as unverified,
+not as granted or denied. The legacy “dialog already shown” preference is ignored.
+
+Checks run again when Steward becomes active after Settings. “Not now” suppresses
+the same reminder for this session, and the next launch checks again. Revoking a
+previously observed grant makes the reminder actionable again. **Check Permissions…**
+in the app and menu-bar menus retries manually and reports unavailable probes.
+The Full Disk Access guide reveals the running bundle in Finder so it can be
+added directly, including during migration from an old signing identity. macOS
+may require quitting and reopening Steward after changing Full Disk Access.
+The app cannot grant permission itself or force macOS to repeat a denied native
+prompt. Directory reads establish access to that location, not unrestricted disk
+access; Calendar database health additionally opens and reads the actual store.
+
+Calendar writes run inside the launcher through a private per-user EventKit
+bridge. Full Disk Access for local stores and Calendar Full Access are separate.
+The AppleScript Calendar compatibility path still needs Automation, as do
+Mail/Contacts writes. Services remain usable while permissions are incomplete.
+
+Packaging signs all Mach-O helpers, nested bundles, then the outer app, and
+verifies the complete signature. The local certificate fingerprint is pinned in
+`~/Library/Application Support/Steward/signing/identity.json`; its private key
+stays in the user Keychain. Builds reuse it automatically and fail if it is
+missing, expired or untrusted, instead of generating a new identity. An existing
+identity can be selected explicitly with `STEWARD_SIGNING_IDENTITY=SHA1`.
+This is local signing, without Developer ID/notarization. Preserve the Keychain
+identity (including its private key) and manifest when migrating the build Mac;
+copying the public certificate alone cannot restore signing capability. The
+initial switch from ad hoc signing may require granting permissions again.
+
+Run `node --test tools/mac-signing.test.mjs` to verify that changed binaries retain
+the same designated requirement and that resource/helper tampering is rejected.
+Run `swift test --package-path apps/mac-launcher` for access-probe and reminder
+lifecycle tests. Native permission dialogs and persistence across a real app
+update still require an interactive macOS smoke test; signing tests do not prove
+a particular TCC authorization was granted.
 
 Set `PACKAGE_DEBUG=1 npm run package:mac` to include service sourcemaps in the
 bundle.
@@ -122,9 +160,7 @@ unless explicitly connected to that runtime. See
 and confirmation limitations. The bridge is a local same-user IPC boundary,
 not a network listener or an isolation boundary from another same-user process.
 
-The packaged app uses its own permission identity. The Full Disk Access prompt
-is shown once but is not a permission verification; the user must enable access
-manually and restart if required. Closing the window hides the UI, while quitting
+The packaged app uses its own persistent signing identity. Closing the window hides the UI, while quitting
 stops the bridge/supervision and managed children. Release packaging/deployment
 is distinct from backing up user data; see
 [native deployment](../../docs/native-deployment.md).

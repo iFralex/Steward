@@ -16,9 +16,8 @@ private let serviceHealthCheckInterval: TimeInterval = 15
 private let serviceHealthFailureThreshold = 3
 private let serviceStableRuntime: TimeInterval = 60
 private let serviceMaximumRestartDelay: TimeInterval = 60
-private let fullDiskAccessOnboardingKey = "steward.didShowFullDiskAccessOnboarding.v1"
 
-private enum SplashLanguage: Equatable { case en, it }
+private typealias SplashLanguage = NativeLanguage
 
 private enum SplashStage {
     case starting, ollama, gateway, wiki, host, web
@@ -32,27 +31,18 @@ private enum SplashStage {
     }
 
     func text(_ language: SplashLanguage) -> String {
-        switch (language, self) {
-        case (.it, .starting): return "Preparazione di Steward…"
-        case (.it, .ollama): return "Avvio dei modelli locali…"
-        case (.it, .gateway): return "Avvio del gateway dei modelli…"
-        case (.it, .wiki): return "Avvio della memoria…"
-        case (.it, .host): return "Avvio dell’assistente…"
-        case (.it, .web): return "Preparazione dell’interfaccia…"
-        case (.it, .ollamaUnavailable): return "Ollama non è raggiungibile. Le funzioni di embedding non saranno disponibili."
-        case (.it, .embeddingModelMissing): return "Il modello bge-m3 non è installato. Esegui: ollama pull bge-m3"
-        case (.it, .repositoryMissing): return "Impossibile trovare i componenti di Steward."
-        case (.it, .loadFailed(let detail)): return "Impossibile caricare Steward: \(detail)"
-        case (.en, .starting): return "Preparing Steward…"
-        case (.en, .ollama): return "Starting local models…"
-        case (.en, .gateway): return "Starting the model gateway…"
-        case (.en, .wiki): return "Starting memory…"
-        case (.en, .host): return "Starting the assistant…"
-        case (.en, .web): return "Preparing the interface…"
-        case (.en, .ollamaUnavailable): return "Ollama is unavailable. Embedding features will not be available."
-        case (.en, .embeddingModelMissing): return "The bge-m3 model is missing. Run: ollama pull bge-m3"
-        case (.en, .repositoryMissing): return "Steward’s components could not be found."
-        case (.en, .loadFailed(let detail)): return "Steward could not be loaded: \(detail)"
+        let l10n = NativeL10n(language: language)
+        switch self {
+        case .starting: return l10n.text("splash.starting")
+        case .ollama: return l10n.text("splash.ollama")
+        case .gateway: return l10n.text("splash.gateway")
+        case .wiki: return l10n.text("splash.wiki")
+        case .host: return l10n.text("splash.host")
+        case .web: return l10n.text("splash.web")
+        case .ollamaUnavailable: return l10n.text("splash.ollamaUnavailable")
+        case .embeddingModelMissing: return l10n.text("splash.embeddingModelMissing")
+        case .repositoryMissing: return l10n.text("splash.repositoryMissing")
+        case .loadFailed(let detail): return l10n.text("splash.loadFailed", detail)
         }
     }
 }
@@ -89,7 +79,7 @@ private final class SplashView: NSView {
         title.textColor = .white
         title.alignment = .center
 
-        let subtitle = NSTextField(labelWithString: language == .it ? "Il tuo assistente personale" : "Your personal assistant")
+        let subtitle = NSTextField(labelWithString: NativeL10n(language: language).text("splash.subtitle"))
         subtitle.font = .systemFont(ofSize: 14, weight: .regular)
         subtitle.textColor = NSColor.white.withAlphaComponent(0.5)
         subtitle.alignment = .center
@@ -111,7 +101,7 @@ private final class SplashView: NSView {
         statusRow.alignment = .centerY
         statusRow.spacing = 9
 
-        retryButton.title = language == .it ? "Riprova" : "Try again"
+        retryButton.title = NativeL10n(language: language).text("splash.retry")
         retryButton.bezelStyle = .rounded
         retryButton.target = self
         retryButton.action = #selector(retry)
@@ -182,11 +172,13 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private var webView: WKWebView?
     private var splashView: SplashView?
     private var lastLoadURL: URL?
-    private let splashLanguage = currentSplashLanguage()
+    private var splashLanguage = currentSplashLanguage()
+    private var l10n: NativeL10n { NativeL10n(language: splashLanguage) }
     private var statusItem: NSStatusItem?
     private var hotKeyRef: EventHotKeyRef?
     private var managedServices: [String: ManagedService] = [:]
     private let calendarBridge = CalendarEventKitBridge()
+    @MainActor private lazy var permissionOnboarding = PermissionOnboarding(calendar: calendarBridge, window: { [weak self] in self?.window }, language: splashLanguage == .it ? "it" : "en")
     private var serviceSupervisorTimer: Timer?
     private var isTerminating = false
     private let appURL: URL
@@ -253,6 +245,22 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if splashLanguage != NativeLanguage.current() {
+            splashLanguage = NativeLanguage.current()
+            makeMainMenu()
+            statusItem?.menu = nil
+            if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+            makeStatusItem()
+        }
+        permissionOnboarding.activated()
+    }
+
+    @MainActor @objc private func checkPermissionsFromMenu() {
+        showWindow()
+        permissionOnboarding.check(manual: true)
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showWindow()
         return true
@@ -291,29 +299,30 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "Hide Steward", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        appMenu.addItem(NSMenuItem(title: l10n.text("menu.hide"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        appMenu.addItem(menuItem(l10n.text("menu.permissions"), #selector(checkPermissionsFromMenu)))
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Quit Steward", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: l10n.text("menu.quitApp"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
-        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        let editMenu = NSMenu(title: l10n.text("menu.edit"))
+        editMenu.addItem(NSMenuItem(title: l10n.text("menu.undo"), action: Selector(("undo:")), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: l10n.text("menu.redo"), action: Selector(("redo:")), keyEquivalent: "Z"))
         editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenu.addItem(NSMenuItem(title: l10n.text("menu.cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: l10n.text("menu.copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: l10n.text("menu.paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: l10n.text("menu.selectAll"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editItem.submenu = editMenu
         main.addItem(editItem)
 
         let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "Window")
-        windowMenu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m"))
-        windowMenu.addItem(NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f"))
-        windowMenu.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        let windowMenu = NSMenu(title: l10n.text("menu.window"))
+        windowMenu.addItem(NSMenuItem(title: l10n.text("menu.minimize"), action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: l10n.text("menu.fullScreen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f"))
+        windowMenu.addItem(NSMenuItem(title: l10n.text("menu.close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
         NSApp.windowsMenu = windowMenu
@@ -333,10 +342,11 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         item.button?.toolTip = "Steward (\(defaultHotKey))"
 
         let menu = NSMenu()
-        menu.addItem(menuItem("Show Steward", #selector(showFromMenu)))
-        menu.addItem(menuItem("Reload", #selector(reloadFromMenu), keyEquivalent: "r"))
+        menu.addItem(menuItem(l10n.text("menu.show"), #selector(showFromMenu)))
+        menu.addItem(menuItem(l10n.text("menu.reload"), #selector(reloadFromMenu), keyEquivalent: "r"))
+        menu.addItem(menuItem(l10n.text("menu.permissions"), #selector(checkPermissionsFromMenu)))
         menu.addItem(.separator())
-        menu.addItem(menuItem("Quit", #selector(quitFromMenu), keyEquivalent: "q"))
+        menu.addItem(menuItem(l10n.text("menu.quit"), #selector(quitFromMenu), keyEquivalent: "q"))
         item.menu = menu
 
         statusItem = item
@@ -426,47 +436,8 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self else { return }
-            self.calendarBridge.requestAccess()
-            self.presentFullDiskAccessOnboardingIfNeeded()
+            self.permissionOnboarding.start()
         }
-    }
-
-    private func presentFullDiskAccessOnboardingIfNeeded() {
-        guard
-            !UserDefaults.standard.bool(forKey: fullDiskAccessOnboardingKey),
-            let window
-        else { return }
-
-        // Record before presenting so a forced quit while the sheet is visible
-        // does not turn this into a prompt loop.
-        UserDefaults.standard.set(true, forKey: fullDiskAccessOnboardingKey)
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        if splashLanguage == .it {
-            alert.messageText = "Consenti l’accesso completo al disco"
-            alert.informativeText = "Steward usa questo permesso per cercare in Mail, Calendario e nei documenti locali. macOS non permette alle app di abilitarlo automaticamente. Apri Accesso completo al disco, aggiungi Steward se necessario e attiva l’interruttore; poi riavvia Steward."
-            alert.addButton(withTitle: "Apri Accesso completo al disco")
-            alert.addButton(withTitle: "Non ora")
-        } else {
-            alert.messageText = "Allow Full Disk Access"
-            alert.informativeText = "Steward uses this permission to search Mail, Calendar, and local documents. macOS does not let apps enable it automatically. Open Full Disk Access, add Steward if needed, and turn it on; then restart Steward."
-            alert.addButton(withTitle: "Open Full Disk Access")
-            alert.addButton(withTitle: "Not Now")
-        }
-        alert.beginSheetModal(for: window) { [weak self] response in
-            if response == .alertFirstButtonReturn {
-                self?.openFullDiskAccessSettings()
-            }
-        }
-    }
-
-    private func openFullDiskAccessSettings() {
-        // Open the Calendar-era System Settings privacy pane directly.
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
-           NSWorkspace.shared.open(url) {
-            return
-        }
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 
     private func bootstrap() {
@@ -1001,7 +972,7 @@ extension LauncherDelegate: WKUIDelegate {
     ) {
         let alert = NSAlert()
         alert.messageText = message
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: l10n.text("common.ok"))
         alert.runModal()
         completionHandler()
     }
@@ -1014,8 +985,8 @@ extension LauncherDelegate: WKUIDelegate {
     ) {
         let alert = NSAlert()
         alert.messageText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: l10n.text("common.ok"))
+        alert.addButton(withTitle: l10n.text("common.cancel"))
         completionHandler(alert.runModal() == .alertFirstButtonReturn)
     }
 
@@ -1028,8 +999,8 @@ extension LauncherDelegate: WKUIDelegate {
     ) {
         let alert = NSAlert()
         alert.messageText = prompt
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: l10n.text("common.ok"))
+        alert.addButton(withTitle: l10n.text("common.cancel"))
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         field.stringValue = defaultText ?? ""
@@ -1101,14 +1072,7 @@ private func fourCharCode(_ string: String) -> FourCharCode {
 }
 
 private func currentSplashLanguage() -> SplashLanguage {
-    let path = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Steward/notification-lang.json")
-    if let data = try? Data(contentsOf: path),
-       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-       object["lang"] as? String == "it" {
-        return .it
-    }
-    return Locale.preferredLanguages.first?.lowercased().hasPrefix("it") == true ? .it : .en
+    NativeLanguage.current()
 }
 
 private func findRepoRoot() -> URL? {

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /** Native macOS installer/updater. Releases are immutable; user data stays outside them. */
 import { backupData } from "./steward-backup.mjs";
+import { verifyBundle, signingIdentity } from "./mac-signing.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, mkdirSync, cpSync, renameSync, symlinkSync, unlinkSync, writeFileSync, realpathSync, rmdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, mkdirSync, cpSync, renameSync, writeFileSync, realpathSync, rmdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,7 +43,7 @@ function atomicWrite(path, value, mode = 0o600) {
 }
 function sha256(path) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
 function isLink(path) { try { return lstatSync(path).isSymbolicLink(); } catch { return false; } }
-function linkTarget() { return isLink(appLink) ? realpathSync(appLink) : null; }
+function linkTarget() { return existsSync(appLink) ? realpathSync(appLink) : null; }
 function samePath(a, b) { return !!a && !!b && existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b); }
 function configValues() {
   const values = {};
@@ -87,19 +88,22 @@ function doctor() {
     const tailscale = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
     ok = output("Tailscale", existsSync(tailscale), tailscale) && ok;
   }
-  if (state?.current && !samePath(current, join(root, "releases", state.current, "Steward.app"))) {
+  if (state?.current && !bundlesMatch(current, join(root, "releases", state.current, "Steward.app"))) {
     output("release pointer", false, "state and app link disagree");
     ok = false;
   }
   return ok;
 }
-function validBundle(path) {
+function validBundle(path, { allowLegacy = false } = {}) {
   for (const rel of ["Contents/MacOS/StewardLauncher", "Contents/Resources/node/bin/node", "Contents/Resources/services/host/index.js", "Contents/Resources/web/index.html", "Contents/Info.plist"]) {
     if (!existsSync(join(path, rel))) throw new Error(`Incomplete app bundle: ${rel}`);
   }
   if (process.platform === "darwin") {
     const arch = capture("/usr/bin/file", [join(path, "Contents", "MacOS", "StewardLauncher")]);
     if (!arch.includes("arm64")) throw new Error("App launcher is not arm64");
+    if (allowLegacy && !existsSync(join(path, "Contents/Resources/steward-signing.json"))) {
+      console.log("Legacy release predates persistent signing; its privacy identity is not verified.");
+    } else { verifyBundle(path, signingIdentity()); }
   }
 }
 function sipIdentity(source, target) {
@@ -117,9 +121,14 @@ function checkQuiet() {
   const port = Number(configValues().HOST_PORT || 4317);
   const probe = spawnSync("/usr/bin/curl", ["--silent", "--max-time", "2", "--output", "/dev/null", "--write-out", "%{http_code}", `http://127.0.0.1:${port}/health`], { encoding: "utf8" });
   if (probe.stdout?.startsWith("200")) throw new Error(`Steward is running on port ${port}. Quit the app and retry the cutover; no release was changed.`);
-  const processes = capture("/bin/ps", ["-axo", "command="]);
+  const processes = capture("/bin/ps", ["-axo", "comm="]);
   const activeBundle = linkTarget() ?? appLink;
-  if (processes.split("\n").some((line) => line.includes(join(activeBundle, "Contents", "MacOS", "StewardLauncher")) || line.includes(join(appLink, "Contents", "MacOS", "StewardLauncher")))) {
+  const launcherPaths = [activeBundle, appLink].map(path => join(path, "Contents/MacOS/StewardLauncher").toLowerCase());
+  const releasesPrefix = `${join(root, "releases").toLowerCase()}/`;
+  if (processes.split("\n").some((line) => {
+    const executable = line.trim().toLowerCase();
+    return launcherPaths.includes(executable) || (executable.startsWith(releasesPrefix) && executable.endsWith("/steward.app/contents/macos/stewardlauncher"));
+  })) {
     throw new Error("StewardLauncher is still running. Quit Steward before switching releases.");
   }
 }
@@ -129,9 +138,23 @@ function healthReady() {
   return probe.stdout?.startsWith("200") === true;
 }
 function waitMs(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+function registerActiveBundle() {
+  if (skipLaunch || process.platform !== "darwin") return;
+  const register = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+  if (!existsSync(register)) return;
+  const current = linkTarget() ?? appLink;
+  // Old immutable releases share the bundle identifier. Leave their files for
+  // rollback, but stop Launch Services from choosing one when the app reopens.
+  for (const id of readdirSync(join(root, "releases"))) {
+    const old = join(root, "releases", id, "Steward.app");
+    if (existsSync(old) && !samePath(old, current)) capture(register, ["-u", old]);
+  }
+  run(register, ["-f", current]);
+}
 function smoke() {
   if (skipLaunch) return;
-  run("/usr/bin/open", [appLink]);
+  registerActiveBundle();
+  run("/usr/bin/open", ["-n", linkTarget() ?? appLink]);
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (healthReady()) return;
@@ -150,12 +173,38 @@ async function snapshotData(id) {
   console.log(`Pre-update operational snapshot: ${backupDir}`);
 }
 
-function swapLink(target) {
-  mkdirSync(dirname(appLink), { recursive: true });
-  const temp = `${appLink}.${randomUUID()}.tmp`;
-  symlinkSync(target, temp);
-  renameSync(temp, appLink);
+function bundlesMatch(actual, expected) {
+  if (samePath(actual, expected)) return true;
+  if (!actual || !expected) return false;
+  try {
+    return ["Contents/MacOS/StewardLauncher", "Contents/Info.plist", "Contents/_CodeSignature/CodeResources"]
+      .every(rel => {
+        const a = join(actual, rel), b = join(expected, rel);
+        if (!existsSync(a) && !existsSync(b)) return rel.includes("_CodeSignature");
+        return existsSync(a) && existsSync(b) && sha256(a) === sha256(b);
+      });
+  } catch { return false; }
 }
+function installBundle(target) {
+  mkdirSync(dirname(appLink), { recursive: true });
+  const temp = `${appLink}.${randomUUID()}.app`;
+  const retired = `${appLink}.${randomUUID()}.previous`;
+  let movedOld = false;
+  try {
+    cpSync(target, temp, { recursive: true, dereference: false });
+    validBundle(temp, { allowLegacy: true });
+    if (existsSync(appLink) || isLink(appLink)) {
+      renameSync(appLink, retired);
+      movedOld = true;
+    }
+    try { renameSync(temp, appLink); }
+    catch (error) { if (movedOld) renameSync(retired, appLink); throw error; }
+    // The immutable source remains in releases for rollback. Remove only the
+    // replaced install copy (or its old symlink), never its referenced release.
+    if (movedOld) rmSync(retired, { recursive: true, force: true });
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+}
+
 function releaseId() { return `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`; }
 function stage() {
   if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("This installer requires an Apple Silicon Mac");
@@ -189,7 +238,7 @@ function stage() {
       throw new Error("Staged Ringback failed its runtime check. Configure a SIP identity or inspect its build before cutover.");
     }
   }
-  const meta = { id, createdAt: new Date().toISOString(), commit: capture("git", ["rev-parse", "HEAD"]), lockSha256: sha256(join(repo, "package-lock.json")), voice: !noVoice };
+  const meta = { id, createdAt: new Date().toISOString(), commit: capture("git", ["rev-parse", "HEAD"]), lockSha256: sha256(join(repo, "package-lock.json")), voice: !noVoice, signingVersion: 1 };
   atomicWrite(join(dir, "release.json"), JSON.stringify(meta, null, 2) + "\n", 0o644);
   console.log(`Staged release ${id}`);
   return id;
@@ -199,7 +248,7 @@ function assertRelease(id) {
   const dir = join(root, "releases", id);
   const meta = readJson(join(dir, "release.json"));
   if (meta?.id !== id) throw new Error(`Release ${id} is incomplete`);
-  validBundle(join(dir, "Steward.app"));
+  validBundle(join(dir, "Steward.app"), { allowLegacy: meta.signingVersion !== 1 });
   if (meta.voice && !existsSync(join(dir, "ringback", "steward-run-voice-mcp.sh"))) throw new Error("Ringback missing from release");
   return { dir, meta };
 }
@@ -209,9 +258,9 @@ async function cutover(id) {
   await snapshotData(id);
   const state = readJson(stateFile) ?? {};
   if (state.current === id) return;
-  let previousApp = linkTarget();
+  let previousApp = state.current ? join(root, "releases", state.current, "Steward.app") : (state.legacyApp ?? linkTarget());
   let adoptedLegacy = null;
-  if (existsSync(appLink) && !isLink(appLink)) {
+  if (existsSync(appLink) && !isLink(appLink) && !state.current && !state.legacyApp) {
     const legacy = join(root, "releases", `legacy-${releaseId()}`);
     mkdirSync(legacy, { recursive: true });
     renameSync(appLink, join(legacy, "Steward.app"));
@@ -221,7 +270,7 @@ async function cutover(id) {
   const oldConfig = existsSync(configFile) ? readFileSync(configFile, "utf8") : null;
   const values = configValues();
   try {
-    swapLink(join(dir, "Steward.app"));
+    installBundle(join(dir, "Steward.app"));
     const patch = {};
     if (meta.voice) {
       patch.STEWARD_VOICE_TRANSPORT = values.STEWARD_VOICE_TRANSPORT || "ringback";
@@ -239,11 +288,11 @@ async function cutover(id) {
     atomicWrite(stateFile, JSON.stringify({ current: id, previous: state.current ?? null, previousApp, previousConfig: oldConfig }, null, 2) + "\n");
     console.log(`Installed ${id} at ${appLink}. User data and credentials were not moved.`);
   } catch (error) {
-    if (previousApp) swapLink(previousApp);
-    else if (isLink(appLink)) unlinkSync(appLink);
+    if (previousApp) installBundle(previousApp);
+    else if (existsSync(appLink) || isLink(appLink)) rmSync(appLink, { recursive: true, force: true });
     if (oldConfig !== null) atomicWrite(configFile, oldConfig);
     if (adoptedLegacy) {
-      if (isLink(appLink)) unlinkSync(appLink);
+      if (existsSync(appLink) || isLink(appLink)) rmSync(appLink, { recursive: true, force: true });
       renameSync(adoptedLegacy, appLink);
     }
     throw error;
@@ -253,25 +302,29 @@ function rollback() {
   checkQuiet();
   const state = readJson(stateFile);
   if (!state?.previousApp) throw new Error("No previous app release is available for rollback");
-  validBundle(state.previousApp);
-  const currentApp = linkTarget();
+  const previousMeta = state.previous ? readJson(join(root, "releases", state.previous, "release.json")) : null;
+  validBundle(state.previousApp, { allowLegacy: previousMeta?.signingVersion !== 1 });
+  const currentApp = state.current ? join(root, "releases", state.current, "Steward.app") : (state.legacyApp ?? linkTarget());
   const currentConfig = existsSync(configFile) ? readFileSync(configFile, "utf8") : null;
-  swapLink(state.previousApp);
+  installBundle(state.previousApp);
   if (state.previousConfig !== null) atomicWrite(configFile, state.previousConfig);
   atomicWrite(stateFile, JSON.stringify({ current: state.previous ?? null, previous: state.current, previousApp: currentApp, previousConfig: currentConfig, legacyApp: state.previous ? null : state.previousApp }, null, 2) + "\n");
+  registerActiveBundle();
   console.log(`Rolled back app to ${state.previousApp}. Persistent data was not changed.`);
 }
 function verify() {
   const state = readJson(stateFile);
   if (state?.legacyApp) {
-    if (!samePath(linkTarget(), state.legacyApp)) throw new Error("Legacy rollback pointer does not match the app link");
-    validBundle(state.legacyApp);
+    if (!bundlesMatch(linkTarget(), state.legacyApp)) throw new Error("Legacy rollback pointer does not match the app link");
+    validBundle(state.legacyApp, { allowLegacy: true });
+    validBundle(appLink, { allowLegacy: true });
     console.log("Verified legacy app rollback");
     return;
   }
   if (!state?.current) throw new Error("No managed release installed");
   const { dir, meta } = assertRelease(state.current);
-  if (!samePath(linkTarget(), join(dir, "Steward.app"))) throw new Error("App link does not point to the recorded release");
+  validBundle(appLink, { allowLegacy: meta.signingVersion !== 1 });
+  if (!bundlesMatch(linkTarget(), join(dir, "Steward.app"))) throw new Error("Installed app does not match the recorded release");
   if (meta.voice) {
     const launcher = configValues().STEWARD_RINGBACK_LAUNCHER;
     if (launcher !== join(dir, "ringback", "steward-run-voice-mcp.sh")) throw new Error("Ringback config points outside current release");

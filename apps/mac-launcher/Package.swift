@@ -9,6 +9,9 @@ let package = Package(
         .executable(name: "StewardLauncher", targets: ["StewardLauncher"]),
     ],
     targets: [
-        .executableTarget(name: "StewardLauncher"),
+        // Package copies the standard .lproj catalogs into the main .app so
+        // macOS can also localize native privacy usage descriptions.
+        .executableTarget(name: "StewardLauncher", exclude: ["Resources"]),
+        .testTarget(name: "StewardLauncherTests", dependencies: ["StewardLauncher"]),
     ]
 )

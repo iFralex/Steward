@@ -2451,7 +2451,7 @@ For a new client/channel, implement `packages/protocol` rather than reaching int
 | [apps/wiki-add](apps/wiki-add/) | CLI and Finder Quick Actions for adding files/folders to LLM Wiki sources. |
 | [apps/mac-launcher](apps/mac-launcher/) | SwiftPM menu-bar app. Opens a WebKit window behind a localized native startup/status overlay, registers `Command+Shift+Space`, checks/starts services, packages a self-contained `.app`, and reads production overrides from `~/Library/Application Support/Steward/config.env`. |
 | [tools/run-ringback-managed.sh](tools/run-ringback-managed.sh) and Ringback patches | External native SIP/MCP lifecycle boundary. Pins and diagnoses the runtime, preserves stdio, localizes STT/TTS, emits structured SIP/media failures, confirms remote hangup and detects stalled RTP. |
-| [tools/steward-deploy.mjs](tools/steward-deploy.mjs) | Apple Silicon installer/updater. Builds immutable app and Ringback releases, verifies architecture/checksums, snapshots primary SQLite stores, performs health-checked cutover and rolls the app symlink back without discarding newer user data. |
+| [tools/steward-deploy.mjs](tools/steward-deploy.mjs) | Apple Silicon installer/updater. Builds immutable app and Ringback releases, verifies architecture/checksums, snapshots primary SQLite stores, performs health-checked bundle replacement and restores the previous app without discarding newer user data. |
 
 ## LLM Gateway And Models
 
@@ -2698,7 +2698,7 @@ Logs go in:
 The production deployment workflow targets Apple Silicon and uses immutable
 release directories under
 `~/Library/Application Support/Steward/deploy/releases/`. `/Applications/Steward.app`
-is the active symlink; mutable chats, watches, settings, logs, uploads, ledgers
+is a real installed app bundle, replaced from a verified release; mutable chats, watches, settings, logs, uploads, ledgers
 and Keychain credentials remain outside every release.
 
 ```sh
@@ -2724,10 +2724,11 @@ identity. `--stage-only` can do expensive build work while Steward runs;
 activation refuses to switch while an existing host still responds.
 
 Cutover first creates SQLite-consistent backups of chats, watches, Audit, Usage
-and Action Center under `deploy/backups/<release-id>/` and copies `config.env`, then changes the app
-symlink atomically and launches the candidate. If its health smoke test fails,
-the deployer asks it to quit, waits for the host to stop and rolls the symlink
-back. The first managed install preserves an existing ordinary app bundle as a
+and Action Center under `deploy/backups/<release-id>/` and copies `config.env`.
+It then verifies a temporary install copy, replaces `/Applications/Steward.app`
+with that real bundle and launches it. A failed replacement restores the previous
+copy. If its health smoke test fails, the deployer asks it to quit, waits for the
+host to stop and restores the previous archived release. The first managed install preserves an existing ordinary app bundle as a
 legacy release. Rollback intentionally does not restore data snapshots, because
 that would erase conversations and events created after the update; database
 migrations must therefore remain backward-compatible unless an explicit data
@@ -2757,9 +2758,12 @@ hides it; it does not stop background work. The localized startup overlay and
 the System page serve different purposes: launch progress versus runtime
 service/tool diagnostics.
 
-Packaged startup proactively requests EventKit Full Access and offers a one-time
-Full Disk Access explanation/deep link. The user must enable FDA manually and
-restart as needed; displaying onboarding does not verify permission was granted.
+Packaged startup checks EventKit Full Access and actual protected-data reads.
+Missing permissions produce localized recovery guidance; checks run again after
+returning from Settings, and **Check Permissions…** retries manually. Native
+menus, startup text and alerts use matching English/Italian catalogs, including
+localized macOS privacy usage descriptions. The user must enable FDA manually
+and restart as needed; displaying onboarding does not verify permission was granted.
 Standalone development processes do not inherit the packaged app’s privacy
 identity. Calendar’s AppleScript fallback still needs Automation permission,
 separately from EventKit access. Logs remain under `~/Library/Logs/Steward/`.
@@ -2926,3 +2930,13 @@ The host speaks a small channel protocol. Tools are MCP servers. Models are hidd
 - deeper structured memory over the wiki and local indexes.
 
 The core idea stays the same: own private context locally, keep memory inspectable, and make external actions subject to explicit interactive approval or previously approved, narrowly constrained authority.
+
+### macOS signing and permission recovery
+
+Run `npm run signing:setup` once on the build Mac. `npm run package:mac` then
+reuses the same local certificate from Keychain and verifies the app and bundled
+native helpers; managed updates reject an unexpected signer. Preserve this
+identity across builds. On startup and return from Settings, Steward checks
+Calendar authorization and local data reads, with recovery through **Check
+Permissions…**. The first transition to this signing identity may require granting
+permissions again. See [launcher setup](apps/mac-launcher/README.md#package).

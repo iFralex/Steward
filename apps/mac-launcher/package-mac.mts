@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { signBundle, signingIdentity } from "../../tools/mac-signing.mjs";
 
 const APP_NAME = "Steward";
 const BUNDLE_ID = "com.steward.launcher";
@@ -215,6 +216,8 @@ function findLLMWikiAppBundle(): string {
   return found;
 }
 
+// Fail before building if the persistent key is unavailable. Never fall back to ad hoc.
+signingIdentity();
 rmSync(appDir, { recursive: true, force: true });
 mkdirSync(macosDir, { recursive: true });
 mkdirSync(resourcesDir, { recursive: true });
@@ -262,6 +265,8 @@ writeFileSync(
   <key>CFBundleName</key><string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array><string>en</string><string>it</string></array>
   <key>CFBundleVersion</key><string>0.1.0</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -269,11 +274,16 @@ writeFileSync(
   <key>CFBundleIconFile</key><string>Steward</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSCalendarsFullAccessUsageDescription</key><string>Steward uses Calendar access to create, update, and delete events that you approve.</string>
-  <key>NSAppleEventsUsageDescription</key><string>Steward uses Calendar automation to create, update, and delete events that you approve.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Steward uses automation to perform the Mail, Calendar and Contacts actions that you approve.</string>
 </dict>
 </plist>
 `,
 );
+
+for (const language of ["en", "it"]) {
+  cpSync(join(repoRoot, "apps/mac-launcher/Sources/StewardLauncher/Resources", `${language}.lproj`), join(resourcesDir, `${language}.lproj`), { recursive: true });
+}
+signBundle(appDir);
 
 console.log("");
 console.log(`Built ${appDir}`);

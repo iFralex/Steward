@@ -39,14 +39,18 @@ final class CalendarEventKitBridge {
         timer = nil
     }
 
-    func requestAccess() {
-        Task {
-            do {
-                let granted = try await store.requestFullAccessToEvents()
-                if granted { store.reset() }
-                else { NSLog("Calendar full access was not granted") }
-            } catch {
-                NSLog("Calendar full-access request failed: \(error.localizedDescription)")
+    func requestAccess() async throws -> Bool {
+        let granted = try await store.requestFullAccessToEvents()
+        if granted { await refreshAccess() }
+        return granted
+    }
+
+    func refreshAccess() async {
+        // Event operations are serialized on this queue as well.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                self.store.reset()
+                continuation.resume()
             }
         }
     }

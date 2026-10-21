@@ -2,15 +2,19 @@
 
 Managed deployment targets Apple Silicon, macOS 14+ and Node 22.19+ for the current Pi dependency. Steward and Ringback run natively on ARM Homebrew; Docker is not required.
 The deployment command keeps immutable application and Ringback releases under
-`~/Library/Application Support/Steward/deploy/releases/`, and exposes the active
-app at `/Applications/Steward.app`. The first cutover preserves an existing
+`~/Library/Application Support/Steward/deploy/releases/`, and installs a real copy of the active
+app at `/Applications/Steward.app`. A candidate copy is verified before replacing
+the installed bundle; the previous install is restored if replacement fails.
+Existing symlink installations migrate automatically on their next update. The first cutover preserves an existing
 non-managed app bundle inside `deploy/releases/legacy-.../` for rollback.
 Chats, watches, audit, usage, settings, uploads and Keychain credentials stay
 in their existing locations, outside the release directories.
 
 1. Run `npm run deploy:doctor` to inspect the prerequisites and current voice
    runtime. Install native ARM Homebrew at `/opt/homebrew` if it is missing.
-2. Quit Steward. Run `npm run deploy:install -- --sip-user=YOUR_LINPHONE_NAME`
+2. Run `npm run signing:setup` once to create the persistent local code-signing
+   identity in Keychain. Keep this identity across updates; builds fail rather
+   than silently replacing it. Then quit Steward. Run `npm run deploy:install -- --sip-user=YOUR_LINPHONE_NAME`
    for a first installation. This builds the app from locked npm dependencies,
    builds Ringback and pjproject in a separate release directory, prompts for
    the SIP password and stores it in Keychain. It launches the app and waits
@@ -21,6 +25,10 @@ in their existing locations, outside the release directories.
    new runtime, and verifies it before switching. The app must be quit for the
    final cutover; `--stage-only` prepares a release while Steward is running.
    Then `node tools/steward-deploy.mjs activate RELEASE_ID` performs the switch.
+   Activation refreshes Launch Services registration for the selected bundle,
+   unregisters older archived app copies and opens `/Applications/Steward.app`, so a
+   cached older app with the same identifier is not selected for the smoke test.
+   Rollback refreshes registration for the restored version too.
 4. Run `npm run deploy:verify` or `npm run deploy:rollback` if needed. The
    previous app and its Ringback launcher remain available. A failed startup
    smoke test asks the new app to quit and rolls back automatically once it has
@@ -46,8 +54,10 @@ SQLite consistency is not one transaction across the entire application.
 Rollback never silently restores older data. Schema changes must remain backward
 compatible; an explicit restore uses the manifest mappings after stopping writers.
 
-The installer verifies the app bundle structure, ARM launcher, Ringback
-runtime, and the pinned Whisper model checksum. The app packaging also checks
+The installer verifies the app bundle structure, ARM launcher, complete code
+signature and pinned signer identity, Ringback runtime, and the pinned Whisper
+model checksum. Releases created before persistent signing remain eligible for
+explicit rollback with a legacy identity notice; new releases require signing. The app packaging also checks
 the bundled Whisper model checksum. A weekly ARM macOS workflow builds a clean
 bundle and rehearses installation, update and rollback without SIP credentials.
 The rehearsal uses `--no-launch` for the install/update cycle; it exercises
@@ -55,11 +65,24 @@ packaging, layout, verification and rollback mechanics, not successful live host
 startup. It cannot test an actual Linphone call, Tailscale route convergence or
 privacy prompts; those remain release smoke tests on the real devices.
 
-The packaged launcher requests Calendar Full Access for EventKit and guides Full
-Disk Access for database reads. Mail/Contacts and Calendar's AppleScript
+The packaged launcher checks Calendar Full Access for EventKit and actual local
+reads at startup and when returning from Settings. It serializes permission
+dialogs, guides recovery after denial and provides **Check Permissions…** in its
+menus. Full Disk Access for database reads remains a separate manual grant.
+See [launcher signing and permissions](../apps/mac-launcher/README.md#package).
+Mail/Contacts and Calendar's AppleScript
 compatibility path additionally need Automation. Launch progress and health
 checks do not prove all those permissions were granted. Only managed children
 are supervised; externally running services remain outside launcher ownership.
+
+Interactive validation on 2026-10-21 covered the migration from ad hoc signing,
+granting access to the new identity, and a second installed release with a
+different launcher code hash and the same designated requirement. After that
+update, the running release still passed Mail directory reads, Calendar database
+reads and EventKit Full Access checks. Automated tests cover changed-binary
+identity continuity, signature tampering, deployment/rollback and permission
+reminder recovery. This validates this Mac and update sequence; future macOS
+changes and explicit permission revocations still require runtime checks.
 
 Set `STEWARD_VOICE_EXIT_NODE_ID` in
 `~/Library/Application Support/Steward/config.env` to the Tailscale peer ID of

@@ -16,8 +16,11 @@ type ServiceState = "ok" | "warning" | "error" | "unknown";
 interface SystemServiceStatus {
   id: string;
   label: string;
+  labelKey?: string;
   state: ServiceState;
   detail?: string;
+  detailKey?: string;
+  detailValues?: Record<string, string | number>;
   checks?: SystemServiceCheck[];
   preparation?: {state:string;detail?:string;durationMs?:number};
   tools?: number;
@@ -27,8 +30,11 @@ interface SystemServiceStatus {
 
 interface SystemServiceCheck {
   name: string;
+  nameKey?: string;
   ok: boolean;
   detail?: string;
+  detailKey?: string;
+  detailValues?: Record<string, string | number>;
   verified?: boolean;
 }
 
@@ -826,14 +832,14 @@ function ServiceRow({ service }: { service: SystemServiceStatus }) {
       <CardHeader className="grid-cols-[auto_1fr_auto]">
         <StateIcon state={service.state} />
         <div className="min-w-0">
-          <CardTitle className="break-words">{service.label}</CardTitle>
-          <CardDescription className="break-words">{service.detail ?? t("system.serviceNoDetail")}</CardDescription>
+          <CardTitle className="break-words">{service.labelKey ? t(service.labelKey) : service.label}</CardTitle>
+          <CardDescription className="break-words">{service.detailKey ? t(service.detailKey, service.detailValues) : service.detail ?? t("system.serviceNoDetail")}</CardDescription>
           {service.preparation && <p className="text-muted-foreground text-xs">
             {t(`system.preparation.${service.preparation.state}`)}
             {service.preparation.detail ? ` — ${service.preparation.detail}` : ''}
           </p>}
         </div>
-        <Badge variant={badgeVariant(service.state)}>{service.state}</Badge>
+        <Badge variant={badgeVariant(service.state)}>{t(`system.permissions.states.${service.state}`)}</Badge>
       </CardHeader>
       {service.checks && service.checks.length > 0 && (
         <CardContent className="space-y-1.5 pt-0">
@@ -846,8 +852,8 @@ function ServiceRow({ service }: { service: SystemServiceStatus }) {
               ) : (
                 <XCircle className="text-destructive size-3.5 shrink-0" />
               )}
-              <span className="min-w-0 flex-1 break-words">{check.name}</span>
-              {check.detail && <span className="text-muted-foreground max-w-[60%] break-words text-right">{check.detail}</span>}
+              <span className="min-w-0 flex-1 break-words">{check.nameKey ? t(check.nameKey) : check.name}</span>
+              {check.detail && <span className="text-muted-foreground max-w-[60%] break-words text-right">{check.detailKey ? t(check.detailKey, check.detailValues) : check.detail}</span>}
             </div>
           ))}
         </CardContent>

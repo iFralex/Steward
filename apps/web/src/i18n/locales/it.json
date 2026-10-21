@@ -122,6 +122,42 @@
     }
   },
   "system": {
+      "permissions": {
+        "title": "Accesso ai dati macOS",
+        "calendarService": "Calendario",
+        "mail": "Apple Mail",
+        "calendar": "Calendario",
+        "readSucceeded": "Lettura dei dati locali riuscita",
+        "readDenied": "Accesso ai dati locali negato. Verifica Accesso completo al disco per Steward e riavvia l’app se macOS lo richiede.",
+        "readUnverified": "Impossibile verificare i dati locali ({{code}}); i dati potrebbero essere assenti.",
+        "readableCount": "{{readable}}/{{total}} leggibili",
+        "calendarDegraded": "{{count}} strumenti; collegato all’app; verifica i permessi del Calendario",
+        "calendarConnected": "{{count}} strumenti; collegato all’app",
+        "calendarStore": "Archivio Calendario Apple (Accesso completo al disco)",
+        "calendarStoreReadable": "Il database del Calendario è leggibile.",
+        "calendarStoreDenied": "I dati del Calendario non sono disponibili. Verifica Accesso completo al disco per Steward e riavvia se necessario.",
+        "eventKitBridge": "Collegamento EventKit",
+        "bridgeResponded": "Il collegamento al Calendario dell’app ha risposto.",
+        "bridgeUnavailable": "Il collegamento al Calendario dell’app non è disponibile. Verifica che Steward sia in esecuzione.",
+        "calendarFullAccess": "Accesso completo al Calendario",
+        "calendarGranted": "Concesso. I singoli calendari possono essere in sola lettura; le modifiche richiedono approvazione.",
+        "calendarUnverified": "Non verificato perché il collegamento al Calendario dell’app non ha risposto.",
+        "calendarAuthorization": {
+          "notDetermined": "Il permesso del Calendario non è ancora stato richiesto. Apri Steward per concederlo.",
+          "restricted": "L’accesso al Calendario è limitato dalle impostazioni del sistema o dell’organizzazione.",
+          "denied": "Accesso al Calendario negato. Abilita Steward in Privacy e sicurezza → Calendari. Accesso completo al disco è un permesso separato.",
+          "writeOnly": "È concesso solo l’accesso in scrittura al Calendario. Abilita l’accesso completo per Steward in Privacy e sicurezza → Calendari.",
+          "fullAccess": "Accesso completo al Calendario concesso.",
+          "unknown": "Impossibile determinare l’autorizzazione del Calendario. Verifica i permessi nelle Impostazioni di Sistema."
+        },
+        "states": {
+          "ok": "OK",
+          "warning": "Da verificare",
+          "error": "Errore",
+          "unknown": "Non verificato"
+        },
+        "hostConnection": "Connessione all’app"
+      },
     "preparation": {
       "queued": "Preparazione ricerca in attesa",
       "running": "Preparazione della ricerca",

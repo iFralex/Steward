@@ -13,14 +13,18 @@ import type { VoiceChannelStatus } from "./voice-channel.ts";
 import { sharedWatchEngine, watchDbPath } from "./watch-runtime.ts";
 import { watchActivityStatus } from "./watch-observability.ts";
 import {calendarHealthChecks} from './calendar-health.ts';
+import { probeLocalData } from "./mac-data-access.ts";
 
 type ServiceState = "ok" | "warning" | "error" | "unknown";
 
 export interface SystemServiceStatus {
   id: string;
   label: string;
+  labelKey?: string;
   state: ServiceState;
   detail?: string;
+  detailKey?: string;
+  detailValues?: Record<string, string | number>;
   checks?: SystemServiceCheck[];
   preparation?: PreparationTask;
   tools?: number;
@@ -30,8 +34,11 @@ export interface SystemServiceStatus {
 
 export interface SystemServiceCheck {
   name: string;
+  nameKey?: string;
   ok: boolean;
   detail?: string;
+  detailKey?: string;
+  detailValues?: Record<string, string | number>;
   verified?: boolean;
 }
 
@@ -281,7 +288,7 @@ async function mcpStatus(
   const preparation = startupPreparationSnapshot().tasks[id];
   const names = connector?.tools.length ? connector.tools : bundledToolNames[id] ?? [];
   const toolDetails = names.map(name => toolStatus(id,name,config,usage));
-  const checks:SystemServiceCheck[]=[{name:'host connection',ok:connector?.state==='ready',verified:!!connector}];
+  const checks:SystemServiceCheck[]=[{name:'host connection',...(id==='calendar'?{nameKey:'system.permissions.hostConnection'}:{}),ok:connector?.state==='ready',verified:!!connector}];
   if(id==='calendar'&&connector?.state==='ready') {
     try {
       const bridge=currentMcpBridge();
@@ -293,6 +300,7 @@ async function mcpStatus(
   }
   const degraded=checks.some(check=>!check.ok);
   return { id: `mcp-${id}`, label,
+    ...(id === "calendar" ? { labelKey: "system.permissions.calendarService", ...(connector?.state === "ready" && !connector.error ? { detailKey: degraded ? "system.permissions.calendarDegraded" : "system.permissions.calendarConnected", detailValues: { count: connector.tools.length } } : {}) } : {}),
     state: connector?.state === 'ready' ? (degraded?'warning':'ok') : connector?.state === 'error' ? 'error' : 'unknown',
     detail: connector?.error ?? (connector?.state === 'ready' ? `${connector.tools.length} tools; connected host runtime${degraded?'; Calendar access checks need attention':''}` : 'Connector is preparing'),
     preparation, tools: toolDetails.length, toolDetails,
@@ -445,14 +453,12 @@ function storageStatus(): SystemServiceStatus {
 function macPermissionsStatus(): SystemServiceStatus {
   if (process.platform !== "darwin") return { id: "permissions", label: "macOS data access", state: "unknown", detail: "macOS only", updatedAt: Date.now() };
   const locations = [
-    { name: "Apple Mail", path: join(homedir(), "Library", "Mail") },
-    { name: "Calendar", path: join(homedir(), "Library", "Calendars") },
+    { name: "Apple Mail", path: join(homedir(), "Library", "Mail"), database: undefined },
+    { name: "Calendar", path: join(homedir(), "Library", "Group Containers", "group.com.apple.calendar"), database: "Calendar.sqlitedb" },
   ];
-  const checks = locations.map(({ name, path }) => {
-    try { accessSync(path, constants.R_OK); return { name, ok: true, detail: "Readable" }; }
-    catch { return { name, ok: false, detail: `Not readable: ${path}. Check Full Disk Access.` }; }
-  });
-  return { id: "permissions", label: "macOS data access", state: checks.every((check) => check.ok) ? "ok" : "warning", detail: `${checks.filter((check) => check.ok).length}/${checks.length} readable`, checks, updatedAt: Date.now() };
+  const checks = locations.map(({ name, path, database }) => ({ name, nameKey: name === "Calendar" ? "system.permissions.calendar" : "system.permissions.mail", ...probeLocalData(path, database) }));
+  const readable = checks.filter((check) => check.ok).length;
+  return { id: "permissions", label: "macOS data access", labelKey: "system.permissions.title", state: checks.every((check) => check.ok) ? "ok" : "warning", detail: `${readable}/${checks.length} readable`, detailKey: "system.permissions.readableCount", detailValues: { readable, total: checks.length }, checks, updatedAt: Date.now() };
 }
 
 function channelStatus(config: HostConfig, context: SystemStatusContext): SystemServiceStatus {

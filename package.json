@@ -6,6 +6,7 @@
     "icon:mac": "node apps/mac-launcher/scripts/make-icon.mjs",
     "launcher:mac": "swift run --package-path apps/mac-launcher StewardLauncher",
     "package:mac": "node --import tsx apps/mac-launcher/package-mac.mts",
+    "signing:setup": "node tools/mac-signing.mjs setup",
     "deploy:doctor": "node tools/steward-deploy.mjs doctor",
     "deploy:install": "node tools/steward-deploy.mjs install",
     "deploy:update": "node tools/steward-deploy.mjs update",

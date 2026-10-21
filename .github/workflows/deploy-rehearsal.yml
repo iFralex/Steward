@@ -21,6 +21,13 @@ jobs:
         run: |
           npm ci
           npm ci --prefix apps/llm-wiki
+      # Ephemeral identity for this isolated rehearsal only. Release machines
+      # retain their original Keychain identity across builds.
+      - name: Set up rehearsal signing and test identity continuity
+        run: |
+          npm run signing:setup
+          node --test tools/mac-signing.test.mjs tools/permission-i18n.test.mjs
+          swift test --package-path apps/mac-launcher
       - name: Build the full native bundle
         run: npm run package:mac
       - name: Build the pinned native Ringback runtime
@@ -48,5 +55,5 @@ jobs:
           echo "ACTION_CENTER_DIR=$RUNNER_TEMP/missing-actions" >> "$STEWARD_CONFIG_FILE"
           node tools/steward-deploy.mjs install --bundle=dist/mac/Steward.app --no-voice --no-launch
           node tools/steward-deploy.mjs update --bundle=dist/mac/Steward.app --no-voice --no-launch
-          node tools/steward-deploy.mjs rollback
+          node tools/steward-deploy.mjs rollback --no-launch
           node tools/steward-deploy.mjs verify
