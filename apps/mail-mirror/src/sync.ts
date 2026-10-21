@@ -6,6 +6,7 @@ import type { BlobStore } from "./blobstore.ts";
 import type { BodyState, MessageRow, Store } from "./store.ts";
 import type { EmlxEntry, ParsedMessage } from "./types.ts";
 import { refreshIdentity } from "./enrich.ts";
+import { BODY_EXTRACTOR_VERSION } from "./body.ts";
 
 export interface SyncDeps {
   store: Store;
@@ -96,6 +97,7 @@ export async function ingestEmlxFile(deps: SyncDeps, entry: EmlxEntry): Promise<
     date: parsed.date,
     bodyText: parsed.bodyText,
     bodyState: bodyStateFor(entry.isPartial, parsed.bodyText),
+    bodyExtraction: parsed.bodyExtraction,
     source: "emlx",
     emlxPath,
     inReplyTo: parsed.inReplyTo,
@@ -137,13 +139,20 @@ export async function reconcile(deps: SyncDeps, mailRoot: string): Promise<{ ing
   const entries = enumerateEmlx(mailRoot);
   const onDisk = new Set(entries.map((e) => e.path));
   const known = deps.store.allKnownPaths();
+  // A parser upgrade must also revisit unchanged files. Bound each reconciliation
+  // so ordinary sync still finishes promptly on a large archive.
+  const stale = new Set((deps.store.raw.prepare(`SELECT emlx_path FROM messages
+    WHERE deleted=0 AND source='emlx' AND emlx_path IS NOT NULL
+    AND (COALESCE(json_extract(body_extraction,'$.version'),0) < ?
+      OR json_extract(body_extraction,'$.textHash') IS NULL)
+    ORDER BY date DESC LIMIT 50`).all(BODY_EXTRACTOR_VERSION) as {emlx_path:string}[]).map(r=>r.emlx_path));
   let ingested = 0;
   for (const e of entries) {
     if (!known.has(e.path)) {
       if (await ingestEmlxFile(deps, e)) ingested++;
     } else {
       const prev = deps.store.pathMtime(e.path);
-      if (prev === undefined || e.mtimeMs > prev) {
+      if (prev === undefined || e.mtimeMs > prev || stale.has(e.path)) {
         if (await ingestEmlxFile(deps, e)) ingested++;
       }
     }

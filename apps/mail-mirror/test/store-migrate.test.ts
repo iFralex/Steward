@@ -11,7 +11,7 @@ function columns(db: Database.Database, table: string): Set<string> {
 test("fresh DB has the new columns and tables", () => {
   const s = Store.open(":memory:");
   const cols = columns(s.raw, "messages");
-  for (const c of ["answered", "junk", "flag_color", "apple_thrid", "to_names", "cc_names"]) {
+  for (const c of ["answered", "junk", "flag_color", "apple_thrid", "to_names", "cc_names", "body_extraction"]) {
     assert.ok(cols.has(c), `messages.${c} missing`);
   }
   const tables = new Set(
@@ -38,6 +38,7 @@ test("an old DB missing the new columns is migrated in place", () => {
   const s = new Store(db); // non-readonly → migrates
   const cols = columns(s.raw, "messages");
   assert.ok(cols.has("apple_thrid") && cols.has("to_names"));
+  assert.ok(cols.has("body_extraction"));
   assert.equal((s.raw.prepare("SELECT COUNT(*) c FROM messages").get() as { c: number }).c, 1);
   s.close();
 });

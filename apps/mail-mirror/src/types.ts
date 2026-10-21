@@ -1,3 +1,5 @@
+import type { BodyExtraction } from "./body.ts";
+
 export interface ParsedAttachment {
   filename: string;
   mime: string;
@@ -16,6 +18,7 @@ export interface ParsedMessage {
   subject: string;
   date: number; // epoch seconds
   bodyText: string;
+  bodyExtraction?: BodyExtraction;
   inReplyTo: string | null; // normalised
   references: string[]; // normalised
   gmThrid: string | null;

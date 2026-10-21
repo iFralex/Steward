@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { simpleParser } from "mailparser";
 import type { ParsedAttachment, ParsedMessage } from "./types.ts";
+import { extractBody } from "./body.ts";
 
 export function normalizeId(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -57,7 +59,8 @@ export function sliceMessageBytes(buf: Buffer): Buffer {
 }
 
 export async function parseEmlx(buf: Buffer): Promise<ParsedMessage> {
-  const m = await simpleParser(sliceMessageBytes(buf));
+  const bytes = sliceMessageBytes(buf);
+  const m = await simpleParser(bytes, { skipTextToHtml: true, skipHtmlToText: true, skipImageLinks: true });
   const trailer = parsePlistTrailer(buf);
   const fromAddr = m.from?.value?.[0]?.address ?? "";
   const fromName = m.from?.value?.[0]?.name ?? "";
@@ -67,7 +70,8 @@ export async function parseEmlx(buf: Buffer): Promise<ParsedMessage> {
   };
   const to = addrParts(m.to);
   const cc = addrParts(m.cc);
-  const bodyText = m.text ?? (m.html ? String(m.html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
+  const body = extractBody(m.text, m.html);
+  body.extraction.sourceHash = createHash("sha256").update(bytes).digest("hex");
   const attachments: ParsedAttachment[] = (m.attachments ?? []).map((a) => ({
     filename: a.filename ?? "attachment",
     mime: a.contentType ?? "application/octet-stream",
@@ -85,7 +89,8 @@ export async function parseEmlx(buf: Buffer): Promise<ParsedMessage> {
     ccNames: cc.names,
     subject: m.subject ?? "",
     date: m.date ? Math.floor(m.date.getTime() / 1000) : 0,
-    bodyText,
+    bodyText: body.text,
+    bodyExtraction: body.extraction,
     inReplyTo: normalizeId(m.inReplyTo),
     references: normalizeRefs(m.references),
     gmThrid: typeof gm === "string" ? gm : null,

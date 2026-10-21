@@ -26,6 +26,11 @@ test("reconcile re-ingests an emlx whose mtime advanced (flag change propagates)
   const blobs = new BlobStore(join(dir, "blobs"));
   await reconcile({ store, blobs }, root);
   assert.equal(store.getMessage("m1@x")!.flagged, false);
+  // The source mtime stays identical: only the extractor version is stale.
+  store.raw.prepare("UPDATE messages SET body_text='old placeholder', body_extraction=NULL WHERE message_id='m1@x'").run();
+  await reconcile({ store, blobs }, root);
+  assert.equal(store.getMessage("m1@x")!.bodyText, "body");
+  assert.equal(store.getMessage("m1@x")!.bodyExtraction?.version, 2);
 
   writeFileSync(path, emlx(8590195856)); // now flagged
   utimesSync(path, new Date(), new Date(Date.now() + 5000)); // bump mtime forward

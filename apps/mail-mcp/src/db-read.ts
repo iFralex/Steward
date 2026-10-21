@@ -3,6 +3,8 @@ import { parseDetail } from "./parse.ts";
 import { readScript } from "./applescript.ts";
 import { mailUrl } from "./mail-url.ts";
 import { runOsa } from "./osascript.ts";
+import { parseEmlxFile } from "../../mail-mirror/src/emlx.ts";
+import { extractionIsCurrent, type BodyExtraction } from "../../mail-mirror/src/body.ts";
 
 export interface MailDetail {
   subject: string;
@@ -11,6 +13,7 @@ export interface MailDetail {
   body: string;
   attachments: { name: string; index: number }[];
   bodyState: string;
+  bodyExtraction?: BodyExtraction;
   /** Apple Mail deep link — clicking it opens the message in Mail.app. */
   mailUrl: string;
 }
@@ -19,6 +22,7 @@ export async function readDb(
   store: Store,
   ref: { id?: string; messageId?: string },
   runScoped: (script: string) => Promise<string> = (s) => runOsa(s, { timeoutMs: 90_000 }),
+  readLocal: typeof parseEmlxFile = parseEmlxFile,
 ): Promise<MailDetail> {
   const messageId = ref.messageId ?? ref.id ?? "";
   const live = store.raw
@@ -35,14 +39,25 @@ export async function readDb(
 
   let body = row.bodyText;
   let bodyState = row.bodyState;
-  // Only pay for a live read when the mirror has essentially NO body. A "partial"
-  // body_state merely reflects Mail's `.partial.emlx` download flag — the text it
-  // extracted is the same a live read would return (verified across the whole
-  // mirror: 120/120 partials already had the complete body), so serving it
-  // straight from SQL avoids a ~tens-of-seconds AppleScript scan for ~half of all
-  // messages. Genuinely empty rows (`none`) still fall back to a live read.
+  let bodyExtraction = row.bodyExtraction;
+  if (!extractionIsCurrent(body, bodyExtraction) && row.emlxPath) {
+    try {
+      const local = await readLocal(row.emlxPath);
+      if (local.messageId === messageId && local.bodyText.trim() && local.bodyExtraction) {
+        body = local.bodyText;
+        bodyExtraction = local.bodyExtraction;
+        if (bodyState === "none") bodyState = "partial";
+        if (!store.raw.readonly) store.updateBody(messageId, row.bodyText, body, bodyExtraction);
+      }
+    } catch { /* Missing local source: keep the existing body and the live fallback. */ }
+  }
+  // Download completeness and extraction quality are independent. Do not live-read
+  // a valid short reply just because its file is partial; do recover an empty
+  // full download instead of treating "full" as proof that its text is usable.
   const MIN_BODY_CHARS = 20;
-  if (bodyState !== "full" && body.trim().length < MIN_BODY_CHARS) {
+  const knownExtraction = !!bodyExtraction && bodyExtraction.quality !== "unavailable";
+  const needsLive = !body.trim() || bodyExtraction?.quality === "unavailable" || (!knownExtraction && bodyState !== "full");
+  if (needsLive && body.trim().length < MIN_BODY_CHARS) {
     // Live read via the GLOBAL finder (readScript): prefers Mail's indexed numeric
     // `id`, falls back to a global `whose message id is` scan. If it fails, keep
     // whatever the mirror had rather than failing the whole read.
@@ -60,6 +75,7 @@ export async function readDb(
       ) {
         body = detail.body;
         bodyState = "full";
+        bodyExtraction = undefined; // A live Mail.app read has no MIME extraction provenance.
       }
     } catch {
       // keep the mirror's partial body + bodyState
@@ -72,6 +88,7 @@ export async function readDb(
     body,
     attachments,
     bodyState,
+    ...(bodyExtraction ? { bodyExtraction } : {}),
     mailUrl: mailUrl(messageId),
   };
 }

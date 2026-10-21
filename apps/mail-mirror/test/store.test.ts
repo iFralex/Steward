@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type MessageRow } from "../src/store.ts";
+import { extractBody } from "../src/body.ts";
 
 function row(overrides: Partial<MessageRow> = {}): MessageRow {
   return {
@@ -25,6 +26,36 @@ test("upsert dedups by messageId and FTS finds body terms", () => {
   assert.equal(hits.length, 1);
   assert.equal(hits[0].messageId, "m1@x");
   assert.ok(hits[0].subject.includes("updated"));
+  s.close();
+});
+
+test("body repair updates both search indexes without changing flags or identity", () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage(row({bodyText:"Plain text version not available", unread:true, flagged:true}));
+  assert.equal(s.updateBody("m1@x", "stale", "wrong"), false);
+  assert.equal(s.updateBody("m1@x", "Plain text version not available", "Carica quietanza ENEA"), true);
+  assert.equal(s.searchFts("quietanza", 10)[0]?.messageId, "m1@x");
+  assert.equal(s.searchTrig("body_text", "quietanza", 10)[0]?.messageId, "m1@x");
+  assert.equal(s.searchFts("available", 10).length, 0);
+  assert.equal(s.getMessage("m1@x")?.flagged, true);
+  assert.equal(s.getMessage("m1@x")?.unread, true);
+  s.close();
+});
+
+test("extraction provenance round-trips; metadata-only upgrades do not invalidate embeddings", () => {
+  const s = Store.open(":memory:");
+  const result = extractBody("Ok", "<p>Ok</p>");
+  s.upsertMessage(row({bodyText:result.text, bodyExtraction:result.extraction}));
+  assert.deepEqual(s.getMessage("m1@x")?.bodyExtraction, result.extraction);
+  s.raw.prepare("INSERT INTO embed_state(message_id,model,dim,source_hash,embedded_at) VALUES (?,?,?,?,?)")
+    .run("m1@x", "test", 1, "hash", 2_000_000_000);
+  const updated = s.raw.prepare("SELECT updated_at FROM messages WHERE message_id='m1@x'").get();
+  assert.equal(s.updateBody("m1@x", result.text, result.text, {...result.extraction, reason:"metadata-upgrade"}), true);
+  assert.deepEqual(s.raw.prepare("SELECT updated_at FROM messages WHERE message_id='m1@x'").get(), updated);
+  assert.equal(s.getMessage("m1@x")?.bodyExtraction?.reason, "metadata-upgrade");
+  assert.equal(s.messagesNeedingEmbedding(10).length, 0);
+  assert.equal(s.updateBody("m1@x", result.text, "Nuova quietanza", result.extraction), true);
+  assert.equal(s.messagesNeedingEmbedding(10)[0]?.messageId, "m1@x");
   s.close();
 });
 

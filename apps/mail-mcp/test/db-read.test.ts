@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type MessageRow } from "../../mail-mirror/src/store.ts";
 import { readDb } from "../src/db-read.ts";
+import { parseEmlx } from "../../mail-mirror/src/emlx.ts";
 
 const US = "\x1f";
 function row(id: string, state: "full" | "none"): MessageRow {
@@ -27,6 +28,36 @@ test("readDb returns the DB body when full (no live read)", async () => {
   s.close();
 });
 
+test("readDb repairs a full legacy body locally, persists provenance and avoids repeating extraction", async () => {
+  const s = Store.open(":memory:");
+  s.upsertMessage({...row("legacy@x", "full"), bodyText:"Unknown fallback text"});
+  const source=Buffer.from('Message-ID: <legacy@x>\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Carica fattura e quietanza.</p>');
+  const parsed=await parseEmlx(Buffer.concat([Buffer.from(`${source.length}\n`),source]));
+  let localCalls=0;
+  const live=async()=>{throw new Error("Must not call Mail.app");};
+  const local=async()=>{localCalls++;return parsed;};
+  const first=await readDb(s,{messageId:"legacy@x"},live,local);
+  assert.match(first.body,/Carica fattura/);
+  assert.equal(first.bodyExtraction?.source,"html");
+  assert.equal(s.getMessage("legacy@x")?.bodyText,first.body);
+  await readDb(s,{messageId:"legacy@x"},live,local);
+  assert.equal(localCalls,1);
+  // A legacy writer can change the body without clearing newer extraction metadata.
+  s.raw.prepare("UPDATE messages SET body_text='Legacy writer fallback' WHERE message_id='legacy@x'").run();
+  const repaired=await readDb(s,{messageId:"legacy@x"},live,local);
+  assert.match(repaired.body,/Carica fattura/);
+  assert.equal(localCalls,2);
+  s.close();
+});
+
+test("readDb never adopts a source belonging to another Message-ID", async () => {
+  const s=Store.open(":memory:");s.upsertMessage(row("right@x","full"));
+  const source=Buffer.from('Message-ID: <wrong@x>\r\n\r\nWrong body');
+  const parsed=await parseEmlx(Buffer.concat([Buffer.from(`${source.length}\n`),source]));
+  const detail=await readDb(s,{messageId:"right@x"},async()=>{throw new Error("Must not call Mail.app");},async()=>parsed);
+  assert.equal(detail.body,"FULL BODY");s.close();
+});
+
 test("readDb serves a substantial partial body straight from the mirror (no live read)", async () => {
   const s = Store.open(":memory:");
   const r: MessageRow = { ...row("p2@x", "none"), bodyState: "partial", bodyText: "This is the full extracted body text from the mirror." };
@@ -46,6 +77,32 @@ test("readDb completes a non-full body with a live read", async () => {
   assert.ok(d.body.includes("DOWNLOADED"));
   assert.equal(d.bodyState, "full");
   s.close();
+});
+
+test("a full download with an empty body still attempts recovery", async () => {
+  const s=Store.open(":memory:");s.upsertMessage({...row("empty@x","full"),bodyText:""});
+  const detail=await readDb(s,{messageId:"empty@x"},async()=>liveOut("Recovered complete text"));
+  assert.equal(detail.body,"Recovered complete text");s.close();
+});
+
+test("a valid short reply in a partial file does not cause a live read", async () => {
+  const s=Store.open(":memory:");
+  const source=Buffer.from('Message-ID: <ok@x>\r\n\r\nOk');
+  const parsed=await parseEmlx(Buffer.concat([Buffer.from(`${source.length}\n`),source]));
+  s.upsertMessage({...row("ok@x","none"),bodyState:"partial",bodyText:parsed.bodyText,bodyExtraction:parsed.bodyExtraction});
+  const detail=await readDb(s,{messageId:"ok@x"},async()=>{throw new Error("Unexpected live read");});
+  assert.equal(detail.body,"Ok");s.close();
+});
+
+test("a known image-only body does not repeatedly trigger a live read that cannot do OCR", async () => {
+  const s=Store.open(":memory:");
+  const source=Buffer.from('Message-ID: <image@x>\r\nContent-Type: text/html\r\n\r\n<img src="cid:photo">');
+  const parsed=await parseEmlx(Buffer.concat([Buffer.from(`${source.length}\n`),source]));
+  s.upsertMessage({...row("image@x","none"),bodyState:"partial",bodyText:parsed.bodyText,bodyExtraction:parsed.bodyExtraction});
+  let calls=0;
+  const detail=await readDb(s,{messageId:"image@x"},async()=>{calls++;return liveOut("");});
+  assert.equal(calls,0);
+  assert.equal(detail.bodyExtraction?.quality,"limited");s.close();
 });
 
 test("readDb uses the INDEXED native id (whose id is) when an id is given", async () => {

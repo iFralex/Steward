@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { VectorStore } from "@steward/search";
+import type { BodyExtraction } from "./body.ts";
 
 export type BodyState = "full" | "partial" | "none";
 
@@ -15,6 +16,7 @@ export interface MessageRow {
   date: number;
   bodyText: string;
   bodyState: BodyState;
+  bodyExtraction?: BodyExtraction;
   source: "emlx" | "applescript";
   emlxPath: string | null;
   inReplyTo: string | null;
@@ -51,7 +53,7 @@ CREATE TABLE IF NOT EXISTS messages (
   flagged INTEGER DEFAULT 0, unread INTEGER DEFAULT 0, size INTEGER,
   deleted INTEGER DEFAULT 0, ingested_at INTEGER, updated_at INTEGER,
   answered INTEGER DEFAULT 0, junk INTEGER DEFAULT 0, flag_color INTEGER, apple_thrid INTEGER,
-  to_names TEXT, cc_names TEXT
+  to_names TEXT, cc_names TEXT, body_extraction TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_account_date ON messages(account, date);
@@ -128,6 +130,7 @@ export class Store {
       (this.raw.prepare("PRAGMA table_info(messages)").all() as { name: string }[]).map((r) => r.name),
     );
     const add: [string, string][] = [
+      ["body_extraction", "TEXT"],
       ["answered", "INTEGER DEFAULT 0"], ["junk", "INTEGER DEFAULT 0"],
       ["flag_color", "INTEGER"], ["apple_thrid", "INTEGER"],
       ["to_names", "TEXT"], ["cc_names", "TEXT"],
@@ -155,11 +158,11 @@ export class Store {
         `INSERT INTO messages (message_id, account, mailbox, from_name, from_addr, to_addrs, cc_addrs,
            subject, date, snippet, body_text, body_state, source, emlx_path, in_reply_to, reference_ids,
            gm_thrid, size, deleted, ingested_at, updated_at,
-           to_names, cc_names, unread, flagged, answered, junk, flag_color, apple_thrid)
+           to_names, cc_names, unread, flagged, answered, junk, flag_color, apple_thrid, body_extraction)
          VALUES (@message_id,@account,@mailbox,@from_name,@from_addr,@to_addrs,@cc_addrs,
            @subject,@date,@snippet,@body_text,@body_state,@source,@emlx_path,@in_reply_to,@reference_ids,
            @gm_thrid,@size,0,@now,@now,
-           @to_names,@cc_names,@unread,@flagged,@answered,@junk,@flag_color,@apple_thrid)
+           @to_names,@cc_names,@unread,@flagged,@answered,@junk,@flag_color,@apple_thrid,@body_extraction)
          ON CONFLICT(message_id) DO UPDATE SET
            account=excluded.account, mailbox=excluded.mailbox, from_name=excluded.from_name,
            from_addr=excluded.from_addr, to_addrs=excluded.to_addrs, cc_addrs=excluded.cc_addrs,
@@ -170,7 +173,8 @@ export class Store {
            deleted=0, updated_at=@now,
            to_names=excluded.to_names, cc_names=excluded.cc_names, unread=excluded.unread,
            flagged=excluded.flagged, answered=excluded.answered, junk=excluded.junk,
-           flag_color=excluded.flag_color, apple_thrid=excluded.apple_thrid`,
+           flag_color=excluded.flag_color, apple_thrid=excluded.apple_thrid,
+           body_extraction=excluded.body_extraction`,
       )
       .run({
         message_id: r.messageId, account: r.account, mailbox: r.mailbox,
@@ -184,9 +188,32 @@ export class Store {
         unread: r.unread ? 1 : 0, flagged: r.flagged ? 1 : 0,
         answered: r.answered ? 1 : 0, junk: r.junk ? 1 : 0,
         flag_color: r.flagColor, apple_thrid: r.appleThrid,
+        body_extraction: r.bodyExtraction ? JSON.stringify(r.bodyExtraction) : null,
       });
     this.reindexFts(r.messageId);
     this.reindexTrig(r.messageId);
+  }
+
+  /** Repair extracted text without changing Mail flags, paths or thread identity. */
+  updateBody(messageId: string, previous: string, body: string, extraction?: BodyExtraction): boolean {
+    return this.raw.transaction(() => {
+      if (previous === body) {
+        return !!this.raw.prepare("UPDATE messages SET body_extraction=? WHERE message_id=? AND body_text=? AND deleted=0")
+          .run(extraction ? JSON.stringify(extraction) : null, messageId, previous).changes;
+      }
+      const result = this.raw.prepare(`UPDATE messages SET body_text=?, snippet=?,
+        body_extraction=?,
+        body_state=CASE WHEN body_state='none' THEN 'partial' ELSE body_state END,
+        size=MAX(0,COALESCE(size,0)+?),
+        updated_at=MAX(CAST(strftime('%s','now') AS INTEGER),
+          COALESCE((SELECT embedded_at+1 FROM embed_state WHERE message_id=?),0))
+        WHERE message_id=? AND body_text=? AND deleted=0`)
+        .run(body, body.slice(0, 200), extraction ? JSON.stringify(extraction) : null, body.length - previous.length, messageId, messageId, previous);
+      if (!result.changes) return false;
+      this.reindexFts(messageId);
+      this.reindexTrig(messageId);
+      return true;
+    })();
   }
 
   private reindexTrig(messageId: string): void {
@@ -455,6 +482,7 @@ function rowToMessage(m: Record<string, unknown>): MessageRow {
     date: (m.date as number) ?? 0,
     bodyText: (m.body_text as string) ?? "",
     bodyState: (m.body_state as BodyState) ?? "none",
+    bodyExtraction: m.body_extraction ? JSON.parse(m.body_extraction as string) : undefined,
     source: (m.source as "emlx" | "applescript") ?? "emlx",
     emlxPath: (m.emlx_path as string) ?? null,
     inReplyTo: (m.in_reply_to as string) ?? null,
