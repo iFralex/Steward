@@ -70,7 +70,7 @@ test("gateway metering: non-streaming chat, embeddings, unknown fallback, failur
   assert.equal(r1.status, 200);
 
   // 2) unlabeled call → unknown/unknown
-  await fetch(`http://127.0.0.1:${gwPort}/v1/chat/completions`, {
+  const unknownResponse = await fetch(`http://127.0.0.1:${gwPort}/v1/chat/completions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model: "tier-5", messages: [{ role: "user", content: "hi" }] }),
@@ -107,6 +107,25 @@ test("gateway metering: non-streaming chat, embeddings, unknown fallback, failur
 
   assert.equal(rows[1].service, "unknown");
   assert.equal(rows[1].action, "unknown");
+  const requestId = unknownResponse.headers.get("x-steward-request-id");
+  assert.ok(requestId);
+  // Origin probing is asynchronous; metering does not wait for process lookup.
+  let origin: any;
+  for (let i = 0; i < 100; i++) {
+    try { origin = usageLedger().raw.prepare("SELECT * FROM request_origins WHERE request_id=?").get(requestId); } catch { /* probe pending */ }
+    if (origin) break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(origin.llm_call_id, rows[1].id);
+  const metadata = JSON.parse(origin.metadata_json);
+  assert.equal(metadata.path, "/v1/chat/completions");
+  assert.equal(metadata.shape.messages, 1);
+  assert.equal(metadata.shape.roleCounts.user, 1);
+  assert.equal(metadata.clientAddress, "127.0.0.1");
+  assert.ok(metadata.clientPort > 0);
+  assert.ok(!origin.metadata_json.includes('"hi"'));
+  assert.equal((usageLedger().raw.prepare("SELECT COUNT(*) n FROM request_origins").get() as { n: number }).n, 1);
+  assert.ok(usageLedger().raw.prepare("SELECT 1 FROM provider_attempts WHERE request_id=?").get(requestId));
 
   assert.equal(rows[2].service, "mail-mcp");
   assert.equal(rows[2].input_tokens, 7);

@@ -2,6 +2,7 @@
 // Live smoke of the running gateway. Needs LiteLLM up + Ollama up + DEEPSEEK_API_KEY.
 // Run: node --import tsx scripts/smoke.mts
 import { extractJson } from "../src/extract-json.ts";
+import { usageHeaders } from "@steward/protocol";
 
 const BASE = process.env.GATEWAY_URL ?? "http://127.0.0.1:4000";
 let failed = false;
@@ -9,7 +10,7 @@ let failed = false;
 async function embed(): Promise<void> {
   const res = await fetch(`${BASE}/v1/embeddings`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...usageHeaders("gateway-smoke", "embed") },
     body: JSON.stringify({ model: "local-embed", input: "hello world" }),
   });
   const data = (await res.json()) as { data?: { embedding: number[] }[] };
@@ -21,7 +22,7 @@ async function embed(): Promise<void> {
 async function chat(): Promise<void> {
   const res = await fetch(`${BASE}/v1/chat/completions`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...usageHeaders("gateway-smoke", "chat") },
     body: JSON.stringify({
       model: "tier-2",
       messages: [{ role: "user", content: 'Reply with ONLY this JSON: {"ok": true}' }],

@@ -131,3 +131,32 @@ npm test -w @steward/llm-gateway
 
 The live smoke above contacts the configured models and writes normal Usage
 records. It is separate from unit tests.
+
+Unattributed calls now return `x-steward-request-id` and retain bounded diagnostics
+in the ledger's `request_origins` table, linked to the terminal `llm_calls.id`
+and the existing provider-attempt request ID. Only calls missing a service or
+action label create diagnostic rows. These contain endpoint, timestamp, local
+socket, user agent, page origins, request counts/lengths and best-effort local
+process identity. Prompts, embedding text, authorization, cookies, URL query
+strings, process arguments and environment are excluded. The diagnostic table
+keeps approximately the latest 10,000 rows (pruned every 128 writes); billing
+history is untouched. Unattributed warnings are limited to once per minute.
+
+On macOS, `STEWARD_GATEWAY_PEER_BIN` points to the helper built from
+`tools/gateway-peer.c`. It resolves the loopback socket to a same-user process
+using libproc and records PID, parent PID and executable paths. The probe runs
+asynchronously, with a one-second timeout and at most two concurrent probes;
+request processing does not wait for it. Unsupported platforms, expired sockets
+and unavailable probes remain explicitly marked rather than guessed.
+
+Inspect recent origins without scanning the billing history:
+
+```sql
+SELECT r.request_id, r.ts, l.id, l.service, l.action, l.cost_usd,
+       json_extract(r.metadata_json,'$.process.chain[0].executable') AS caller,
+       r.metadata_json
+FROM request_origins r JOIN llm_calls l ON l.id=r.llm_call_id
+ORDER BY r.ts DESC LIMIT 50;
+```
+
+Historical `unknown` rows are not relabeled from timing correlations alone.

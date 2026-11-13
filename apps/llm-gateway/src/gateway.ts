@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { usageLedger } from "@steward/usage-ledger";
 import { USAGE_ACTION_HEADER, USAGE_SERVICE_HEADER, USAGE_SESSION_HEADER, USAGE_UNKNOWN } from "@steward/protocol";
+import { captureRequestOrigin, recordRequestOrigin, type RequestOrigin } from "./request-origin.js";
 
 type Json = Record<string, unknown>;
 type GatewayModel = {
@@ -80,6 +81,7 @@ export const rates: Record<string, { input: number; output: number; cacheRead: n
 };
 
 interface CallMeta {
+  origin?: Promise<RequestOrigin>;
   requestId: string;
   service: string;
   action: string;
@@ -93,10 +95,13 @@ function callMeta(req: IncomingMessage, body: Json): CallMeta {
     const v = req.headers[name];
     return typeof v === "string" && v.trim() ? v.trim() : null;
   };
+  const service = h(USAGE_SERVICE_HEADER) ?? USAGE_UNKNOWN;
+  const action = h(USAGE_ACTION_HEADER) ?? USAGE_UNKNOWN;
   return {
     requestId: randomUUID(),
-    service: h(USAGE_SERVICE_HEADER) ?? USAGE_UNKNOWN,
-    action: h(USAGE_ACTION_HEADER) ?? USAGE_UNKNOWN,
+    service, action,
+    ...(service === USAGE_UNKNOWN || action === USAGE_UNKNOWN
+      ? { origin: captureRequestOrigin(req, body) } : {}),
     sessionId: h(USAGE_SESSION_HEADER),
     t0: Date.now(),
     tierRequested: typeof body.model === "string" ? body.model : "",
@@ -119,6 +124,8 @@ export function tokensFromUsage(usage: unknown): { input: number; output: number
 }
 
 /** Best-effort ledger write — metering must never break an LLM call. */
+let lastOriginWarning = 0;
+let suppressedOriginWarnings = 0;
 function recordCall(meta: CallMeta, servedTier: string | null, model: string, status: number, ok: boolean, usage: unknown): void {
   try {
     const t = tokensFromUsage(usage);
@@ -130,6 +137,19 @@ function recordCall(meta: CallMeta, servedTier: string | null, model: string, st
       inputTokens: t.input, outputTokens: t.output, cacheReadTokens: t.cacheRead, cacheWriteTokens: t.cacheWrite,
       costUsd: cost, durationMs: Date.now() - meta.t0, ok, status,
     });
+    if (meta.origin) {
+      const ledger = usageLedger();
+      const callId = (ledger.raw.prepare("SELECT last_insert_rowid() id").get() as { id: number }).id;
+      void meta.origin.then(origin => {
+        recordRequestOrigin(ledger.raw, meta.requestId, callId, meta.t0, origin);
+        if (Date.now() - lastOriginWarning >= 60_000) {
+          console.warn(JSON.stringify({ event: "usage.unattributed", requestId: meta.requestId,
+            callId, service: meta.service, action: meta.action, status, costUsd: cost,
+            process: origin.process, suppressed: suppressedOriginWarnings }));
+          lastOriginWarning = Date.now(); suppressedOriginWarnings = 0;
+        } else { suppressedOriginWarnings++; }
+      }).catch(error => console.warn(`[llm-gateway] origin write failed: ${error instanceof Error ? error.message : String(error)}`));
+    }
   } catch (err) {
     console.warn(`[llm-gateway] usage ledger write failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -481,6 +501,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   try {
     const body = JSON.parse(await readBody(req)) as Json;
     const meta = callMeta(req, body);
+    res.setHeader("x-steward-request-id", meta.requestId);
     const path = url.replace(/^\/v1/, "");
     if (body.stream === true) {
       await proxyStream(path, body, res, meta);
