@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import type { GateDecision } from "./gte.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS promote_state (
@@ -10,6 +11,16 @@ CREATE TABLE IF NOT EXISTS promote_state (
   wiki_filename TEXT,
   source_hash TEXT,
   promoted_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS mail_gate_cache (
+  thread_id INTEGER PRIMARY KEY,
+  cache_key TEXT NOT NULL,
+  decision_json TEXT NOT NULL,
+  evaluated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mail_runtime (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL
 );`;
 
 export interface PromoteRecord {
@@ -46,6 +57,42 @@ export class PromoteState {
   needsProcessing(messageId: string, sourceHash: string): boolean {
     const r = this.db.prepare("SELECT source_hash FROM promote_state WHERE message_id=?").get(messageId) as { source_hash: string } | undefined;
     return !r || r.source_hash !== sourceHash;
+  }
+
+  gateDecision(threadId: number, cacheKey: string): GateDecision | undefined {
+    const row = this.db.prepare("SELECT decision_json FROM mail_gate_cache WHERE thread_id=? AND cache_key=?").get(threadId, cacheKey) as { decision_json: string } | undefined;
+    try {
+      const value = row ? JSON.parse(row.decision_json) : undefined;
+      if (value?.route === "llm" && value.reason === "context_overflow" && Number.isInteger(value.tokens) && value.tokens > 8192) return value;
+      if (value?.reason === "scored" && ["discard", "llm"].includes(value.route)
+        && Number.isFinite(value.score) && value.score >= 0 && value.score <= 1
+        && Number.isFinite(value.threshold) && value.threshold > 0 && value.threshold < 1
+        && Number.isInteger(value.tokens) && value.tokens >= 1 && value.tokens <= 8192
+        && (value.route === "discard") === (value.score < value.threshold)) return value;
+    } catch { /* invalid cache must not discard a mail */ }
+    return undefined;
+  }
+
+  recordGate(threadId: number, cacheKey: string, decision: GateDecision): void {
+    this.db.prepare(`INSERT INTO mail_gate_cache(thread_id,cache_key,decision_json,evaluated_at) VALUES(?,?,?,?)
+      ON CONFLICT(thread_id) DO UPDATE SET cache_key=excluded.cache_key,decision_json=excluded.decision_json,evaluated_at=excluded.evaluated_at`)
+      .run(threadId, cacheKey, JSON.stringify(decision), Math.floor(Date.now()/1000));
+  }
+
+  runtime<T>(key: string): T | undefined {
+    const row = this.db.prepare("SELECT value_json FROM mail_runtime WHERE key=?").get(key) as { value_json: string } | undefined;
+    try { return row ? JSON.parse(row.value_json) as T : undefined; } catch { return undefined; }
+  }
+
+  setRuntime(key: string, value: unknown): void {
+    this.db.prepare("INSERT INTO mail_runtime(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json")
+      .run(key, JSON.stringify(value));
+  }
+
+  gateCounts(): Record<string, number> {
+    const rows = this.db.prepare("SELECT json_extract(decision_json,'$.route') route,count(*) count FROM mail_gate_cache WHERE json_valid(decision_json) GROUP BY 1")
+      .all() as { route: string; count: number }[];
+    return Object.fromEntries(rows.map(r => [r.route, r.count]));
   }
 
   get(messageId: string): { decision: string; sourceHash: string } | undefined {

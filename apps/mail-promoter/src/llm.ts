@@ -2,6 +2,10 @@ import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 export type Chat = (system: string, user: string) => Promise<string>;
 
+export class GatewayChatError extends Error {
+  constructor(readonly status: number) { super(`gateway chat ${status}`); }
+}
+
 /** Build an OpenAI-compatible chat function over the gateway (or any OpenAI endpoint). */
 export function gatewayChat(
   cfg: { endpoint: string; model: string; apiKey?: string; usage?: { service: string; action: string } },
@@ -18,7 +22,7 @@ export function gatewayChat(
       },
       body: JSON.stringify({ model: cfg.model, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
     });
-    if (!res.ok) throw new Error(`gateway chat ${res.status}`);
+    if (!res.ok) throw new GatewayChatError(res.status);
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     return data.choices?.[0]?.message?.content ?? "";
   };

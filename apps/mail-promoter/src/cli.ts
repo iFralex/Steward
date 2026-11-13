@@ -1,6 +1,10 @@
 #!/usr/bin/env -S node --import tsx
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { recordAudit } from "@steward/audit-log";
+import { GteGate } from "./gte.ts";
+import { BatchControl } from "./batch-control.ts";
 import { Store } from "../../mail-mirror/src/store.ts";
 import { blobsDir, dbPath } from "../../mail-mirror/src/paths.ts";
 import { LlmWikiApiClient } from "../../llm-wiki/mcp-server/src/api-client.ts";
@@ -63,8 +67,27 @@ async function main(): Promise<void> {
     }).attachments;
     console.log(`promote backfill: limit=${limit ?? "all"} concurrency=${concurrency} model=${cfg.triageModel}`);
     console.log(`promote backfill: writing notes to ${sourcesDir} (app can be closed)`);
-    const t = await runBatch(deps, { limit, concurrency });
-    console.log(`promote backfill: promoted ${t.promoted}, skipped ${t.skipped}, filtered ${t.filtered}, deferred ${t.deferred}`);
+    let gate: GteGate | undefined;
+    if (cfg.gteMode === "enforce") {
+      if (cfg.gtePython && cfg.gteWorker && cfg.gteManifest) {
+        try { gate = new GteGate({ python: cfg.gtePython, worker: cfg.gteWorker, manifest: cfg.gteManifest }); deps.gate = gate; }
+        catch { console.error("[mail-gte] invalid/missing runtime; forwarding to normal triage"); }
+      } else console.error("[mail-gte] incomplete configuration; forwarding to normal triage");
+    } else if (cfg.gteMode !== "off") throw new Error("MAIL_PROMOTER_GTE_MODE must be off or enforce");
+    const control = deps.control = new BatchControl(state, { maxGateScores: cfg.maxGateScores, maxGatewayCalls: cfg.maxGatewayCalls,
+      gatewayKey: "gateway-backoff:"+createHash("sha256").update(cfg.llmEndpoint+cfg.triageModel).digest("hex") });
+    deps.chat = control.wrap(deps.chat);
+    let t;
+    const startedAt = Date.now();
+    try { t = await runBatch(deps, { limit, concurrency }); }
+    finally { gate?.close(); }
+    const summary = { ...t, ...control.counters, gateMode: cfg.gteMode, gateModelId: gate?.modelId,
+      maxGateScores: cfg.maxGateScores, maxGatewayCalls: cfg.maxGatewayCalls, gatewayBackoff: control.backoff };
+    recordAudit({ actor: "scheduler", eventType: "mail.batch_completed", risk: "low", ok: t.deferred === 0,
+      summary: `Mail batch: GTE discarded ${t.gated}, gateway calls ${control.counters.gatewayCalls ?? 0}, deferred ${t.deferred}`,
+      durationMs: Date.now()-startedAt, payload: summary });
+    console.error("[mail-promoter] batch "+JSON.stringify(summary));
+    console.log(`promote backfill: promoted ${t.promoted}, skipped ${t.skipped}, filtered ${t.filtered}, gated ${t.gated}, deferred ${t.deferred}`);
     if (t.promoted > 0) {
       console.log("rescan: open LLM Wiki, then run 'mail-promoter rescan' to index all notes in one pass.");
       try { await apiClient.rescan("current"); console.log("rescan: completato"); }
@@ -107,6 +130,7 @@ async function main(): Promise<void> {
     const c = state.counts();
     console.log(`promoter state: ${stateDbPath()}`);
     console.log(`  promoted: ${c.promoted}  skipped: ${c.skipped}`);
+    console.log(`  cached GTE routes (separate from teacher state): ${JSON.stringify(state.gateCounts())}`);
   } else if (cmd === "eval") {
     const fixturePath = process.argv[3];
     if (!fixturePath) {

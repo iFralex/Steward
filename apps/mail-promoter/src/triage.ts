@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { extractJson } from "../../llm-gateway/src/extract-json.ts";
 import type { DistilledNote } from "./note.ts";
 import type { Chat } from "./llm.ts";
@@ -46,6 +47,8 @@ const SYSTEM =
   `reviewBy: if the note involves a future deadline, a scheduled event, or an action to revisit, set it to the date to revisit ` +
   `(the deadline/event date, or shortly before, as YYYY-MM-DD); use null when the knowledge is timeless or already resolved. ` +
   `Keep it faithful; do not invent.`;
+
+export const TRIAGE_POLICY_HASH = createHash("sha256").update(SYSTEM).digest("hex");
 
 function isoDay(epochSeconds?: number): string {
   if (!epochSeconds) return "unknown";

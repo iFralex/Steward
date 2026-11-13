@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { Store } from "../../mail-mirror/src/store.ts";
 import { PromoteState } from "../src/state.ts";
 import { processThread, runBatch, type RunDeps } from "../src/run.ts";
+import { auditLog } from "@steward/audit-log";
 
 function row(over = {}) {
   return {
@@ -32,6 +33,16 @@ test("processThread promotes a durable thread and records state keyed by thread"
   const r = await processThread(d, 1);
   assert.equal(r, "promoted");
   assert.equal(d.state.get("thread:1")?.decision, "promoted");
+});
+
+test("actual positive triage is audited even if the downstream wiki write fails", async () => {
+  const d = deps({ wiki: { addSources: async () => { throw new Error("wiki unavailable"); } } });
+  await assert.rejects(() => processThread(d, 1), /wiki unavailable/);
+  assert.equal(d.state.get("thread:1"), undefined);
+  const event = auditLog().query({ eventType: "mail.triage_decided", limit: 1 }).events[0];
+  const payload = event.payloadJson as Record<string, unknown>;
+  assert.equal(payload.promoteMail, true);
+  assert.equal(payload.promote, true);
 });
 
 test("processThread collapses a multi-message thread into ONE triage call + one note", async () => {
@@ -80,6 +91,16 @@ test("non-promotable update keeps an existing durable thread note", async () => 
   assert.equal(saved?.decision, "promoted");
   assert.equal(saved?.wikiFilename, "mail-thread-1.md");
   assert.equal(d.state.needsProcessing("thread:1", saved!.sourceHash), false);
+  const event = auditLog().query({ eventType: "mail.triage_decided", limit: 1 }).events[0];
+  const payload = event.payloadJson as Record<string, unknown>;
+  assert.equal(payload.threadId, 1);
+  assert.equal(payload.promoteMail, false, "a retained note must not become a positive triage label");
+  assert.equal(payload.promoteAttachments, false);
+  assert.equal(payload.promote, false);
+  assert.equal(payload.sourceHash, saved?.sourceHash);
+  assert.match(payload.attachmentInputHash as string, /^[a-f0-9]{64}$/);
+  assert.match(payload.policyHash as string, /^[a-f0-9]{64}$/);
+  assert.equal('body' in payload, false);
 });
 
 test("processThread can promote only selected attachments without creating a note", async () => {
@@ -109,6 +130,12 @@ test("processThread can promote only selected attachments without creating a not
   assert.equal(saved?.decision, "promoted");
   assert.equal(saved?.wikiFilename, null);
   assert.deepEqual(saved?.categories, ["cv"]);
+  const event = auditLog().query({ eventType: "mail.triage_decided", limit: 1 }).events[0];
+  const payload = event.payloadJson as Record<string, unknown>;
+  assert.equal(payload.promoteMail, false);
+  assert.equal(payload.promoteAttachments, true);
+  assert.equal(payload.promote, true);
+  assert.equal(payload.attachmentCount, 2);
 });
 
 test("processThread filters a junk-role thread without calling the LLM", async () => {
@@ -127,10 +154,12 @@ test("a previously-filtered thread is skipped on re-run (no re-evaluation)", asy
 });
 
 test("processThread defers (no state) when the classifier is unavailable", async () => {
+  const before = auditLog().query({ eventType: "mail.triage_decided", limit: 1 }).events[0]?.id;
   const d = deps({ chat: async () => { throw new Error("down"); } });
   const r = await processThread(d, 1);
   assert.equal(r, "deferred");
   assert.equal(d.state.get("thread:1"), undefined);
+  assert.equal(auditLog().query({ eventType: "mail.triage_decided", limit: 1 }).events[0]?.id, before);
 });
 
 test("runBatch processes every thread with concurrency > 1", async () => {
