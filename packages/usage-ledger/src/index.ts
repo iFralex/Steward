@@ -6,6 +6,7 @@
  * is intentionally neither created, written, nor read — history was reset.
  */
 import Database from "better-sqlite3";
+import { aggregateLlm } from "./aggregate.js";
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -122,7 +123,6 @@ CREATE TABLE IF NOT EXISTS voice_calls (
 CREATE INDEX IF NOT EXISTS idx_voice_calls_ts ON voice_calls(ts);
 `;
 
-const TOKENS = "input_tokens + output_tokens + cache_read_tokens + cache_write_tokens";
 
 /** Same one-shot directory migration the host uses (duplicated: packages cannot import app code). */
 function migrateLegacyPath(legacyPath: string, currentPath: string): void {
@@ -187,36 +187,7 @@ export class UsageLedger {
     // byDay is a chart: cap "all time" at the last 90 days so it stays renderable.
     const dayCutoff = Math.max(cutoff, Date.now() - 90 * 86_400_000);
 
-    const totals = this.raw.prepare(
-      `SELECT COUNT(*) calls, COALESCE(SUM(cost_usd),0) cost,
-              COALESCE(SUM(input_tokens),0) input, COALESCE(SUM(output_tokens),0) output,
-              COALESCE(SUM(cache_read_tokens),0) cacheRead, COALESCE(SUM(cache_write_tokens),0) cacheWrite
-       FROM llm_calls WHERE ts >= ?`,
-    ).get(cutoff) as LedgerSummary["totals"];
-    const byService = this.raw.prepare(
-      `SELECT service, SUM(cost_usd) cost, COUNT(*) calls, SUM(${TOKENS}) tokens
-       FROM llm_calls WHERE ts >= ? GROUP BY service ORDER BY cost DESC`,
-    ).all(cutoff) as LedgerSummary["byService"];
-    const byAction = this.raw.prepare(
-      `SELECT service, action, COUNT(*) calls, SUM(cost_usd) cost, SUM(${TOKENS}) tokens,
-              AVG(cost_usd) avgCost
-       FROM llm_calls WHERE ts >= ? GROUP BY service, action ORDER BY cost DESC`,
-    ).all(cutoff) as LedgerSummary["byAction"];
-    const byDay = this.raw.prepare(
-      // ts is milliseconds (JS Date.now); strftime wants seconds.
-      `SELECT strftime('%Y-%m-%d', ts / 1000, 'unixepoch', 'localtime') day, service,
-              SUM(cost_usd) cost, COUNT(*) calls, SUM(${TOKENS}) tokens
-       FROM llm_calls WHERE ts >= ? GROUP BY day, service ORDER BY day DESC`,
-    ).all(dayCutoff) as LedgerSummary["byDay"];
-    const byModel = this.raw.prepare(
-      `SELECT model, SUM(cost_usd) cost, SUM(${TOKENS}) tokens, COUNT(*) calls
-       FROM llm_calls WHERE ts >= ? GROUP BY model ORDER BY cost DESC`,
-    ).all(cutoff) as LedgerSummary["byModel"];
-    const byTier = this.raw.prepare(
-      `SELECT tier, SUM(input_tokens) input, SUM(output_tokens) output,
-              SUM(cache_read_tokens) cacheRead, SUM(cache_write_tokens) cacheWrite
-       FROM llm_calls WHERE ts >= ? GROUP BY tier`,
-    ).all(cutoff) as LedgerSummary["byTier"];
+    const { totals, byService, byAction, byDay, byModel, byTier } = aggregateLlm(this.raw, cutoff, dayCutoff);
     const recent = this.raw.prepare(
       `SELECT ts, service, action, model, input_tokens input, output_tokens output,
               cache_read_tokens cacheRead, cache_write_tokens cacheWrite,

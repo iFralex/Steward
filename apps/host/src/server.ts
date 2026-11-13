@@ -20,6 +20,7 @@ import { ActionRevisionRequestedError, executeActionProposal, getActionAutomatio
 import type { ActionCenterItem } from "@steward/protocol";
 import { registerUserPath, resolveToken, saveUpload } from "./core/file-registry.ts";
 import { usageLedger } from "@steward/usage-ledger";
+import { usageSummary } from "./core/usage-summary.js";
 import { chatStore } from "./core/chat-store.ts";
 import { Session, type Emit } from "./core/session.ts";
 import { loadSystemStatus, setAutostart } from "./core/system-status.ts";
@@ -769,8 +770,8 @@ function handleHttp(config: HostConfig, pushRegistry: PushRegistry, voiceCalls: 
   if (url.startsWith("/usage") && req.method === "GET") {
     const daysParam = new URL(url, "http://x").searchParams.get("days") ?? "30";
     const days = daysParam === "all" ? undefined : Math.max(1, Number(daysParam) || 30);
-    void gatewayRatesMap(config.gateway.baseUrl).then((ratesMap) => {
-      const summary = usageLedger().summary(days);
+    void gatewayRatesMap(config.gateway.baseUrl).then(async (ratesMap) => {
+      const summary = await usageSummary(days);
       const costByKind = costByKindFromTiers(summary.byTier, ratesMap, config.gateway.cost);
       res.writeHead(200, { "Content-Type": "application/json", ...CORS });
       res.end(JSON.stringify({ ...summary, costByKind }));

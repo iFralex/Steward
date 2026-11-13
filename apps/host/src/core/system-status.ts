@@ -312,7 +312,10 @@ type ToolUsageMap = Map<string, { calls: number; errors: number; lastUsedAt?: nu
 function toolUsage(): ToolUsageMap {
   try {
     const ledger = usageLedger();
-    const totals = new Map(ledger.summary().byTool.map((row) => [row.tool, { calls: row.calls, errors: row.errors }]));
+    const rows = ledger.raw.prepare(`SELECT tool, COUNT(*) calls,
+      SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) errors FROM tool_calls GROUP BY tool`).all() as
+      Array<{ tool: string; calls: number; errors: number }>;
+    const totals = new Map(rows.map((row) => [row.tool, { calls: row.calls, errors: row.errors }]));
     const recent = ledger.raw.prepare(
       "SELECT tool, MAX(ts) ts, ok FROM tool_calls GROUP BY tool",
     ).all() as Array<{ tool: string; ts: number; ok: number }>;
