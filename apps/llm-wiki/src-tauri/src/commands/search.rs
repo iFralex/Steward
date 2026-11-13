@@ -674,13 +674,14 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
     } else {
         volcengine_embedding_endpoint(cfg)
     };
+    let is_steward = is_steward_embedding_endpoint(&endpoint);
     let mut req = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(
             SEARCH_EMBEDDING_TIMEOUT_SECS,
         ))
         .build()
         .map_err(|e| format!("Embedding HTTP client error: {e}"))?
-        .post(endpoint)
+        .post(&endpoint)
         .header("Content-Type", "application/json");
     if !cfg.api_key.trim().is_empty() {
         if is_google {
@@ -699,8 +700,18 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
             if is_reserved_extra_header_name(trimmed) {
                 continue;
             }
+            if is_steward && (trimmed.eq_ignore_ascii_case("x-usage-service")
+                || trimmed.eq_ignore_ascii_case("x-usage-action")) {
+                continue;
+            }
             req = req.header(trimmed, value);
         }
+    }
+    // This backend is used by both WebView search and the local HTTP/MCP API.
+    // Their configs can bypass the frontend's withUsageAttribution helper.
+    if is_steward {
+        req = req.header("x-usage-service", "llm-wiki")
+            .header("x-usage-action", "search-embed");
     }
     let body = if is_google {
         google_embedding_body(&cfg.model, text, cfg.output_dimensionality)
@@ -726,6 +737,14 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
         ));
     }
     parse_embedding_values(&data, is_google, is_doubao_multimodal)
+}
+
+fn is_steward_embedding_endpoint(endpoint: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint) else { return false; };
+    url.scheme() == "http" && url.port() == Some(4000)
+        && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+        && url.path() == "/v1/embeddings" && url.username().is_empty()
+        && url.password().is_none() && url.query().is_none() && url.fragment().is_none()
 }
 
 fn parse_embedding_values(
@@ -1018,6 +1037,16 @@ fn file_stem(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn steward_attribution_is_limited_to_the_local_embedding_endpoint() {
+        for url in ["http://127.0.0.1:4000/v1/embeddings", "http://localhost:4000/v1/embeddings", "http://[::1]:4000/v1/embeddings"] {
+            assert!(super::is_steward_embedding_endpoint(url), "{url}");
+        }
+        for url in ["https://example.com/v1/embeddings", "http://localhost.evil:4000/v1/embeddings", "http://127.0.0.1:4001/v1/embeddings", "http://user:secret@localhost:4000/v1/embeddings", "http://localhost:4000/v1/embeddings?token=secret", "invalid"] {
+            assert!(!super::is_steward_embedding_endpoint(url), "{url}");
+        }
+    }
+
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
