@@ -923,7 +923,9 @@ flowchart TD
     D -->|Yes| Z[Skip]
     D -->|No| E[Deterministic prefilter]
     E -->|Noise / excluded mailbox| F[Record filtered]
-    E -->|Candidate| G[One LLM triage + distillation call]
+    E -->|Candidate| P{Optional local GTE gate}
+    P -->|Low score, no attachments| Q[Cache local discard]
+    P -->|Forward, bypass or unavailable| G[One LLM triage + distillation call]
     G -->|Unavailable or invalid JSON| H[Defer without final state]
     G --> I{Durable mail knowledge?}
     I -->|Yes| J[Build canonical Markdown note]
@@ -937,7 +939,7 @@ flowchart TD
 
 Promotion is keyed by `thread:<id>`, not by message. A SHA-256 hash covers the ordered subjects and bodies of the whole thread; unchanged conversations are not sent back to the model. A new reply changes the hash and causes the canonical note to be reconsidered.
 
-The deterministic prefilter rejects obvious noise before any LLM cost. It uses sender, subject, body state and discovered mailbox role. Candidate threads are then classified and distilled in **one** model call. That call decides:
+The deterministic prefilter rejects obvious noise before any LLM cost. It uses sender, subject, body state and discovered mailbox role. When enabled, a local GTE gate can discard eligible threads without attachments before remote triage. It uses full-thread input up to 8,192 tokens; attachments bypass the gate and overflow or inference failures are forwarded, subject to batch limits and backoff. Cached gate results are stored separately from remote verdicts and do not delete existing notes. The gate defaults to off. Threads forwarded to remote triage are classified and distilled in **one** model call. That call decides:
 
 - whether the conversation contains durable personal knowledge;
 - categories such as `commitment`, `document`, `personal-fact`, `decision` and `relationship`;
@@ -954,9 +956,12 @@ The pipeline deliberately distinguishes final and retryable outcomes:
 | `filtered` | Deterministic prefilter rejected the thread; its hash is recorded. |
 | `skipped` | The model found no new durable knowledge; its hash is recorded. |
 | `promoted` | The canonical note and/or selected attachments were written and state was recorded. |
-| `deferred` | Model/wiki output was unavailable or unusable; no terminal state is written, so a later run retries it. |
+| Local gate discard | A separate cached routing result; the previous remote verdict and any existing note are preserved. |
+| `deferred` | Model/wiki output was unavailable or unusable, or work was limited or in backoff; no terminal state is written, so a later run can retry it. |
 
 A promoted note uses stable YAML frontmatter with `message://` provenance, `thread://` identity, all source message IDs, account, categories, dates, selected attachments and optional review date. Updating a thread rewrites the same `mail-thread-<id>.md` rather than creating duplicate memory.
+
+When the gate is enabled, the default cycle budgets are 500 new local checks and 100 gateway requests; cached results do not consume the local-check budget. Global gateway failures trigger persistent backoff from 15 minutes up to six hours, while eligible local checks can continue. The limits count checks and gateway requests, not billed provider calls; upstream fallback can produce additional attempts. See [mail promoter operation](apps/mail-promoter/README.md) and the [model-selection investigation](docs/gte-model-selection.md).
 
 The batch runner processes most-recently-active threads first. `runBatch()` defaults to eight workers when called directly; the `backfill` CLI passes `MAIL_PROMOTER_CONCURRENCY`, default **10**, and the scheduler runs that CLI. SQLite writes remain serialized by the JavaScript process and `better-sqlite3`.
 
@@ -2006,7 +2011,7 @@ Local-first does not mean unbounded. Several limits keep cold starts, model cont
 | Action Center list | `list_actions` defaults to 20 and is capped at 100 in both MCP schema and SQLite store; full payloads are opt-in | Prevents large context snapshots from producing unbounded memory or model-context growth. |
 | Mail embedding input | First 2,000 characters by default | Bounds embedding cost and latency while retaining subject and leading body context. |
 | Embedding batches | 32 by default, with per-item recovery | Amortizes gateway overhead without allowing one input to poison the queue. |
-| Mail promotion | Thread hashes plus worker pool; CLI concurrency 10, direct runner default 8 | Avoids unchanged work and overlaps I/O-bound model/wiki requests. |
+| Mail promotion | Thread hashes and worker pool; optional GTE gate, 500 new checks and 100 gateway requests per cycle; CLI concurrency 10, direct runner default 8 | Avoids unchanged work, bounds backlog processing and overlaps I/O-bound requests. |
 | Action Center | Recent window 14 days, query pool 300, process limit 50 by default | Focuses background attention on new actionable mail and bounds model calls. |
 | Triage bodies | Cleaned/truncated single messages; larger chronological thread representation | Prevents quoted-history explosions while preserving multi-message decisions. |
 | Scheduler | Per-job timeout and no-overlap set | Applies backpressure when a prior run is still active. |
