@@ -12,7 +12,7 @@
     "@steward/embedding": "*",
     "@steward/protocol": "*",
     "@steward/search": "*",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "13.1.1",
     "chokidar": "^4.0.0",
     "html-to-text": "^10.0.0",
     "htmlparser2": "^10.1.0",

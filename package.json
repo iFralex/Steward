@@ -36,5 +36,8 @@
     "apps/wiki-add",
     "apps/llm-wiki",
     "packages/*"
-  ]
+  ],
+  "engines": {
+    "node": ">=22"
+  }
 }

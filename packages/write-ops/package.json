@@ -12,6 +12,6 @@
   },
   "dependencies": {
     "@steward/audit-log": "*",
-    "better-sqlite3": "^11.0.0"
+    "better-sqlite3": "13.1.1"
   }
 }
