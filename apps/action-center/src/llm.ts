@@ -2,6 +2,11 @@ import { extractJson } from "../../llm-gateway/src/extract-json.ts";
 import { gatewayCredential, usageHeaders } from "@steward/protocol";
 
 export type Chat = (system: string, user: string) => Promise<string>;
+export class GatewayChatError extends Error {
+  constructor(readonly status: number, options?: ErrorOptions) {
+    super(`action-center gateway chat ${status}`, options);
+  }
+}
 
 export function gatewayChat(
   cfg: { endpoint?: string; model?: string; apiKey?: string; usageAction?: string } = {},
@@ -11,7 +16,8 @@ export function gatewayChat(
   const model = cfg.model ?? process.env.ACTION_CENTER_LLM_MODEL ?? "tier-5";
   const apiKey = gatewayCredential(endpoint, cfg.apiKey ?? process.env.ACTION_CENTER_LLM_API_KEY, process.env.GATEWAY_API_KEY, Number(process.env.GATEWAY_PORT ?? 4000));
   return async (system, user) => {
-    const res = await fetchImpl(endpoint, {
+    let res: Response;
+    try { res = await fetchImpl(endpoint, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -23,8 +29,8 @@ export function gatewayChat(
         temperature: 0.2,
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
       }),
-    });
-    if (!res.ok) throw new Error(`action-center gateway chat ${res.status}`);
+    }); } catch (cause) { throw new GatewayChatError(0, { cause }); }
+    if (!res.ok) throw new GatewayChatError(res.status);
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     return data.choices?.[0]?.message?.content ?? "";
   };

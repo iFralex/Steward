@@ -6,6 +6,7 @@ import type { ReadToolExecutor } from "./tool-context.ts";
 import { checkIfMessageResolvesAction, findResolvableOpenActions, selectContinuationCandidates } from "./cross-thread-resolution.ts";
 import { embedFlowText } from "./flows.ts";
 import type { ActionTextLanguage } from "./types.ts";
+import { GatewayBackoff } from "./gateway-backoff.ts";
 
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|mailer|newsletter|bounce|postmaster)\b/i;
 const LOW_VALUE_SURVEY = /\b(survey|questionario|soddisfazione|feedback|post[-\s]?result survey)\b/i;
@@ -89,8 +90,10 @@ export async function scanMailForActions(deps: {
   const fresh = manual ? messages : messages.filter((m) => !seen.has(m.messageId));
   const candidates = buildThreadCandidates(deps.mail, fresh, deps.userAddrs ?? []).slice(0, limit);
   const result: MailScanResult = { considered: candidates.length, created: 0, updated: 0, skipped: 0, deferred: 0, deferredReasons: {} };
+  const backoff = new GatewayBackoff(deps.actions);
+  const chat = backoff.wrap(deps.chat);
 
-  for (const candidate of candidates) {
+  candidateLoop: for (const candidate of candidates) {
     const msg = candidate.message;
     // Mark each candidate's messages seen as soon as it's fully processed (not in
     // a bulk post-loop pass at the very end), so a crash/kill mid-scan keeps
@@ -105,6 +108,12 @@ export async function scanMailForActions(deps: {
       if (!manual) deps.actions.markSeen(candidate.batchIds);
       continue;
     }
+    // Check before flow embedding as well as before chat. Keep candidates unseen.
+    if (backoff.active) {
+      result.deferred++;
+      recordDeferred(result, "gateway-backoff");
+      continue;
+    }
     let plan: Awaited<ReturnType<typeof planMailAction>>;
     let planFailed = false;
     try {
@@ -113,7 +122,7 @@ export async function scanMailForActions(deps: {
         { fromAddr: msg.fromAddr, threadId: msg.threadId, subject: msg.subject, bodyText: msg.bodyText },
         deps.userAddrs ?? [],
       );
-      plan = await planMailAction(msg, deps.chat, {
+      plan = await planMailAction(msg, chat, {
         userAddrs: deps.userAddrs,
         readTool: deps.readTool,
         relatedOpenActions,
@@ -128,7 +137,7 @@ export async function scanMailForActions(deps: {
     }
     if (!plan) {
       result.deferred++;
-      recordDeferred(result, "no-action-or-unparseable");
+      if (!planFailed) recordDeferred(result, "no-action-or-unparseable");
       // A genuine planner failure (as opposed to a normal "no action needed"
       // verdict) is left unmarked so it's retried on the next scan instead of
       // being permanently skipped.
@@ -142,12 +151,18 @@ export async function scanMailForActions(deps: {
         const openActions = deps.actions.list({ includeDone: false });
         const resolvable = findResolvableOpenActions(openActions, { fromAddr: msg.fromAddr, threadId: msg.threadId }, deps.userAddrs ?? []);
         for (const openAction of resolvable) {
-          const check = await checkIfMessageResolvesAction(
-            openAction,
-            { subject: msg.subject, fromName: msg.fromName, fromAddr: msg.fromAddr, bodyText: msg.bodyText },
-            deps.chat,
-            deps.textLanguage,
-          );
+          let check: Awaited<ReturnType<typeof checkIfMessageResolvesAction>>;
+          try {
+            check = await checkIfMessageResolvesAction(
+              openAction,
+              { subject: msg.subject, fromName: msg.fromName, fromAddr: msg.fromAddr, bodyText: msg.bodyText },
+              chat,
+              deps.textLanguage,
+            );
+          } catch (err) {
+            recordDeferred(result, err instanceof Error ? err.message : String(err));
+            continue candidateLoop;
+          }
           if (check.resolves && check.updatedSummary) deps.actions.updateSummary(openAction.id, check.updatedSummary);
         }
         if (!manual) deps.actions.markSeen(candidate.batchIds);

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { Store, type MessageRow } from "../../mail-mirror/src/store.ts";
 import { ActionStore } from "../src/store.ts";
 import { scanMailForActions } from "../src/mail.ts";
+import { GatewayChatError } from "../src/llm.ts";
 
 function row(overrides: Partial<MessageRow> = {}): MessageRow {
   return {
@@ -34,6 +35,34 @@ function row(overrides: Partial<MessageRow> = {}): MessageRow {
     ...overrides,
   };
 }
+
+test("gateway backoff preserves pending mail while continuing local skips", async () => {
+  const oldEndpoint = process.env.ACTION_FLOW_EMBED_ENDPOINT;
+  process.env.ACTION_FLOW_EMBED_ENDPOINT = "off";
+  const mail = Store.open(":memory:");
+  const actions = ActionStore.open(":memory:");
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    mail.upsertMessage(row({ messageId: "first", date: now }));
+    mail.upsertMessage(row({ messageId: "second", date: now - 1 }));
+    mail.upsertMessage(row({ messageId: "notification", date: now - 2, fromAddr: "noreply@example.com", fromName: "noreply" }));
+    let calls = 0;
+    const chat = async () => { calls++; throw new GatewayChatError(402); };
+    const result = await scanMailForActions({ mail, actions, chat, now });
+    assert.equal(calls, 1);
+    assert.equal(result.deferred, 2);
+    assert.equal(result.deferredReasons["gateway-backoff"], 1);
+    assert.equal(result.skipped, 1);
+    assert.deepEqual([...actions.loadSeen()], ["notification"]);
+    await scanMailForActions({ mail, actions, chat, now });
+    assert.equal(calls, 1);
+    assert.deepEqual([...actions.loadSeen()], ["notification"]);
+  } finally {
+    mail.close(); actions.close();
+    if (oldEndpoint === undefined) delete process.env.ACTION_FLOW_EMBED_ENDPOINT;
+    else process.env.ACTION_FLOW_EMBED_ENDPOINT = oldEndpoint;
+  }
+});
 
 test("scanMailForActions creates reply-needed action with draft", async () => {
   const mail = Store.open(":memory:");
