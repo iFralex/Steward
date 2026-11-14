@@ -22,6 +22,8 @@ const options = new Set(process.argv.slice(3));
 const sipUserArg = process.argv.find((arg) => arg.startsWith("--sip-user="))?.slice(11);
 const testBundle = process.argv.find((arg) => arg.startsWith("--bundle="))?.slice(9);
 const noVoice = options.has("--no-voice");
+const reuseVoice = options.has("--reuse-existing-voice");
+const nativeSqlite = options.has("--native-sqlite");
 const skipLaunch = options.has("--no-launch");
 
 function run(program, args, extraEnv = {}) {
@@ -168,7 +170,8 @@ function smoke() {
   throw new Error("New host failed to start within 60 seconds; app and voice configuration were rolled back.");
 }
 async function snapshotData(id) {
-  const backupDir = join(root, "backups", id);
+  const backupRoot = resolve(process.env.STEWARD_DEPLOY_BACKUP_ROOT ?? join(root, "backups"));
+  const backupDir = join(backupRoot, id);
   await backupData({ destination: backupDir, configFile });
   console.log(`Pre-update operational snapshot: ${backupDir}`);
 }
@@ -208,6 +211,7 @@ function installBundle(target) {
 function releaseId() { return `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`; }
 function stage() {
   if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("This installer requires an Apple Silicon Mac");
+  if (noVoice && reuseVoice) throw new Error("Cannot combine --no-voice and --reuse-existing-voice");
   const id = releaseId();
   const dir = join(root, "releases", id);
   mkdirSync(dir, { recursive: true });
@@ -221,7 +225,11 @@ function stage() {
   cpSync(bundle, join(dir, "Steward.app"), { recursive: true, dereference: true });
   validBundle(join(dir, "Steward.app"));
   const oldLauncher = configValues().STEWARD_RINGBACK_LAUNCHER;
-  if (!noVoice) {
+  if (reuseVoice) {
+    if (!oldLauncher || !existsSync(oldLauncher) || !capture(oldLauncher, ["--doctor"]).includes('"ok":true')) {
+      throw new Error("Existing Ringback runtime is unavailable or unhealthy");
+    }
+  } else if (!noVoice) {
     const ringback = join(dir, "ringback");
     run(join(repo, "tools", "setup-ringback.sh"), [], {
       STEWARD_RINGBACK_DIR: ringback,
@@ -238,7 +246,7 @@ function stage() {
       throw new Error("Staged Ringback failed its runtime check. Configure a SIP identity or inspect its build before cutover.");
     }
   }
-  const meta = { id, createdAt: new Date().toISOString(), commit: capture("git", ["rev-parse", "HEAD"]), lockSha256: sha256(join(repo, "package-lock.json")), voice: !noVoice, signingVersion: 1 };
+  const meta = { id, createdAt: new Date().toISOString(), commit: capture("git", ["rev-parse", "HEAD"]), lockSha256: sha256(join(repo, "package-lock.json")), voice: !noVoice, ...(reuseVoice ? { reusedVoiceLauncher: oldLauncher } : {}), signingVersion: 1 };
   atomicWrite(join(dir, "release.json"), JSON.stringify(meta, null, 2) + "\n", 0o644);
   console.log(`Staged release ${id}`);
   return id;
@@ -249,7 +257,7 @@ function assertRelease(id) {
   const meta = readJson(join(dir, "release.json"));
   if (meta?.id !== id) throw new Error(`Release ${id} is incomplete`);
   validBundle(join(dir, "Steward.app"), { allowLegacy: meta.signingVersion !== 1 });
-  if (meta.voice && !existsSync(join(dir, "ringback", "steward-run-voice-mcp.sh"))) throw new Error("Ringback missing from release");
+  if (meta.voice && !existsSync(meta.reusedVoiceLauncher ?? join(dir, "ringback", "steward-run-voice-mcp.sh"))) throw new Error("Ringback missing from release");
   return { dir, meta };
 }
 async function cutover(id) {
@@ -270,11 +278,27 @@ async function cutover(id) {
   const oldConfig = existsSync(configFile) ? readFileSync(configFile, "utf8") : null;
   const values = configValues();
   try {
-    installBundle(join(dir, "Steward.app"));
     const patch = {};
+    if (nativeSqlite) {
+      const resources = join(dir, "Steward.app", "Contents", "Resources");
+      const env = { ...process.env }; delete env.NODE_OPTIONS; delete env.STEWARD_SQLITE_RUNTIME_TEST;
+      const probe = spawnSync(join(resources, "node/bin/node"), ["-e", `const D=require(process.argv[1]);const d=new D(':memory:');const v=d.prepare('select sqlite_version() v').get().v;require(process.argv[2]).load(d);const vec=d.prepare('select vec_version() v').get().v;d.close();process.stdout.write(JSON.stringify({v,vec}))`, join(resources, "node_modules/better-sqlite3"), join(resources, "node_modules/sqlite-vec")], { env, encoding: "utf8", timeout: 10_000 });
+      let result; try { result = JSON.parse(probe.stdout); } catch { throw new Error("Staged native SQLite and sqlite-vec probe failed"); }
+      if (probe.status !== 0 || result.v !== "3.54.1" || result.vec !== "v0.1.9") throw new Error("Unexpected staged SQLite or sqlite-vec version");
+      const flags = (values.NODE_OPTIONS ?? "").split(/\s+/).filter(Boolean);
+      const matches = flags.filter((flag) => flag.startsWith("--import=") && flag.includes("sqlite-runtime-preload.mjs"));
+      if (matches.length !== 1 || flags.some((flag) => flag.includes("sqlite-runtime-preload.mjs") && !matches.includes(flag))) throw new Error("Cannot safely identify the SQLite preload flag");
+      patch.NODE_OPTIONS = flags.filter((flag) => !matches.includes(flag)).join(" ");
+      const helper = process.env.STEWARD_NATIVE_GATEWAY_PEER_BIN;
+      if (helper) {
+        if (!existsSync(helper)) throw new Error("Gateway peer helper does not exist");
+        patch.STEWARD_GATEWAY_PEER_BIN = helper;
+      }
+    }
+    installBundle(join(dir, "Steward.app"));
     if (meta.voice) {
       patch.STEWARD_VOICE_TRANSPORT = values.STEWARD_VOICE_TRANSPORT || "ringback";
-      patch.STEWARD_RINGBACK_LAUNCHER = join(dir, "ringback", "steward-run-voice-mcp.sh");
+      patch.STEWARD_RINGBACK_LAUNCHER = meta.reusedVoiceLauncher ?? join(dir, "ringback", "steward-run-voice-mcp.sh");
     }
     // Migrate the existing selected peer into environment configuration once.
     // Never overwrite an explicit value supplied by the user.
@@ -327,7 +351,7 @@ function verify() {
   if (!bundlesMatch(linkTarget(), join(dir, "Steward.app"))) throw new Error("Installed app does not match the recorded release");
   if (meta.voice) {
     const launcher = configValues().STEWARD_RINGBACK_LAUNCHER;
-    if (launcher !== join(dir, "ringback", "steward-run-voice-mcp.sh")) throw new Error("Ringback config points outside current release");
+    if (launcher !== (meta.reusedVoiceLauncher ?? join(dir, "ringback", "steward-run-voice-mcp.sh"))) throw new Error("Ringback config does not match the current release");
     if (!capture(launcher, ["--doctor"]).includes('"ok":true')) throw new Error("Ringback runtime check failed");
   }
   console.log(`Verified release ${state.current}`);

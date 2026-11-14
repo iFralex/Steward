@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { signBundle } from "./mac-signing.mjs";
@@ -46,6 +46,47 @@ test("native deployment stages, switches, verifies and rolls back without changi
   assert.equal(lstatSync(f.env.STEWARD_APP_PATH).isSymbolicLink(), false);
   assert.equal(f.call("verify").status, 0);
   assert.ok(existsSync(join(f.env.STEWARD_DEPLOY_ROOT, "backups")));
+});
+
+test("deployment can place its operational snapshot on a separate volume", (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  f.env.STEWARD_DEPLOY_BACKUP_ROOT = join(f.dir, "separate-backups");
+  const result = f.call("install", "--no-voice", "--no-launch", `--bundle=${f.bundle}`);
+  assert.equal(result.status, 0, result.stderr);
+  const state = JSON.parse(readFileSync(join(f.env.STEWARD_DEPLOY_ROOT, "state.json"), "utf8"));
+  assert.ok(existsSync(join(f.env.STEWARD_DEPLOY_BACKUP_ROOT, state.current, "manifest.json")));
+  assert.equal(existsSync(join(f.env.STEWARD_DEPLOY_ROOT, "backups", state.current)), false);
+});
+
+test("deployment can reuse a healthy existing voice runtime", (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  const launcher = join(f.dir, "voice.sh");
+  writeFileSync(launcher, '#!/bin/sh\nprintf \'{"ok":true}\\n\'\n');
+  chmodSync(launcher, 0o755);
+  writeFileSync(f.config, readFileSync(f.config, "utf8") + `STEWARD_RINGBACK_LAUNCHER=${launcher}\nSTEWARD_VOICE_TRANSPORT=ringback\n`);
+  const result = f.call("install", "--reuse-existing-voice", "--no-launch", `--bundle=${f.bundle}`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(f.call("verify").status, 0);
+  assert.match(readFileSync(f.config, "utf8"), /STEWARD_VOICE_TRANSPORT="ringback"/);
+  rmSync(launcher);
+  assert.notEqual(f.call("verify").status, 0);
+});
+
+test("native SQLite cutover refuses an unverified bundle and preserves the installed app", (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.dir, { recursive: true, force: true }));
+  cpSync(process.execPath, join(f.bundle, "Contents/Resources/node/bin/node"));
+  if (process.platform === "darwin") signBundle(f.bundle);
+  const args = ["--no-voice", "--no-launch", `--bundle=${f.bundle}`];
+  assert.equal(f.call("install", ...args).status, 0);
+  const stateFile = join(f.env.STEWARD_DEPLOY_ROOT, "state.json");
+  const before = JSON.parse(readFileSync(stateFile, "utf8")).current;
+  const result = f.call("update", ...args, "--native-sqlite");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /SQLite and sqlite-vec probe failed/);
+  assert.equal(JSON.parse(readFileSync(stateFile, "utf8")).current, before);
 });
 
 test("an incomplete bundle cannot replace a working release", (t) => {
