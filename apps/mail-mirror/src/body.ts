@@ -2,7 +2,8 @@ import { convert } from "html-to-text";
 import { Parser } from "htmlparser2";
 import { createHash } from "node:crypto";
 
-export const BODY_EXTRACTOR_VERSION = 2;
+import { BODY_EXTRACTOR_VERSION } from "./body-version.ts";
+export { BODY_EXTRACTOR_VERSION } from "./body-version.ts";
 export interface BodyExtraction {
   version: number;
   source: "plain" | "html" | "both" | "none";

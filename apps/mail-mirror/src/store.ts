@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { VectorStore } from "@steward/search";
 import type { BodyExtraction } from "./body.ts";
+import { BODY_EXTRACTOR_VERSION } from "./body-version.ts";
 
 export type BodyState = "full" | "partial" | "none";
 
@@ -140,6 +141,7 @@ export class Store {
     }
     const mp = new Set((this.raw.prepare("PRAGMA table_info(message_paths)").all() as { name: string }[]).map((r) => r.name));
     if (!mp.has("mtime_ms")) this.raw.exec("ALTER TABLE message_paths ADD COLUMN mtime_ms REAL");
+    ensureMailIndexes(this.raw, BODY_EXTRACTOR_VERSION);
   }
 
   static open(path: string): Store {
@@ -466,6 +468,29 @@ export class Store {
   close(): void {
     this.vec.close();
     this.raw.close();
+  }
+}
+
+/** Keep versioned stale indexes for older processes during rolling upgrades. */
+export function ensureMailIndexes(db: Database.Database, extractorVersion: number): void {
+  if (!Number.isSafeInteger(extractorVersion) || extractorVersion < 1) throw new Error("Invalid body extractor version");
+  const indexes: [string, string][] = [
+    [`idx_messages_stale_v${extractorVersion}`, `CREATE INDEX IF NOT EXISTS idx_messages_stale_v${extractorVersion}
+      ON messages(date DESC) WHERE deleted=0 AND source='emlx' AND emlx_path IS NOT NULL
+      AND (COALESCE(json_extract(body_extraction,'$.version'),0)<${extractorVersion}
+        OR json_extract(body_extraction,'$.textHash') IS NULL)`],
+    ["idx_messages_action_recent", `CREATE INDEX IF NOT EXISTS idx_messages_action_recent
+      ON messages(date DESC) WHERE deleted=0 AND junk=0 AND length(trim(coalesce(body_text,'')))>0`],
+  ];
+  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?");
+  for (const [name, sql] of indexes) {
+    if (exists.get(name)) continue;
+    try { db.exec(sql); }
+    catch (error) {
+      // Indexes are optional accelerators: leave the original queries available
+      // when malformed historical JSON or a transient lock prevents creation.
+      console.warn(`[mail-mirror] index ${name} unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 }
 
