@@ -1,0 +1,30 @@
+import Database from 'better-sqlite3';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
+const path = resolve('.local-evals/mcp-rust-benchmark/mail-query-copy.db');
+if (existsSync(path)) throw Error('Refusing to overwrite existing copy');
+const db = new Database(path); chmodSync(path, 0o600);
+const src=new Database(join(homedir(),'Library/Application Support/mail-mirror/mail.db'),{readonly:true,fileMustExist:true});
+src.pragma('query_only=ON');src.exec('BEGIN');
+const t0=performance.now();
+db.exec('CREATE TABLE messages(id INTEGER PRIMARY KEY, message_id TEXT, date INTEGER, deleted INTEGER, junk INTEGER, source TEXT, emlx_path TEXT, body_extraction TEXT, body_text TEXT)');
+const insert=db.prepare('INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)');db.exec('BEGIN');
+for(const row of src.prepare('SELECT rowid,message_id,date,deleted,junk,source,emlx_path,body_extraction,body_text FROM messages').raw(true).iterate())insert.run(...row);
+db.exec('COMMIT');src.exec('COMMIT');src.close();
+const copyMs=performance.now()-t0;db.pragma('journal_mode=DELETE');
+const since=Math.floor(Date.now()/1000)-14*86400;
+const q={stale:"SELECT id FROM messages WHERE deleted=0 AND source='emlx' AND emlx_path IS NOT NULL AND (COALESCE(json_extract(body_extraction,'$.version'),0) < ? OR json_extract(body_extraction,'$.textHash') IS NULL) ORDER BY date DESC LIMIT 50", action:"SELECT id FROM messages WHERE deleted=0 AND date>=? AND junk=0 AND length(trim(coalesce(body_text,'')))>0 ORDER BY date DESC LIMIT 300"};
+const run=(sql,args)=>{const s=db.prepare(sql),times=[],ids=[];for(let i=0;i<4;i++){const t=performance.now();const rows=s.all(...args).map(x=>x.id);times.push(performance.now()-t);if(i===0)ids.push(...rows);else if(JSON.stringify(ids)!==JSON.stringify(rows))throw Error('unstable result');}return {times,ids,plan:db.prepare('EXPLAIN QUERY PLAN '+sql).all(...args).map(x=>x.detail)}};
+const before={stale:run(q.stale,[2]),action:run(q.action,[since])};
+const t1=performance.now();db.exec("CREATE INDEX stale_date ON messages(date DESC) WHERE deleted=0 AND source='emlx' AND emlx_path IS NOT NULL; CREATE INDEX action_date ON messages(date DESC) WHERE deleted=0 AND junk=0 AND length(trim(coalesce(body_text,'')))>0");const indexMs=performance.now()-t1;
+const after={stale:run(q.stale,[2]),action:run(q.action,[since])};
+for(const k of Object.keys(q))if(JSON.stringify(before[k].ids)!==JSON.stringify(after[k].ids))throw Error('changed result '+k);
+// Paired write measurement on a rollback-only transaction: representative updates to rows in the copy.
+const ids=db.prepare('SELECT id FROM messages ORDER BY id LIMIT 1000').all().map(r=>r.id);
+function writeTrial(){const update=db.prepare('UPDATE messages SET date=date+1 WHERE id=?');const start=performance.now();db.exec('BEGIN');for(const id of ids)update.run(id);db.exec('ROLLBACK');return performance.now()-start}
+const withIndex=writeTrial();db.exec('DROP INDEX stale_date; DROP INDEX action_date');const withoutIndex=writeTrial();
+const output={utc:new Date().toISOString(),copyMs,indexMs,rows:db.prepare('SELECT COUNT(*) n FROM messages').get().n,queries:{},writeTrial:{rows:ids.length,withIndexMs:withIndex,withoutIndexMs:withoutIndex},method:'Disposable disk copy of actual queried columns, not full schema. Exact filtering and ordered IDs, but selection fetches only IDs, not full payload. Four repeated queries with uncontrolled OS cache; one rollback-only date update trial each. Copy and index writes occur only on the disposable database.'};
+for(const k of Object.keys(q))output.queries[k]={equal:true,rows:before[k].ids.length,beforeMs:before[k].times,afterMs:after[k].times,beforePlan:before[k].plan,afterPlan:after[k].plan};
+writeFileSync('.local-evals/mcp-rust-benchmark/mail-index-copy.json',JSON.stringify(output,null,2));console.log(JSON.stringify(output,null,2));db.close();

@@ -1,0 +1,4 @@
+import Database from 'better-sqlite3';import {homedir} from 'node:os';import {join} from 'node:path';import {openSync,writeSync,closeSync} from 'node:fs';
+const db=new Database(join(homedir(),'Library/Application Support/steward-usage/usage.db'),{readonly:true,fileMustExist:true});db.pragma('query_only=ON');db.exec('BEGIN');const fd=openSync(process.argv[2],'wx',0o600),buf=Buffer.alloc(32*65536);let pos=0,count=0;
+for(const row of db.prepare('SELECT input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd FROM llm_calls ORDER BY ts').raw(true).iterate()) {for(let j=0;j<4;j++){if(!Number.isSafeInteger(row[j])||row[j]<0||row[j]>0xffffffff)throw Error('counter outside uint32');buf.writeUInt32LE(row[j],pos+j*4);}buf.writeDoubleLE(row[4],pos+16);pos+=32;count++;if(pos===buf.length){writeSync(fd,buf,0,pos);pos=0;}}
+if(pos)writeSync(fd,buf,0,pos);closeSync(fd);db.exec('COMMIT');db.close();console.log(JSON.stringify({count,bytes:count*32}));

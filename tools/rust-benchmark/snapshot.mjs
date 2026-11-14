@@ -1,0 +1,3 @@
+import Database from 'better-sqlite3';import{homedir}from'node:os';import{join}from'node:path';import{existsSync,chmodSync}from'node:fs';
+const target=process.argv[2];if(existsSync(target))throw Error('snapshot already exists');const db=new Database(join(homedir(),'Library/Application Support/steward-usage/usage.db'),{readonly:true,fileMustExist:true});let last=0;
+try{await db.backup(target,{progress(p){const pct=Math.floor(100*(p.totalPages-p.remainingPages)/p.totalPages);if(pct>=last+20){console.log('backup '+pct+'%');last=pct}return 1024;}});chmodSync(target,0o600);console.log('snapshot ready')}finally{db.close()}

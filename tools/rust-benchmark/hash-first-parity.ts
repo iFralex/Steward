@@ -1,0 +1,9 @@
+import {Store} from '../../apps/mail-mirror/src/store.ts';import{PromoteState}from'../../apps/mail-promoter/src/state.ts';import{processThread,threadHash}from'../../apps/mail-promoter/src/run.ts';
+const store=Store.open(':memory:'),state=PromoteState.open(':memory:');
+store.upsertMessage({messageId:'m1',account:'a',mailbox:'INBOX',fromName:'A',fromAddr:'a@example.test',to:[],cc:[],toNames:[],ccNames:[],subject:'subject',date:1750000000,bodyText:'body',bodyState:'full',source:'emlx',emlxPath:null,inReplyTo:null,references:[],gmThrid:null,size:1,unread:false,flagged:false,answered:false,junk:false,flagColor:null,appleThrid:null});store.setThreadId('m1',1);state.record({messageId:'thread:1',decision:'filtered',categories:[],classifyModel:'prefilter',distillModel:null,wikiFilename:null,sourceHash:threadHash([{subject:'subject',bodyText:'body'}])});
+const which=process.env.STEWARD_BAD_CASE??'recipient';
+if(which==='recipient') store.raw.prepare("UPDATE messages SET to_addrs='not valid json' WHERE message_id='m1'").run();
+else if(which==='date') store.raw.prepare("UPDATE messages SET date=999999999999999 WHERE message_id='m1'").run();
+else if(which==='html') { const body='<p>&#999999999;</p>'; store.raw.prepare("UPDATE messages SET body_text=? WHERE message_id='m1'").run(body);state.record({messageId:'thread:1',decision:'filtered',categories:[],classifyModel:'prefilter',distillModel:null,wikiFilename:null,sourceHash:threadHash([{subject:'subject',bodyText:body}])}); }
+else throw Error('unknown case');
+let outcome='';try{outcome=await processThread({store,state,chat:async()=>{throw Error('unexpected chat')},wiki:{addSources:async()=>({})},roleOf:()=>undefined,accountLabelOf:()=>''},1)}catch(e){outcome=`throw:${e instanceof Error?e.name:'unknown'}`};console.log(JSON.stringify({case:which,outcome,method:'One unchanged synthetic thread with deliberately malformed metadata or text; in-memory database, no external calls.'}));store.close();
