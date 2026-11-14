@@ -141,11 +141,24 @@ export async function reconcile(deps: SyncDeps, mailRoot: string): Promise<{ ing
   const known = deps.store.allKnownPaths();
   // A parser upgrade must also revisit unchanged files. Bound each reconciliation
   // so ordinary sync still finishes promptly on a large archive.
-  const stale = new Set((deps.store.raw.prepare(`SELECT emlx_path FROM messages
+  const staleRows = deps.store.raw.prepare(`SELECT message_id, emlx_path, body_state FROM messages
     WHERE deleted=0 AND source='emlx' AND emlx_path IS NOT NULL
     AND (COALESCE(json_extract(body_extraction,'$.version'),0) < ?
       OR json_extract(body_extraction,'$.textHash') IS NULL)
-    ORDER BY date DESC LIMIT 50`).all(BODY_EXTRACTOR_VERSION) as {emlx_path:string}[]).map(r=>r.emlx_path));
+    ORDER BY date DESC LIMIT 50`).all(BODY_EXTRACTOR_VERSION) as {message_id:string; emlx_path:string; body_state:string | null}[];
+  const stale = new Set<string>();
+  for (const row of staleRows) {
+    // The primary path can disappear when the message still exists in another
+    // mailbox. Re-extract from one surviving registered path, preferring a full
+    // copy, instead of letting the missing primary occupy the backlog forever.
+    if (onDisk.has(row.emlx_path)) stale.add(row.emlx_path);
+    else {
+      const paths = deps.store.pathsForMessage(row.message_id).filter((p) => onDisk.has(p.path));
+      const selected = paths.find((p) => !p.isPartial)
+        ?? (row.body_state === "full" ? undefined : paths[0]);
+      if (selected) stale.add(selected.path);
+    }
+  }
   let ingested = 0;
   for (const e of entries) {
     if (!known.has(e.path)) {
