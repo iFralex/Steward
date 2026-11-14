@@ -847,7 +847,12 @@ There are three synchronization modes:
 | `watch` | Low-latency updates | Uses filesystem events to ingest newly created or changed EMLX paths. Filesystem events are an optimization, not the sole source of truth. |
 | `reconcile` | Periodic convergence | Diffs disk paths and mtimes against the database, ingests new/changed files, upgrades up to 50 old extractions even when their files are unchanged, removes vanished paths and soft-deletes orphaned logical messages. |
 
-The packaged scheduler runs reconciliation periodically, so missing one filesystem event does not permanently lose a message.
+If an extraction is stale and its primary path has disappeared, reconciliation
+tries a surviving registered path, preferring a full copy. It does not replace an
+existing full body with a partial alternate. Missing paths with no usable
+alternative can still occupy candidate slots until the path state is resolved.
+The packaged scheduler runs reconciliation periodically, so missing one filesystem
+event does not permanently lose a message.
 
 ### How Email Threads Are Reconstructed
 
@@ -1972,7 +1977,7 @@ Steward is designed to retain narrower functionality when a dependent service is
 | Automation permission denied | Database reads remain available when FDA is granted; AppleScript compatibility writes fail. EventKit uses its separate Calendar Full Access grant. |
 | Calendar Full Access denied or bridge unavailable | EventKit reports an error/uncertain timeout; there is no blind backend switch after dispatch. The user must fix permissions/runtime and inspect uncertain effects. |
 | Mail-promoter triage returns invalid JSON | The thread is deferred without terminal promotion state, so it can be retried; no malformed wiki note is committed. |
-| Action Center planning fails | The scan records deferred diagnostics. Thrown planner failures remain unseen for retry; ordinary no-action outcomes are recorded in the seen ledger. |
+| Action Center planning fails | The scan records deferred diagnostics. Thrown planner failures remain unseen for retry; ordinary no-action outcomes are recorded in the seen ledger. Gateway network errors, 401/402/403/429 and 5xx responses trigger persistent per-endpoint/model backoff, starting at 15 minutes and capped at six hours. During backoff, local skips continue and flow embedding is avoided for deferred candidates. A successful retry resets the delay. |
 | Wiki API unavailable | Filesystem promotion can still write sources; the final rescan is reported unavailable and must be requested later. API-backed promotion can defer on API failure. |
 | No UI is attached to a gated request | Approval times out to deny. Quick Send cannot silently execute writes. |
 | Mail/EventKit/AppleScript returns but the change is not observed | The operation remains unconfirmed. Mail reaches manual review without automatic resend; Calendar confirms or exhausts without replay. |
@@ -1991,6 +1996,18 @@ Steward is designed to retain narrower functionality when a dependent service is
 This degradation model is deliberate: a missing probabilistic or remote capability should not make deterministic local data inaccessible.
 
 ## Performance, Bounding And Backpressure
+
+For measured MCP, background-job and Rust migration candidates, see the [migration assessment](docs/rust-migration-assessment.md). The assessment distinguishes production observations, isolated prototypes and components still requiring parity tests.
+
+The writable Mail store creates partial indexes for recent Action Center
+candidates and obsolete body extractions after the existing schema migrations.
+Stale-extraction indexes include the body extractor version in their name, so
+old and new app versions can coexist during upgrades; older versioned indexes
+remain until explicitly removed. If an optional index cannot be created, the
+store logs the failure and retains the existing query path. Removing an index
+alone is temporary: the writable store recreates it on its next open. To undo
+the migration, first roll back to a release without it and stop its writers,
+then drop the unwanted indexes from the Mail database.
 
 Local-first does not mean unbounded. Several limits keep cold starts, model context and background work predictable:
 
@@ -2065,6 +2082,70 @@ CPU/I/O and memory before first use, so it is limited to one heavy task at a tim
 ordinary interactive work can still overlap an already-running preparation.
 
 ### Measured Local Benchmarks
+
+#### November 14, 2026 — standard read-only suite
+
+The [latest standard report](docs/benchmarks/2026-11-14-standard.json) completed
+**20 cases with no errors** on the Mac mini M4 / 16 GiB, after the Mail index,
+Action Center backoff and Usage updates. It ran repository code with uncommitted
+working-tree changes; the report's revision identifies `HEAD`, not the complete
+tested source. The run used the local indexes read-only and synthetic documents;
+it made **no embedding or model requests**. Results retain every timing sample
+and counts, with no message contents or identifiers.
+
+At sampling, the Mail database had 78,776 active messages, 45,726 thread rows
+and 14,411 attachment rows; Calendar had 696 events and Contacts 771 entries.
+The main Mail SQLite file was 6.01 GiB, excluding its separately sampled WAL.
+These counts describe the sampled indexes, not unique users or model quality.
+
+| Operation | Returned | First query | Warm median | Warm p95 |
+|---|---:|---:|---:|---:|
+| Mail FTS5 candidates, cap 50 | 50 | 40.24 ms | 1.14 ms | 1.29 ms |
+| Mail subject trigram candidates, cap 500 | 414 | 152.02 ms | 5.65 ms | 6.08 ms |
+| Mail body trigram candidates, cap 500 | 500 | 42.24 ms | 9.68 ms | 10.17 ms |
+| Mail recent unread IDs, cap 20 | 20 | 2,648.06 ms | 17.93 ms | 19.24 ms |
+| Mail lexical search + summaries, cap 12 | 12 | 7.49 ms | 1.79 ms | 2.20 ms |
+| Absent body substring, trigram | 0 | 539.92 ms | 5.10 ms | 5.22 ms |
+| Absent body substring, `LIKE` scan | 0 | 8,515.76 ms | 543.45 ms | 1,643.21 ms |
+| Calendar FTS5 candidates, cap 500 | 60 | 22.62 ms | 0.064 ms | 0.084 ms |
+| Contacts FTS5 matching query, cap 200 | 10 | 4.56 ms | 0.039 ms | 0.090 ms |
+| Uncached text-layer PDF, 20 synthetic pages | 911 chars | 2,363.82 ms | 361.42 ms | 367.89 ms |
+| Cached extraction lookup, 2,000,000 chars | 2,000,000 chars | 0.067 ms | 0.021 ms | 0.039 ms |
+
+SQL cases contain one first operation and 30 subsequent samples; document
+extraction has one first operation and ten subsequent samples. The first sample
+excludes benchmark child bootstrap and database connection time; uncached
+document extraction includes its own extraction worker startup. The OS page cache was
+not flushed, background services remained active, and cases ran in fixed order.
+Document p95 with ten warm observations is only descriptive. These are
+repository-level query timings, not end-to-end MCP or UI latency. The latest
+standard run does not measure KNN, hybrid retrieval or local-model latency;
+the October extended run below remains historical evidence for those paths.
+
+#### November 2026 — targeted operational experiments
+
+The [migration assessment](docs/rust-migration-assessment.md) and [probe
+instructions](tools/rust-benchmark/README.md) record the different setups and
+reproduction steps behind these observations. They are
+not direct before/after measurements of the complete app:
+
+| Experiment | Observation | Scope |
+|---|---|---|
+| Deployed Mail stale-extraction index | 4.47 ms indexed; 338.57 ms forced scan | One production read-only snapshot; same complete query results. |
+| Deployed recent-mail index | 3.15 ms indexed; 66.66 ms forced scan | One production read-only snapshot; same complete query results. |
+| Action Center first scan after backoff release | 1 failed HTTP 402 request; 49 candidates deferred | One scan; zero cost recorded for the failed call, not a provider-invoice reconciliation. |
+| Usage summary, 30-day snapshot | 8.51 s original Node; 6.68 s optimized Node; 3.91 s Rust prototype | Two-run medians on the same snapshot; optimized Node is deployed, Rust is not. |
+| Guarded hash-first prototype | 11.92 s baseline; 8.69 s prototype | Three-run medians for simulated local processing; prototype is not deployed. |
+
+The indexed/forced-scan comparisons are single observations with uncontrolled
+cache. Indexes occupied about 1.18 MiB and improve selection, not filesystem
+enumeration or MIME parsing. The Usage comparison excludes HTTP integration and
+the OS page cache. The guarded hash test uses simulated state and filters changed
+threads locally; it does not establish parity under concurrency or measure model
+calls. See the [GTE model-selection study](docs/gte-model-selection.md) for the
+separate detection-quality experiments and their limitations.
+
+#### October 14, 2026 — extended historical suite
 
 Rerun on **2026-10-14**, after persistent vector workers and startup preparation,
 using [`tools/steward-benchmark.mts`](tools/steward-benchmark.mts). The expanded
@@ -2716,20 +2797,28 @@ npm run deploy:install -- --sip-user=YOUR_LINPHONE_NAME
 # Build, verify, cut over, smoke-test and retain the previous release.
 npm run deploy:update
 
+# An existing healthy voice runtime can be retained, and the operational
+# snapshot can be placed on a separate volume with sufficient free space.
+STEWARD_DEPLOY_BACKUP_ROOT=/path/to/private/backups npm run deploy:update -- --reuse-existing-voice
+
 # Verify the active installation or return to the previous release.
 npm run deploy:verify
 npm run deploy:rollback
 ```
 
-Installation uses the lockfile, builds a self-contained app, creates a distinct
-Ringback/pjproject runtime, stores the SIP password in Keychain and validates
+By default, installation uses the lockfile, builds a self-contained app, creates a
+distinct Ringback/pjproject runtime, stores the SIP password in Keychain and validates
 architecture, bundle layout, runtime manifest, pjsua2 import and the pinned
 Whisper model SHA-256 before cutover. Updating copies only the non-secret SIP
-identity. `--stage-only` can do expensive build work while Steward runs;
+identity. `--reuse-existing-voice` instead retains an existing healthy Ringback
+launcher; it is checked during staging and verification. `--stage-only` can do expensive build work while Steward runs;
 activation refuses to switch while an existing host still responds.
 
-Cutover first creates SQLite-consistent backups of chats, watches, Audit, Usage
-and Action Center under `deploy/backups/<release-id>/` and copies `config.env`.
+Cutover first creates SQLite-consistent backups of the operational databases,
+including chats, watches, Audit, Usage, Action Center, Mail and promotion state,
+and copies `config.env`. The default destination is
+`deploy/backups/<release-id>/`; `STEWARD_DEPLOY_BACKUP_ROOT` selects a different
+parent directory. The snapshot contains private data and configuration.
 It then verifies a temporary install copy, replaces `/Applications/Steward.app`
 with that real bundle and launches it. A failed replacement restores the previous
 copy. If its health smoke test fails, the deployer asks it to quit, waits for the
