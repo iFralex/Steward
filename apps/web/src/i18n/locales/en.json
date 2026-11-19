@@ -302,6 +302,21 @@
       "needsLabel": "needs labeling",
       "row": "{{cost}} · {{calls}} calls · {{tokens}} tok"
     },
+    "actions": {
+      "llmWiki": {
+        "chat": "Unclassified chat or task (historical)",
+        "manual-chat": "Manual chat",
+        "ingest": "Source import and analysis",
+        "research": "Research and synthesis",
+        "search": "Wiki search",
+        "dedup": "Page deduplication",
+        "link-enrichment": "Page linking",
+        "lint": "Wiki checks",
+        "image-caption": "Image captioning",
+        "review-sweep": "Source review",
+        "provider-test": "Provider test"
+      }
+    },
     "byAction": {
       "title": "Cost by action",
       "empty": "No actions in this period.",

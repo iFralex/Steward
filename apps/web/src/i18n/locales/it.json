@@ -302,6 +302,21 @@
       "needsLabel": "da etichettare",
       "row": "{{cost}} · {{calls}} chiamate · {{tokens}} tok"
     },
+    "actions": {
+      "llmWiki": {
+        "chat": "Chat o attività non classificate (storico)",
+        "manual-chat": "Chat manuale",
+        "ingest": "Importazione e analisi delle fonti",
+        "research": "Ricerca e sintesi",
+        "search": "Ricerca nella wiki",
+        "dedup": "Deduplicazione pagine",
+        "link-enrichment": "Collegamento tra pagine",
+        "lint": "Controllo della wiki",
+        "image-caption": "Descrizione delle immagini",
+        "review-sweep": "Revisione delle fonti",
+        "provider-test": "Test del provider"
+      }
+    },
     "byAction": {
       "title": "Costo per azione",
       "empty": "Nessuna azione nel periodo.",

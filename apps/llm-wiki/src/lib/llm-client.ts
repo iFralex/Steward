@@ -1,6 +1,6 @@
 import type { LlmConfig } from "@/stores/wiki-store"
 import { isAzureOpenAiEndpoint } from "@/lib/azure-openai"
-import { getProviderConfig, type RequestOverrides } from "./llm-providers"
+import { getProviderConfig, type LlmWikiUsageAction, type RequestOverrides } from "./llm-providers"
 import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
 import { countReasoningCharsInLine, extractReasoningTextFromLine } from "./reasoning-detector"
 
@@ -66,6 +66,7 @@ export async function streamChat(
    * with "Unknown name 'temperature': Cannot find field." HTTP 400.
    */
   requestOverrides?: RequestOverrides,
+  usageAction: LlmWikiUsageAction = "chat",
 ): Promise<void> {
   const { onToken, onDone, onError } = callbacks
 
@@ -80,7 +81,7 @@ export async function streamChat(
     return streamViaCodexCli(config, messages, callbacks, signal, requestOverrides)
   }
 
-  const providerConfig = getProviderConfig(config)
+  const providerConfig = getProviderConfig(config, usageAction)
 
   // Combined abort: (a) user cancel, (b) our long-horizon timeout.
   // The long timeout is a backstop for truly stuck requests; it's NOT

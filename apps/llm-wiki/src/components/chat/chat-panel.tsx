@@ -516,6 +516,8 @@ export function ChatPanel() {
           },
         },
         controller.signal,
+        undefined,
+        "manual-chat",
       )
     },
     [llmConfig, searchApiConfig, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],

@@ -249,6 +249,8 @@ async function judgeBatch(
         },
       },
       signal,
+      undefined,
+      "review-sweep",
     )
   } catch (err) {
     console.warn("[Sweep Reviews] LLM call failed:", err)

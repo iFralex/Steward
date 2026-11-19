@@ -819,6 +819,7 @@ async function autoIngestImpl(
       },
       signal,
       { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      "ingest",
     )
   }
 
@@ -878,6 +879,7 @@ async function autoIngestImpl(
       reasoning: { mode: "off" },
       max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
     },
+    "ingest",
   )
 
   const generationActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
@@ -923,6 +925,7 @@ async function autoIngestImpl(
           reasoning: { mode: "off" },
           max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
         },
+        "ingest",
       )
     } catch (err) {
       if (signal?.aborted) throw err
@@ -1000,6 +1003,7 @@ async function autoIngestImpl(
           reasoning: { mode: "off" },
           max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
         },
+        "ingest",
       )
       if (signal?.aborted) throw new Error("Ingest cancelled")
       if (aggregateRepairOutput.trim()) {
@@ -2436,6 +2440,7 @@ async function analyzeLongSourceInChunks(
       },
       signal,
       { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      "ingest",
     )
 
     if (signal?.aborted) throw new Error("Ingest cancelled")
@@ -2554,6 +2559,7 @@ function buildPageMerger(llmConfig: LlmConfig): MergeFn {
         },
         signal,
         { temperature: 0.1 },
+        "ingest",
       ).catch((err) => {
         // Defensive: streamChat returns a Promise<void>; if it rejects
         // (instead of going through onError), surface that too.
@@ -2794,6 +2800,8 @@ export async function startIngest(
       },
     },
     signal,
+    undefined,
+    "ingest",
   )
 }
 
@@ -2895,6 +2903,8 @@ export async function executeIngestWrites(
       },
     },
     signal,
+    undefined,
+    "ingest",
   )
 
   const writtenPaths: string[] = []

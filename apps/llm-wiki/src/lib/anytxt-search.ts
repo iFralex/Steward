@@ -150,6 +150,7 @@ export async function rewriteAnyTxtQueries(queries: string[], llmConfig: LlmConf
     },
     undefined,
     { temperature: 0.1, max_tokens: 512, reasoning: { mode: "off" } },
+    "search",
   )
 
   const rewritten = parseAnyTxtQueryRewrite(output)

@@ -56,6 +56,9 @@ export async function optimizeResearchTopic(
       onDone: () => {},
       onError: () => {},
     },
+    undefined,
+    undefined,
+    "research",
   )
 
   // Parse response

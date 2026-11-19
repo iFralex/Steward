@@ -57,6 +57,10 @@ export interface RequestOverrides {
   reasoning?: ReasoningConfig
 }
 
+export type LlmWikiUsageAction =
+  | "chat" | "manual-chat" | "ingest" | "research" | "search" | "dedup"
+  | "link-enrichment" | "lint" | "image-caption" | "review-sweep" | "provider-test"
+
 interface ProviderConfig {
   url: string
   headers: Record<string, string>
@@ -122,13 +126,13 @@ export function localLlmOriginHeader(): Record<string, string> {
 // headers. Send them ONLY to the local gateway — never to third-party APIs.
 const STEWARD_GATEWAY_ORIGINS = new Set(["http://127.0.0.1:4000", "http://localhost:4000"])
 
-export function stewardGatewayUsageHeaders(url: string): Record<string, string> {
+export function stewardGatewayUsageHeaders(url: string, action: LlmWikiUsageAction = "chat"): Record<string, string> {
   try {
     if (!STEWARD_GATEWAY_ORIGINS.has(new URL(url).origin)) return {}
   } catch {
     return {}
   }
-  return { "x-usage-service": "llm-wiki", "x-usage-action": "chat" }
+  return { "x-usage-service": "llm-wiki", "x-usage-action": action }
 }
 
 export function isLocalOrPrivateHttpEndpoint(endpoint: string): boolean {
@@ -811,7 +815,7 @@ function buildGoogleBody(
   }
 }
 
-export function getProviderConfig(config: LlmConfig): ProviderConfig {
+export function getProviderConfig(config: LlmConfig, usageAction: LlmWikiUsageAction = "chat"): ProviderConfig {
   const { provider, apiKey, model, ollamaUrl, customEndpoint } = config
 
   switch (provider) {
@@ -988,7 +992,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           // workaround. Public custom gateways may reject unexpected
           // browser Origin headers, so leave them untouched.
           ...(!azure && isLocalOrPrivateHttpEndpoint(url) ? localLlmOriginHeader() : {}),
-          ...stewardGatewayUsageHeaders(url),
+          ...stewardGatewayUsageHeaders(url, usageAction),
         },
         buildBody: (messages, overrides) => {
           const body = buildOpenAiCompatibleBody(config, messages, overrides)

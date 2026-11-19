@@ -104,6 +104,7 @@ export function buildDedupLlmCall(
         // spend its whole budget on reasoning and run the stream to the
         // 30-min backstop — which surfaces as a bare "Request cancelled".
         { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: maxTokens },
+        "dedup",
       ).catch((err) => {
         streamError = err instanceof Error ? err : new Error(String(err))
         resolve()

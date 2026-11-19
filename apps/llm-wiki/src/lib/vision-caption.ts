@@ -209,6 +209,7 @@ export async function captionImage(
       // this helper grows an explicit caption-reasoning option.
       reasoning: { mode: "off" },
     },
+    "image-caption",
   )
 
   if (streamError) {

@@ -85,6 +85,9 @@ export async function enrichWithWikilinks(
       onDone: () => {},
       onError: () => {},
     },
+    undefined,
+    undefined,
+    "link-enrichment",
   )
 
   // Parse the LLM response. Be tolerant of fences / prose wrappers.

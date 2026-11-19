@@ -90,6 +90,9 @@ const todayKey = () => {
 
 export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: string; token: string | null; onUnauthorized: () => void }) {
   const { t } = useTranslation();
+  const actionLabel = (service: string, action: string) => service === "llm-wiki"
+    ? t(`usage.actions.llmWiki.${action}`, { defaultValue: action })
+    : action;
   const [period, setPeriod] = useState<Period>("30");
   const [data, setData] = useState<UsageSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -244,7 +247,7 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
                   {data.byAction.map((a) => (
                     <tr key={`${a.service}/${a.action}`} className="border-border border-t">
                       <Td className="font-medium">{a.service}</Td>
-                      <Td className="font-mono">{a.action}</Td>
+                      <Td>{actionLabel(a.service, a.action)}</Td>
                       <Td right>{intl(a.calls)}</Td>
                       <Td right>{compact(a.tokens)}</Td>
                       <Td right>{usd(a.avgCost)}</Td>
@@ -458,7 +461,7 @@ export function UsagePage({ httpBase, token, onUnauthorized }: { httpBase: strin
                     <tr key={i} className={cn("border-border border-t", r.ok === 0 && "text-destructive")}>
                       <Td>{formatTs(r.ts)}</Td>
                       <Td className="font-medium">{r.service}</Td>
-                      <Td className="font-mono">{r.action}</Td>
+                      <Td>{actionLabel(r.service, r.action)}</Td>
                       <Td>
                         <Badge variant="outline">{r.model || "—"}</Badge>
                       </Td>

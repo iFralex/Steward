@@ -257,6 +257,9 @@ async function executeResearch(
           })
         },
       },
+      undefined,
+      undefined,
+      "research",
     )
 
     // Check if errored during streaming

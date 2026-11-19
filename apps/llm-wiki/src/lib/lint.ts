@@ -399,6 +399,9 @@ export async function runSemanticLint(
         })
       },
     },
+    undefined,
+    undefined,
+    "lint",
   )
 
   if (hadError) return []
